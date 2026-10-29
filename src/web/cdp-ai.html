@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventQA · 02 CDP + AI</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d4fd8'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,sans-serif' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3E02%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/eventqa.css">
+</head>
+<body data-mode="cdp-ai">
+<header class="topbar">
+  <div class="brand"><div class="brand-mark">02</div><div><h1>EventQA · CDP + OpenRouter</h1><p>Thu thập CDP như 01 · AI gợi ý rule từ đặc tả và giải thích FAIL, không thay verdict</p></div></div>
+  <span id="ai-chip" class="pill">AI: đang tải</span>
+  <span id="conn" class="conn">Đã kết nối</span>
+  <button type="button" class="btn ghost" data-action="shutdown" id="shutdown">Tắt ứng dụng</button>
+</header>
+
+<div id="sessionbar" class="sessionbar" aria-live="polite">
+  <span id="phase" class="phase"><span class="dot"></span><span id="phase-label">Đang tải…</span></span>
+  <div id="session-meta" class="session-meta"></div>
+  <div class="bar-actions"><button type="button" id="bar-secondary" class="btn hidden"></button><button type="button" id="bar-primary" class="btn primary"></button></div>
+</div>
+
+<main class="layout">
+  <ol class="flow">
+    <li class="stage" data-stage="session">
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>1</span></span><span class="stage-title"><strong>Website &amp; trình duyệt test</strong><small id="sum-session">—</small></span><span class="chev">›</span></button>
+      <div class="stage-body">
+        <label for="url">URL website cần test</label>
+        <input id="url" type="text" inputmode="url" placeholder="vd: inpearlota.com/vi hoặc https://www.website.vn/" autocomplete="url" data-lock-running>
+        <div id="recent" class="chips hidden"></div>
+        <span class="label">Trình duyệt</span>
+        <div class="segmented"><button type="button" data-browser="chrome" aria-pressed="true" data-lock-running>Chrome</button><button type="button" data-browser="edge" aria-pressed="false" data-lock-running>Edge</button></div>
+        <select id="browser" class="sr-only" tabindex="-1" aria-hidden="true"><option value="chrome">Chrome</option><option value="edge">Edge</option></select>
+        <span class="label">Cách kết nối</span>
+        <div class="segmented"><button type="button" data-attach="false" aria-pressed="true" data-lock-running>Mở cửa sổ test mới</button><button type="button" data-attach="true" aria-pressed="false" data-lock-running>Gắn tab đang mở</button></div>
+        <div id="attach-panel" class="hidden">
+          <p class="hint">Trình duyệt phải được mở với <code>--remote-debugging-port</code> và profile test riêng. Xem docs/CDP.md.</p>
+          <button type="button" class="btn" data-action="scan-targets" data-lock-running>Quét tab trên cổng debug</button>
+          <div id="targets" class="cases" style="margin-top:8px"></div>
+        </div>
+        <span class="label">Tracking cần bắt</span>
+        <div id="vendors" class="vendor-list"></div>
+        <details class="more"><summary>Endpoint bổ sung &amp; nâng cao</summary>
+          <label for="patterns">Endpoint riêng của website <span class="hint">(mỗi dòng một regex, so với host + path)</span></label>
+          <textarea id="patterns" class="code" rows="3" placeholder="^tracking\.website\.vn/collect$"></textarea>
+          <p class="hint">Không biết endpoint? Mở phiên rồi xem tab <b>Endpoint</b>: app gợi ý các request giống tracking.</p>
+          <button type="button" class="btn small hidden" id="apply-endpoints" data-action="apply-endpoints">Áp dụng cho phiên đang chạy</button>
+          <label for="debug-port">CDP port</label><input id="debug-port" type="number" value="9223" min="1024" max="65535" data-lock-running>
+        </details>
+        <button type="button" class="btn primary big" id="start" data-action="start" style="margin-top:14px">Mở trình duyệt test</button>
+        <p class="hint">Cửa sổ test dùng profile riêng và <b>giữ đăng nhập</b> cho lần sau. Website cần đăng nhập: đăng nhập trong cửa sổ test trước khi ghi bước.</p>
+        <button type="button" class="btn ghost small" data-action="use-demo" data-lock-running>Chưa có website? Chạy thử với trang demo</button>
+      </div>
+    </li>
+
+    <li class="stage" data-stage="spec">
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>2</span></span><span class="stage-title"><strong>Đặc tả tracking <span class="hint">(không bắt buộc)</span></strong><small id="sum-spec">—</small></span><span class="chev">›</span></button>
+      <div class="stage-body">
+        <p class="hint" style="margin-top:0">Không có file đặc tả? Cứ thu thập, rồi bấm <b>Tạo rule</b> trên event thật ở tab Event. Rule đã lưu được tự nạp lại lần sau.</p>
+        <label for="spec-path">File XLSX / JSON trên máy</label>
+        <input id="spec-path" placeholder="F:\...\Martech_WebOTA_20260501.xlsx" autocomplete="off">
+        <label for="sheet">Sheet <span class="hint">(để trống: tự nhận diện)</span></label>
+        <input id="sheet" placeholder="Tổng hợp Event tracking">
+        <div class="row" style="margin-top:12px"><button type="button" class="btn primary" id="import" data-action="import">Nhập file</button><button type="button" class="btn" data-action="open-ai">✦ Tạo rule bằng AI</button></div>
+        <p class="hint">Nhập file thay toàn bộ case hiện có. Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+      </div>
+    </li>
+
+    <li class="stage" data-stage="step">
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>3</span></span><span class="stage-title"><strong>Kiểm từng thao tác</strong><small id="sum-step">—</small></span><span class="chev">›</span></button>
+      <div class="stage-body">
+        <div id="no-cases" class="hidden">
+          <div class="banner info"><p><b>Đang ở chế độ thu thập tự do.</b>
+1. Bấm <b>⚑ Đặt mốc</b>, thao tác trên website.
+2. Ở tab <b>Event trực tiếp</b>, bấm <b>Tạo rule</b> trên event muốn kiểm.
+3. Sau khi có case, quay lại đây để ghi bước và nhận PASS/FAIL.</p></div>
+        </div>
+        <div id="with-cases">
+          <span class="label">Chọn test case</span>
+          <div id="cases" class="cases"></div>
+          <div id="review-banner" class="banner warn hidden" style="margin-top:8px"><p>Case này chưa được duyệt: kết quả sẽ là REVIEW. Mở <b>Xem / sửa rule</b> để duyệt.</p></div>
+          <label for="context">Context thực tế <span class="hint">(giá trị QC nhập trên website, ví dụ từ khoá tìm kiếm)</span></label>
+          <textarea id="context" class="code" rows="5" spellcheck="false"></textarea>
+          <div id="context-error" class="field-error"></div>
+          <p id="context-hint" class="hint hidden"></p>
+          <div class="row" style="margin-top:6px"><button type="button" class="btn small shrink" id="context-format">Định dạng</button><button type="button" class="btn small shrink" id="context-reset">Khôi phục mẫu</button></div>
+          <div id="step-idle" style="margin-top:14px">
+            <button type="button" class="btn primary big" id="step-start" data-action="step-start">▶ Bắt đầu bước</button>
+            <p class="hint">Bấm trước khi thao tác. Khi bước FAIL, AI tự thêm gợi ý nguyên nhân dưới kết quả.</p>
+          </div>
+          <div id="recorder" class="recorder hidden">
+            <div><span class="label" style="margin:0">Event đã gắn vào bước</span><span id="rec-count" class="big-num">0</span></div>
+            <ol><li>Chuyển sang cửa sổ test và thao tác đúng kịch bản.</li><li>Chờ 1–2 giây để request tracking gửi xong.</li><li>Quay lại đây bấm <b>Hoàn tất bước</b>.</li></ol>
+            <button type="button" class="btn rec big" id="step-complete" data-action="step-complete" style="margin-top:10px">■ Hoàn tất bước</button>
+          </div>
+        </div>
+        <details class="more" id="rule-editor"><summary>Xem / sửa rule (JSON) · <span id="rule-title"></span></summary>
+          <textarea id="case-json" class="code" rows="14" spellcheck="false" style="margin-top:8px"></textarea>
+          <div id="case-json-error" class="field-error"></div>
+          <label class="check"><input id="approve" type="checkbox"> Rule đã được duyệt</label>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="save-case" data-action="save-case">Lưu rule</button><button type="button" class="btn shrink" id="rule-reset">Hoàn tác</button><button type="button" class="btn ghost shrink" id="delete-case" data-action="delete-case">Xoá case</button></div>
+          <p class="hint">Lưu được cả khi phiên đang chạy (trừ lúc đang ghi bước). File: imports/reviewed-cases.json.</p>
+        </details>
+      </div>
+    </li>
+
+    <li class="stage" data-stage="report">
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>4</span></span><span class="stage-title"><strong>Kết thúc &amp; báo cáo</strong><small id="sum-report">—</small></span><span class="chev">›</span></button>
+      <div class="stage-body">
+        <div class="row"><button type="button" class="btn primary" id="finish" data-action="finish">Kết thúc &amp; xuất</button><button type="button" class="btn" id="export" data-action="export">Xuất bản hiện tại</button></div>
+        <button type="button" class="btn ghost" id="stop-session" data-action="stop-session" style="margin-top:6px">Dừng phiên ngay (giữ bước đang ghi là REVIEW)</button>
+        <div id="downloads" class="downloads"></div>
+        <p id="run-dir" class="hint"></p>
+        <p class="hint">Báo cáo vẫn xuất được khi chưa có rule: toàn bộ event thu thập nằm trong sheet Actual Events. HTTP thành công chỉ là bằng chứng tầng request.</p>
+      </div>
+    </li>
+  </ol>
+
+  <section class="board">
+    <div id="error" class="banner error hidden" role="alert"></div>
+    <div id="ai-off-banner" class="banner warn hidden"><p></p></div>
+    <div class="metrics">
+      <div class="metric"><span>Bằng chứng</span><b id="event-count">0</b></div>
+      <div class="metric"><span>Loại event</span><b id="kind-count">0</b></div>
+      <div class="metric PASS"><span>Pass</span><b id="pass-count">0</b></div>
+      <div class="metric FAIL"><span>Fail</span><b id="fail-count">0</b></div>
+      <div class="metric REVIEW"><span>Review</span><b id="review-count">0</b></div>
+    </div>
+    <div class="panel">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="ai">✦ Trợ lý AI</button>
+        <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
+      </div>
+      <div class="tabpanel" data-panel="events">
+        <div class="toolbar">
+          <div class="segmented shrink"><button type="button" data-view="groups" aria-pressed="true">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
+          <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
+          <select id="ev-source" aria-label="Lọc theo nguồn"><option value="">Mọi nguồn</option></select>
+          <input id="ev-search" type="text" placeholder="Tìm event, giá trị, evidence ID…" aria-label="Tìm bằng chứng">
+        </div>
+        <div class="toolbar">
+          <button type="button" class="btn small" data-action="set-marker">⚑ Đặt mốc</button>
+          <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
+          <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
+        </div>
+        <div id="event-groups"></div>
+        <div id="events" class="hidden"></div>
+      </div>
+      <div class="tabpanel hidden" data-panel="spec">
+        <div id="spec-totals" class="kv"></div>
+        <div class="toolbar" style="margin-top:12px">
+          <select id="spec-flow" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
+          <select id="spec-platform" aria-label="Lọc theo nền tảng"><option value="">Mọi nền tảng</option><option value="GA4">GA4</option><option value="INSIDER">Insider</option></select>
+          <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
+          <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
+        </div>
+        <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
+        <div id="spec-table"></div>
+      </div>
+      <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
+      <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>
+      <div class="tabpanel hidden" data-panel="ai">
+        <h3 class="section-title">Kết nối &amp; giới hạn chi phí</h3>
+        <div id="ai-config" class="kv"></div>
+        <div id="ai-keys" class="not-run"></div>
+        <div class="row" style="margin-top:12px"><button type="button" class="btn" data-action="ai-test">Kiểm tra kết nối</button><button type="button" class="btn" data-action="ai-models">Xem model &amp; giá</button></div>
+        <div id="ai-check" style="margin-top:10px"></div>
+
+        <h3 class="section-title">Tạo rule nháp từ đặc tả</h3>
+        <p class="hint" style="margin-top:0">Mô tả event và dán sample payload từ đặc tả (hoặc copy payload từ tab Event). Dữ liệu được che trước khi gửi. Bản nháp phải được QC duyệt trước khi dùng.</p>
+        <textarea id="ai-input" class="code" rows="8" spellcheck="false"></textarea>
+        <div id="ai-input-error" class="field-error"></div>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="ai-draft" data-action="ai-draft">✦ Tạo nháp bằng AI</button><button type="button" class="btn shrink" data-action="ai-sample">Chèn mẫu</button></div>
+        <div id="ai-output" style="margin-top:12px"></div>
+
+        <details class="more"><summary>Lượt gọi AI gần nhất (trace)</summary><div id="ai-trace" style="margin-top:8px"></div></details>
+      </div>
+      <div class="tabpanel hidden" data-panel="log"><ul id="log" class="log"></ul></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="builder" class="builder" aria-labelledby="builder-title">
+  <div class="builder-head"><h2 id="builder-title">Tạo rule từ event thật</h2><button type="button" class="btn ghost" data-action="builder-close" aria-label="Đóng">✕</button></div>
+  <div id="builder-body" class="builder-body"></div>
+  <div class="builder-foot"><button type="button" class="btn" data-action="builder-json">Mở dạng JSON</button><button type="button" class="btn primary" data-action="builder-save">Lưu case</button></div>
+</dialog>
+<div id="toasts" class="toasts"></div>
+
+<script src="/assets/eventqa.js"></script>
+<script>
+const token='__CSRF__';
+let attach = false, targetId = '', lastDraft = null, aiSig = '';
+const $ = id => document.getElementById(id);
+const { esc, short } = EventQA;
+const AI_REASON = {
+  AI_DISABLED: 'AI đang tắt. Đặt AI_ENABLED=true trong .env rồi chạy lại.', API_KEY_MISSING: 'Chưa có OpenRouter key. Điền OPENROUTER_API_KEY trong .env.',
+  AI_CANCELLED: 'Lệnh AI đã bị huỷ do dừng phiên.', NO_SUITABLE_MODELS: 'Không có model phù hợp giới hạn giá/ngân sách hiện tại.', MODEL_NOT_FOUND: 'Model cấu hình không tồn tại trên OpenRouter.',
+  MODEL_STRUCTURED_OUTPUT_UNSUPPORTED: 'Model cấu hình không hỗ trợ xuất JSON.', MODEL_UNSUITABLE_OR_OVER_BUDGET: 'Model cấu hình vượt giới hạn giá hoặc ngân sách.',
+  AI_REQUEST_BUDGET_EXCEEDED: 'Vượt ngân sách ước tính cho một tác vụ.', CREDIT_EXHAUSTED: 'Key hết credit cho model trả phí; chỉ còn model free.', API_KEYS_UNAVAILABLE: 'Tất cả key đang bị tạm khoá (sai key hoặc hết quota).',
+  AI_INPUT_TOO_LARGE: 'Đầu vào quá lớn; rút gọn sample.', INVALID_AI_INPUT: 'Đầu vào cần là JSON object.', INVALID_AI_JSON: 'Model trả JSON không hợp lệ.',
+};
+const reasonText = reason => AI_REASON[reason] || reason || 'Không rõ lý do';
+const usd = value => typeof value === 'number' ? `$${value < 0.01 ? value.toPrecision(2) : value.toFixed(2)}` : '—';
+const SAMPLE = { event_name: 'search_submit', source: 'GA4', flow: 'Merchandise', description: 'Bắn khi người dùng bấm tìm kiếm ở trang listing. search_term là từ khoá người dùng nhập.', sample: { event: 'search_submit', service: 'merchandise', search_term: 'keychain', search_source: 'listing_searchbox' } };
+
+function setAttach(value) {
+  attach = value; targetId = '';
+  for (const b of document.querySelectorAll('[data-attach]')) b.setAttribute('aria-pressed', String((b.dataset.attach === 'true') === value));
+  $('attach-panel').classList.toggle('hidden', !value); $('targets').innerHTML = '';
+}
+document.addEventListener('click', event => {
+  const toggle = event.target.closest('[data-attach]'); if (toggle && !toggle.disabled) return setAttach(toggle.dataset.attach === 'true');
+  const target = event.target.closest('[data-target]');
+  if (target) { targetId = target.dataset.target; for (const t of document.querySelectorAll('[data-target]')) t.setAttribute('aria-pressed', String(t === target)); if (target.dataset.tabUrl && /^https?:/.test(target.dataset.tabUrl)) $('url').value = target.dataset.tabUrl; }
+});
+
+function renderAi(ai) {
+  const sig = JSON.stringify(ai); if (!ai || sig === aiSig) return; aiSig = sig;
+  const ready = ai.enabled && ai.configured_key_count > 0 && !ai.closed;
+  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? `AI sẵn sàng · ${ai.routing}` : 'AI chưa sẵn sàng';
+  const off = $('ai-off-banner'); off.classList.toggle('hidden', ready);
+  off.querySelector('p').textContent = !ai.enabled ? reasonText('AI_DISABLED') + ' Thu thập và đối chiếu vẫn chạy bình thường.' : !ai.configured_key_count ? reasonText('API_KEY_MISSING') : '';
+  const items = [
+    ['Trạng thái', ai.enabled ? 'Bật' : 'Tắt'], ['Key đã cấu hình', ai.configured_key_count], ['Định tuyến', ai.routing],
+    ['Model đặc tả / giải thích', `${ai.model_spec} / ${ai.model_explain}`], ['Cho phép trả phí', ai.allow_paid ? 'Có' : 'Không (chỉ free)'],
+    ['Giá tối đa in / out', `${ai.max_prompt_usd_per_million} / ${ai.max_completion_usd_per_million} USD/1M`], ['Ngân sách / tác vụ', usd(ai.request_budget_usd)],
+    ['Số model thử tối đa', `${ai.max_model_attempts} (free: ${ai.max_free_attempts})`],
+  ];
+  $('ai-config').innerHTML = items.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
+  $('ai-keys').innerHTML = (ai.keys || []).map(k => `<span class="pill ${k.available ? (k.paid_available ? 'PASS' : 'REVIEW') : 'FAIL'}">${esc(k.label)} · ${k.available ? (k.paid_available ? 'sẵn sàng' : 'chỉ free') : esc(k.reason || 'tạm khoá')}</span>`).join('');
+  const trace = ai.last_trace || [];
+  $('ai-trace').innerHTML = trace.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Model</th><th>Key</th><th>Kết quả</th></tr></thead><tbody>${trace.map(t => `<tr><td><code>${esc(t.model)}</code></td><td>${esc(t.key_label)}</td><td>${t.status === 'SUCCESS' ? '<span class="pill PASS">Thành công</span>' : `<span class="pill FAIL">${esc(t.status || 'Lỗi')}</span> ${esc(reasonText(t.reason || t.error))}`}</td></tr>`).join('')}</tbody></table></div>`
+    + (ai.last_result ? `<p class="hint">Lần gần nhất: ${ai.last_result.available ? `model <code>${esc(ai.last_result.model)}</code>, chi phí ${usd(ai.last_result.actual_cost_usd ?? ai.last_result.estimated_cost_usd)}` : esc(reasonText(ai.last_result.reason))}</p>` : '')
+    : '<p class="hint">Chưa có lượt gọi nào trong phiên ứng dụng này.</p>';
+}
+function renderDraft(result) {
+  if (!result.available) { $('ai-output').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }
+  lastDraft = result.case;
+  const rules = lastDraft.rules || [];
+  $('ai-output').innerHTML = `<div class="result REVIEW"><div class="result-head"><div class="name"><strong>${esc(lastDraft.name || lastDraft.id)}</strong><small>${esc(lastDraft.id)} · ${rules.length} rule · model ${esc(result.routing?.model || '')} · ${usd(result.routing?.actual_cost_usd ?? result.routing?.estimated_cost_usd)}</small></div><span class="pill REVIEW">Bản nháp</span></div>
+    <div class="table-scroll"><table class="checks"><thead><tr><th>Event</th><th>Tầng</th><th>Trường được kiểm</th></tr></thead><tbody>${rules.map(r => `<tr><td>${esc(r.event_name)}</td><td><span class="pill layer">${esc(r.layer)}</span></td><td>${Object.entries(r.fields || {}).map(([p, f]) => `<code>${esc(p)}</code> ${esc(f.op)}${f.value !== undefined ? ` <code>${esc(short(f.value, 50))}</code>` : ''}`).join('<br>')}</td></tr>`).join('')}</tbody></table></div></div>
+    <div class="row"><button type="button" class="btn primary" data-action="use-draft">Đưa vào trình sửa rule để duyệt</button></div>
+    <details class="more"><summary>JSON bản nháp</summary><pre>${esc(JSON.stringify(lastDraft, null, 2))}</pre></details>`;
+}
+
+$('ai-input').value = JSON.stringify(SAMPLE, null, 2);
+EventQA.boot({ token, mode: 'cdp-ai', hooks: {
+  startPayload: () => { if (attach && !targetId) throw new Error('Quét và chọn tab cần gắn trước.'); return attach ? { attach: true, targetId } : { attach: false }; },
+  render: s => renderAi(s.ai),
+  actions: {
+    'scan-targets': async () => {
+      const { targets } = await EventQA.api('targets', { port: Number($('debug-port').value) }, 'scan');
+      $('targets').innerHTML = targets.map(t => `<button type="button" class="case" data-target="${esc(t.id)}" data-tab-url="${esc(t.url)}" aria-pressed="false"><span class="case-main"><strong>${esc(t.title || '(không tiêu đề)')}</strong><small>${esc(short(t.url, 80))}</small></span></button>`).join('') || '<p class="hint">Không thấy tab nào trên cổng này.</p>';
+      if (targets.length === 1) $('targets').querySelector('[data-target]').click();
+    },
+    'open-ai': () => { EventQA.selectTab('ai'); $('ai-input').focus(); },
+    'ai-sample': () => { $('ai-input').value = JSON.stringify(SAMPLE, null, 2); $('ai-input').classList.remove('invalid'); $('ai-input-error').textContent = ''; },
+    'ai-test': async () => {
+      $('ai-check').innerHTML = '<p class="hint">Đang gọi thử với dữ liệu demo…</p>';
+      const result = await EventQA.api('ai-test', {}, 'ai-test');
+      $('ai-check').innerHTML = result.available
+        ? `<div class="banner info"><p><b>Kết nối thành công</b> · model <code>${esc(result.routing?.model)}</code> · ${usd(result.routing?.actual_cost_usd ?? result.routing?.estimated_cost_usd)}\n${esc(short(result.note, 400))}</p></div>`
+        : `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`;
+    },
+    'ai-models': async () => {
+      $('ai-check').innerHTML = '<p class="hint">Đang tải danh sách model từ OpenRouter…</p>';
+      const result = await EventQA.api('ai-models', {}, 'ai-models');
+      if (!result.available) { $('ai-check').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }
+      $('ai-check').innerHTML = `<p class="hint">${result.candidates.length} model phù hợp, theo thứ tự sẽ thử (free trước, rồi rẻ nhất):</p><div class="table-scroll" style="max-height:320px;overflow:auto"><table class="checks"><thead><tr><th>#</th><th>Model</th><th>Loại</th><th>In / Out (USD/1M)</th><th>Ước tính / tác vụ</th></tr></thead><tbody>${result.candidates.slice(0, 40).map((m, i) => `<tr><td>${i + 1}</td><td><code>${esc(m.id)}</code></td><td>${m.free ? '<span class="pill PASS">Free</span>' : '<span class="pill">Trả phí</span>'}</td><td>${esc(m.prompt_usd_per_million.toFixed(3))} / ${esc(m.completion_usd_per_million.toFixed(3))}</td><td>${usd(m.estimated_cost_usd)}</td></tr>`).join('')}</tbody></table></div>`;
+    },
+    'ai-draft': async () => {
+      let input; try { input = JSON.parse($('ai-input').value); $('ai-input').classList.remove('invalid'); $('ai-input-error').textContent = ''; }
+      catch (e) { $('ai-input').classList.add('invalid'); $('ai-input-error').textContent = `JSON chưa hợp lệ: ${e.message}`; return; }
+      $('ai-output').innerHTML = '<p class="hint">AI đang tạo bản nháp… (thử model free trước)</p>';
+      renderDraft(await EventQA.api('ai-draft', { input }, 'ai-draft'));
+    },
+    'use-draft': () => { if (lastDraft) { EventQA.loadIntoRuleEditor(lastDraft); EventQA.toast('Đã đưa bản nháp vào trình sửa rule. Duyệt rồi bấm Lưu rule.', 'ok'); } },
+  },
+} });
+</script>
+</body>
+</html>

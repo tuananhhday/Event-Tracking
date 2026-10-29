@@ -1,0 +1,105 @@
+import { checkField } from './rules.mjs';
+
+// Queue/request records that set up a vendor SDK rather than report a user action.
+const SETUP_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$|config$|js$|set$|consent$|UNPARSED$|tracking_request$)/;
+
+function leaves(value, prefix = '', out = new Map(), depth = 0) {
+  if (value && typeof value === 'object' && depth < 6) {
+    const entries = Array.isArray(value) ? value.slice(0, 1).map((item, index) => [index, item]) : Object.entries(value);
+    for (const [key, child] of entries) leaves(child, prefix ? `${prefix}.${key}` : String(key), out, depth + 1);
+  } else if (prefix && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')) out.set(prefix, value);
+  return out;
+}
+/**
+ * Checks one captured event against one specification case without a QA step:
+ * dynamic values (`ref`) only need to be present, every other rule is applied as written.
+ */
+function evaluate(testCase, rule, event) {
+  const checks = Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
+  const fixed = Object.entries(rule.fields ?? {}).filter(([, field]) => field?.op === 'eq' || field?.op === 'one_of').map(([path]) => path);
+  const failedFixed = checks.filter(check => check.verdict !== 'PASS' && fixed.includes(check.path)).length;
+  const passed = checks.filter(check => check.verdict === 'PASS').length;
+  // Sample values that reappear in the event (service, breadcrumb, taxonomy...) identify the flow.
+  let similar = 0;
+  if (testCase.sample) {
+    const expected = leaves(testCase.sample);
+    for (const [path, value] of leaves(event.payload)) {
+      const sample = expected.get(path);
+      if (typeof sample === 'string' && typeof value === 'string' && sample.length <= 60 && sample.toLowerCase() === value.toLowerCase()) similar++;
+    }
+  }
+  return { checks, score: passed + 2 * similar - 10 * failedFixed + flowHint(testCase.flow, event.page?.url) };
+}
+
+// Page paths of booking flows, matched against the flow names used in specifications.
+const FLOW_PATHS = [
+  [/\/(?:flight|ve-may-bay)(?:\/|$)/i, /vé máy bay|ve may bay|flight/i], [/\/(?:hotel|khach-san)(?:\/|$)/i, /khách sạn|khach san|hotel/i],
+  [/\/combo(?:\/|$)/i, /combo/i], [/\/(?:experience|attraction|ticket|vui-choi)(?:\/|$)/i, /vui chơi|trải nghiệm|experience|attraction/i],
+  [/\/golf(?:\/|$)/i, /golf/i], [/\/(?:event|su-kien)(?:\/|$)/i, /^event$|sự kiện/i], [/\/train(?:\/|$)/i, /train|tàu/i],
+  [/\/voucher(?:\/|$)/i, /voucher/i], [/\/(?:merchandise|shop)(?:\/|$)/i, /merchandise/i],
+];
+function flowHint(flow, pageUrl) {
+  let pathname = ''; try { pathname = new URL(pageUrl).pathname; } catch { return 0; }
+  const hit = FLOW_PATHS.find(([page]) => page.test(pathname));
+  if (!hit || !flow) return 0;
+  return hit[1].test(flow) ? 3 : 0;
+}
+
+/** Assigns each captured event to the specification row it most likely implements. */
+export function matchEvent(cases, event, index = indexCases(cases)) {
+  if (event.network?.phase && event.network.phase !== 'request') return null;
+  const candidates = index.get(`${event.layer}|${String(event.source).toUpperCase()}|${event.event_name}`) || [];
+  let best = null;
+  for (const { testCase, rule } of candidates) {
+    const result = evaluate(testCase, rule, event);
+    if (!best || result.score > best.score) best = { testCase, rule, ...result };
+  }
+  if (!best) return null;
+  const issues = best.checks.filter(check => check.verdict !== 'PASS').map(({ path, op, code, expected, actual, verdict }) => ({ path, op, code, expected, actual, verdict }));
+  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, ambiguous: candidates.length > 1 && best.score <= 0 };
+}
+
+export function indexCases(cases) {
+  const index = new Map();
+  for (const testCase of cases) for (const rule of testCase.rules ?? []) {
+    const key = `${rule.layer}|${String(rule.source ?? testCase.source).toUpperCase()}|${rule.event_name}`;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push({ testCase, rule });
+  }
+  return index;
+}
+
+/**
+ * Coverage of a tracking specification by the evidence of a session: which rows fired,
+ * which match their sample, which never fired, and which captured events are not specified.
+ */
+export function specCoverage(cases, events, cache = new Map()) {
+  const index = indexCases(cases);
+  const rows = new Map(cases.map(testCase => [testCase.id, {
+    case_id: testCase.id, stt: testCase.stt ?? '', source: testCase.source ?? '', flow: testCase.flow ?? '', event_name: testCase.rules?.[0]?.event_name ?? testCase.name,
+    layer: testCase.rules?.[0]?.layer ?? '', description: testCase.description ?? '', notes: testCase.notes ?? '', row: testCase.provenance?.row ?? null, sheet: testCase.provenance?.sheet ?? null,
+    seen: 0, pass: 0, fail: 0, review: 0, last_at: null, last_evidence_id: null, last_fail_evidence_id: null, issues: [],
+  }]));
+  const unmatched = new Map();
+  for (const event of events) {
+    if (event.network?.phase && event.network.phase !== 'request') continue;
+    let match = cache.get(event.evidence_id);
+    if (match === undefined) { match = matchEvent(cases, event, index); cache.set(event.evidence_id, match); }
+    if (!match) {
+      if (event.layer !== 'JS_QUEUE' || SETUP_EVENT.test(event.event_name)) continue;
+      const key = `${event.source}|${event.event_name}`;
+      const entry = unmatched.get(key) ?? { source: event.source, event_name: event.event_name, count: 0, last_evidence_id: null, page: event.page?.url ?? '' };
+      entry.count++; entry.last_evidence_id = event.evidence_id; unmatched.set(key, entry);
+      continue;
+    }
+    const row = rows.get(match.case_id); if (!row) continue;
+    row.seen++; row[match.verdict.toLowerCase()]++; row.last_at = event.captured_at; row.last_evidence_id = event.evidence_id;
+    if (match.verdict !== 'PASS') row.last_fail_evidence_id = event.evidence_id;
+    for (const issue of match.issues) if (row.issues.length < 12 && !row.issues.some(known => known.path === issue.path && known.code === issue.code)) row.issues.push(issue);
+  }
+  const list = [...rows.values()];
+  for (const row of list) row.status = !row.seen ? 'NOT_SEEN' : row.fail ? 'MISMATCH' : row.review ? 'REVIEW' : 'MATCH';
+  const totals = { rows: list.length, seen: list.filter(row => row.seen).length, match: list.filter(row => row.status === 'MATCH').length,
+    mismatch: list.filter(row => row.status === 'MISMATCH').length, not_seen: list.filter(row => !row.seen).length, unmatched: unmatched.size };
+  return { totals, rows: list, unmatched: [...unmatched.values()].sort((a, b) => b.count - a.count) };
+}

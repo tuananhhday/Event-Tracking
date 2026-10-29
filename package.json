@@ -1,0 +1,26 @@
+{
+  "name": "event-tracking-qa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Event Tracking QA: CDP, optional OpenRouter, and mitmproxy",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "node src/cli.mjs serve",
+    "cdp": "node src/cli.mjs serve --mode cdp",
+    "ai": "node --env-file-if-exists=.env src/cli.mjs serve --mode cdp-ai",
+    "proxy": "node src/cli.mjs serve --mode proxy",
+    "demo": "node src/cli.mjs demo",
+    "smoke:local": "node scripts/local-smoke.mjs",
+    "smoke:proxy": "node scripts/proxy-smoke.mjs",
+    "smoke:proxy:https": "node scripts/proxy-smoke.mjs --https",
+    "smoke:ai": "node --env-file=.env scripts/ai-smoke.mjs",
+    "test": "node --test",
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "exceljs": "^4.4.0",
+    "json5": "^2.2.3"
+  }
+}

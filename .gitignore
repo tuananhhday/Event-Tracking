@@ -1,0 +1,15 @@
+node_modules/
+.cache/
+.tmp/
+.env
+.env.*
+!.env.example
+runs/
+profiles/
+.profiles/
+.venv-proxy/
+.python-runtime/
+imports/
+*.log
+__pycache__/
+*.pyc
