@@ -14,7 +14,7 @@ import { activityEvent, activityEntries } from './core/activity.mjs';
 import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
-import { launchBrowser, closeOwnedBrowser } from './browser/launcher.mjs';
+import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
 import { ProxyCollector, proxyCaSpki } from './collectors/proxy.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
@@ -121,11 +121,13 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     let targets = null;
     try { targets = await listTargets(options.port); } catch { /* nothing listening */ }
     if (targets) {
-      if (!targets.length) await fetch(`http://127.0.0.1:${options.port}/json/new?about:blank`, { method: 'PUT', signal: AbortSignal.timeout(3000) });
       status(`Dùng lại cửa sổ trình duyệt test đang mở (cổng ${options.port}); app sẽ không tự đóng cửa sổ này.`);
-      return { reused: true };
+      return { reused: true, targetId: await createTestPage({ port: options.port, headless: options.headless }) };
     }
-    try { browserHandle = await launchBrowser(options); return { reused: false }; }
+    try {
+      browserHandle = await launchBrowser({ ...options, url: 'about:blank' });
+      return { reused: false, targetId: await createTestPage({ port: options.port, headless: options.headless }) };
+    }
     catch (error) {
       if (/exited before the debug endpoint was ready (code 21)/.test(error.message)) throw new Error('Cửa sổ trình duyệt test cũ vẫn đang mở với profile này nhưng không còn kết nối được. Đóng hết cửa sổ Chrome/Edge test rồi bấm lại.');
       throw error;
@@ -329,8 +331,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
               proxyCa = { cert_path: ca.file.replace(/.pem$/, '.cer'), trusted_in_test_browser: trustCa };
               if (closing || epoch !== captureEpoch) return send(res, 200, state());
               const opened = await openTestBrowser({ browser, port: debugPort, headless, url: targetUrl.toString(), profileDir: path.join(rootDir, 'profiles', `proxy-${browser}`), proxyServer: `http://127.0.0.1:${Number(data.proxyPort || 8080)}`, trustSpki: trustCa ? ca.spki : undefined });
-              if (opened.reused) {
-                const [page] = await listTargets(debugPort);
+              {
+                const page = (await listTargets(debugPort)).find(target => target.id === opened.targetId);
+                if (!page) throw new Error('Không tìm thấy tab test vừa mở.');
                 const connection = new CDPConnection(page.webSocketDebuggerUrl);
                 try { await connection.connect(); const navigation = await connection.send('Page.navigate', { url: targetUrl.toString() }); if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText); }
                 finally { connection.close(); }
@@ -338,13 +341,15 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
               status(trustCa ? 'Proxy sẵn sàng. Trình duyệt test chỉ tin CA proxy cục bộ này; HTTPS dùng được.' : 'Proxy sẵn sàng. Chưa tin CA proxy: website HTTPS sẽ báo lỗi chứng chỉ.');
               if (navigationError) status(navigationError);
             } else {
-              if (!data.attach) await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) });
+              const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
               if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
               collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
               await collector.start(manager.session);
               if (!data.attach) {
-                const first = [...collector.connections.values()][0];
-                const navigation = await first.connection.send('Page.navigate', { url: targetUrl.toString() });
+                const page = collector.connections.get(opened.targetId);
+                if (!page) throw new Error('Không kết nối được tab test vừa mở.');
+                const { frameTree } = await page.connection.send('Page.getFrameTree');
+                const navigation = await page.connection.send('Page.navigate', { url: targetUrl.toString(), frameId: frameTree.frame.id });
                 if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
               }
               status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');

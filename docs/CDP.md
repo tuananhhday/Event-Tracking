@@ -2,6 +2,8 @@
 
 Node.js 24 provides the WebSocket/fetch clients. The collector uses raw Chrome DevTools Protocol. It does not depend on an extension, Selenium, or Playwright.
 
+When the app opens a test browser, it creates and activates a known top-level page using the browser connection. It navigates that exact target and main frame, rather than the first discovered page (which may be an Edge onboarding/sign-in dialog). Headful test windows request a maximized normal browser window; manually attached tabs are left under the user's control. `node scripts/browser-start-smoke.mjs` verifies that an existing startup page remains unchanged while the website loads in a different top-level page.
+
 - Browser launch always uses a separate profile in `.profiles/`, a localhost debug address, and an explicit debug port. The normal user browser is never terminated. An existing debug port must be attached explicitly instead of silently reused by the launcher.
 - Edge `RemoteDebuggingAllowed=0` in HKLM/HKCU policy is reported as an error; the tool does not bypass it.
 - `Runtime.addBinding` and `Page.addScriptToEvaluateOnNewDocument` capture `dataLayer`/`InsiderQueue`. Existing default frame contexts are also instrumented. New same-renderer and out-of-process iframe contexts are handled. A 750 ms discovery poll attaches matching new tabs.

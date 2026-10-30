@@ -72,7 +72,8 @@ export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'ab
   } catch (error) { if (error.code === 'PORT_IN_USE') throw error; }
   mkdirSync(profile, { recursive: true });
   const args = [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
-    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check'];
+    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--new-window'];
+  if (!headless) args.push('--start-maximized');
   if (proxyServer) args.push(`--proxy-server=${proxyServer}`, '--proxy-bypass-list=<-loopback>');
   if (trustSpki) args.push(`--ignore-certificate-errors-spki-list=${trustSpki}`);
   if (headless) args.push('--headless=new');
@@ -98,6 +99,32 @@ export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'ab
   }
   if (child.exitCode === null) child.kill();
   throw new Error(`Cannot connect to ${browser} on localhost:${port}. A browser may already hold this test profile, or remote debugging may be blocked by policy.`);
+}
+
+/** Create a known top-level page rather than navigating the first discovered
+ * target, which can be an Edge onboarding/sign-in dialog on a fresh profile. */
+export async function createTestPage({ port, headless = false } = {}) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid browser debug port.');
+  const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(4000) });
+  if (!response.ok) throw new Error('Cannot read test browser identity.');
+  const endpoint = browserEndpoint((await response.json()).webSocketDebuggerUrl, port);
+  if (!endpoint) throw new Error('Invalid test browser identity.');
+  const connection = new CDPConnection(endpoint);
+  try {
+    await connection.connect();
+    const { targetId } = await connection.send('Target.createTarget', { url: 'about:blank', newWindow: !headless, background: false });
+    if (!targetId) throw new Error('Browser did not create a test page.');
+    if (!headless) {
+      // Some window managers do not implement bounds changes; page identity is
+      // still deterministic and must not fall back to another target.
+      try {
+        const { windowId } = await connection.send('Browser.getWindowForTarget', { targetId });
+        await connection.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
+      } catch { /* Window bounds are optional on this platform. */ }
+    }
+    await connection.send('Target.activateTarget', { targetId });
+    return targetId;
+  } finally { connection.close(); }
 }
 
 /** Close only the browser launched for this exact handle; never follow a reused port. */
