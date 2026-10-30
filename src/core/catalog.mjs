@@ -58,15 +58,18 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
   const issues = best.checks.filter(check => check.verdict !== 'PASS').map(({ path, op, code, expected, actual, verdict }) => ({ path, op, code, expected, actual, verdict }));
   // Field paths the specification expects, so a viewer can mark every parameter of the event.
   const fields = Object.fromEntries(Object.entries(best.rule.fields ?? {}).map(([path, field]) => [path, field?.op]));
-  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
+  if (!Object.keys(fields).length || best.testCase.sample_available === false) issues.push({ code: 'NO_EXPECTED_FIELDS', verdict: 'REVIEW', path: '', expected: 'Chi tiết event trong đặc tả' });
+  return { case_id: best.testCase.id, event_name: best.rule.event_name, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
 }
 
 export function indexCases(cases) {
   const index = new Map();
   for (const testCase of cases) for (const rule of testCase.rules ?? []) {
-    const key = `${rule.layer}|${String(rule.source ?? testCase.source).toUpperCase()}|${rule.event_name}`;
-    if (!index.has(key)) index.set(key, []);
-    index.get(key).push({ testCase, rule });
+    for (const name of new Set([rule.event_name, ...(rule.event_aliases ?? [])])) {
+      const key = `${rule.layer}|${String(rule.source ?? testCase.source).toUpperCase()}|${name}`;
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ testCase, rule });
+    }
   }
   return index;
 }
@@ -80,6 +83,7 @@ export function specCoverage(cases, events, cache = new Map()) {
   const rows = new Map(cases.map(testCase => [testCase.id, {
     case_id: testCase.id, stt: testCase.stt ?? '', source: testCase.source ?? '', flow: testCase.flow ?? '', event_name: testCase.rules?.[0]?.event_name ?? testCase.name,
     layer: testCase.rules?.[0]?.layer ?? '', description: testCase.description ?? '', notes: testCase.notes ?? '', row: testCase.provenance?.row ?? null, sheet: testCase.provenance?.sheet ?? null,
+    payload_format: testCase.payload_format ?? '',
     seen: 0, pass: 0, fail: 0, review: 0, last_at: null, last_evidence_id: null, last_fail_evidence_id: null, issues: [],
   }]));
   const unmatched = new Map();
@@ -88,7 +92,7 @@ export function specCoverage(cases, events, cache = new Map()) {
     let match = cache.get(event.evidence_id);
     if (match === undefined) { match = matchEvent(cases, event, index); cache.set(event.evidence_id, match); }
     if (!match) {
-      if (event.layer !== 'JS_QUEUE' || SETUP_EVENT.test(event.event_name)) continue;
+      if (SETUP_EVENT.test(event.event_name)) continue;
       const key = `${event.source}|${event.event_name}`;
       const entry = unmatched.get(key) ?? { source: event.source, event_name: event.event_name, count: 0, last_evidence_id: null, page: event.page?.url ?? '' };
       entry.count++; entry.last_evidence_id = event.evidence_id; unmatched.set(key, entry);

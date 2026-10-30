@@ -28,7 +28,7 @@
     HTTP_ERROR: 'Request lỗi HTTP', REQUEST_FAILED: 'Request thất bại', TIMING_EXCEEDED: 'Quá thời gian cho phép', MISSING_TIMING: 'Thiếu mốc thời gian',
     OUT_OF_ORDER: 'Sai thứ tự', ORDER_PREDECESSOR_MISSING: 'Thiếu event đứng trước', MISSING_CONTEXT: 'Context chưa có giá trị này',
     INVALID_RULE: 'Rule không hợp lệ', RULE_NEEDS_REVIEW: 'Rule chưa được duyệt', LAYER_UNAVAILABLE: 'Phương án này không quan sát được tầng này',
-    VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review',
+    VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review', NO_EXPECTED_FIELDS: 'Đặc tả chưa có chi tiết payload',
   };
   const VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', REVIEW: 'REVIEW', NOT_EXECUTED: 'Chưa chạy' };
   const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request' };
@@ -365,7 +365,8 @@
     const absent = spec ? spec.issues.filter(i => i.code === 'MISSING_FIELD' && !rows.some(row => full(row.path) === i.path) && !/\.0\./.test(i.path)) : [];
     const absentHtml = absent.length ? `<div class="list-title"><span class="pill FAIL">Thiếu so với đặc tả</span> ${absent.map(i => `<code>${esc(base && i.path.startsWith(`${base}.`) ? i.path.slice(base.length + 1) : i.path)}</code>`).join(', ')}</div>` : '';
     const note = spec?.notes ? `<p class="hint">Ghi chú đặc tả: ${esc(spec.notes)}</p>` : '';
-    return `${head}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
+    const contract = spec ? `<p><b>Event Name trong đặc tả:</b> ${esc(spec.event_name)} · ${esc(spec.provenance?.sheet)}!${esc(spec.provenance?.row)}<br>${esc(spec.description)}</p><button type="button" class="btn small" data-spec-detail="${esc(spec.case_id)}">Xem chi tiết đặc tả</button>` : '';
+    return `${head}${contract}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
       <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
       <details class="raw"><summary>JSON gốc (bằng chứng đầy đủ)</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
   }
@@ -497,12 +498,43 @@
   }
 
   // ---- specification coverage ------------------------------------------------
+  const valueAt = (value, path) => {
+    const parts = path.split('.'); let current = value;
+    for (let i = 0; i < parts.length; i++) {
+      if (current === null || typeof current !== 'object') return undefined;
+      const rest = parts.slice(i).join('.');
+      if (Object.hasOwn(current, rest)) return current[rest];
+      current = current[parts[i]];
+    }
+    return current;
+  };
+  async function openSpecDetail(id) {
+    const c = caseById(id); if (!c) return;
+    const row = ui.state.specCoverage?.rows.find(r => r.case_id === id);
+    const evidence = row?.last_fail_evidence_id || row?.last_evidence_id;
+    const loaded = evidence ? await (await fetch(`/api/event?id=${encodeURIComponent(evidence)}`)).json() : null;
+    const event = loaded?.event;
+    const rule = c.rules[0];
+    const comparisons = Object.entries(rule?.fields || {}).map(([path, field]) => {
+      const actual = event ? valueAt(event.payload, path) : undefined;
+      const issue = loaded?.spec?.issues.find(i => i.path === path);
+      const verdict = !event ? 'Chưa có event' : issue ? (ISSUE_TEXT[issue.code] || issue.code) : field.op === 'ignore' ? 'Bỏ qua' : 'Đúng theo rule';
+      return `<tr><td><code>${esc(path)}</code></td><td>${formatValue(valueAt(c.sample, path))}</td><td>${esc(field.op)}${field.value !== undefined ? ` · ${esc(short(field.value, 100))}` : ''}</td><td>${actual === undefined ? '<span class="hint">Chưa có / thiếu trường</span>' : formatValue(actual)}</td><td>${esc(verdict)}</td></tr>`;
+    }).join('');
+    $('spec-detail-content').innerHTML = `<h2>${esc(rule?.event_name || c.name)}</h2><p><b>${esc(c.provenance?.sheet)}!${esc(c.provenance?.row)}</b> · ${esc(c.flow)} · ${esc(c.source)} · ${esc(LAYER_TEXT[rule?.layer] || rule?.layer)}</p><p style="white-space:pre-wrap">${esc(c.description)}</p>
+      <p class="hint">Mẫu giữ nguyên theo file. Các giá trị ví dụ không tự trở thành giá trị bắt buộc: cột Quy tắc cho biết đang kiểm kiểu, có mặt hay giá trị chính xác. Event thực tế giữ nguyên tên và payload đã thu thập.</p>
+      ${event ? `<p><b>Event thực tế:</b> ${esc(event.event_name)} · ${esc(event.evidence_id)}</p>` : '<p class="banner info">Chưa thu được event đúng nguồn/tầng/tên cho dòng này. Payload mẫu bên dưới không phải bằng chứng đã bắn.</p>'}
+      <div class="table-scroll"><table class="params"><thead><tr><th>Trường</th><th>Ví dụ trong đặc tả</th><th>Quy tắc hiện tại</th><th>Thực tế</th><th>Đối chiếu</th></tr></thead><tbody>${comparisons || '<tr><td colspan="5">Chưa có chi tiết payload để kiểm.</td></tr>'}</tbody></table></div>
+      <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Payload · thực tế</h3><pre>${esc(event ? JSON.stringify(event.payload, null, 2) : 'Chưa có event')}</pre></section></div>`;
+    $('spec-detail-dialog').showModal();
+  }
   const SPEC_STATUS = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy'] };
   function renderSpec(s) {
     const host = $('spec-table'); if (!host) return;
     const cov = s.specCoverage;
+    $('spec-format-note')?.classList.toggle('hidden', !s.cases.some(c => c.payload_format === 'default_custom_parameters'));
     const f = { flow: $('spec-flow')?.value || '', platform: $('spec-platform')?.value || '', status: $('spec-status')?.value || '', query: ($('spec-search')?.value || '').trim().toLowerCase() };
-    const sig = JSON.stringify([cov?.totals, cov?.rows.map(r => [r.seen, r.status, r.issues.length]), cov?.unmatched.length, f]); if (sig === ui.sig.spec) return; ui.sig.spec = sig;
+    const sig = JSON.stringify([cov?.totals, cov?.rows.map(r => [r.case_id, r.seen, r.status, r.issues.length]), cov?.unmatched.length, f]); if (sig === ui.sig.spec) return; ui.sig.spec = sig;
     setText('spec-count', cov ? `${cov.totals.seen}/${cov.totals.rows}` : '0');
     if (!cov) { $('spec-totals').innerHTML = ''; host.innerHTML = '<div class="empty"><strong>Chưa có đặc tả</strong>Nhập file Excel đặc tả ở bước 2 (vd Martech_WebOTA_….xlsx). App sẽ tự gắn từng event bắt được vào đúng dòng Nền tảng · Luồng · Event Name và kiểm trường theo DataLayer Sample.</div>'; return; }
     const t = cov.totals;
@@ -520,7 +552,7 @@
     host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks"><thead><tr><th>STT</th><th>Nền tảng · Luồng</th><th>Event</th><th>Trạng thái</th><th>Số lần</th><th>Trường lệch</th><th>Ghi chú đặc tả</th></tr></thead><tbody>
       ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status]; const evidence = r.last_fail_evidence_id || r.last_evidence_id; return `<tr>
         <td>${esc(r.stt || r.row || '')}</td><td><span class="pill">${esc(r.source)}</span><br><small>${esc(r.flow)}</small></td>
-        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(short(r.description, 70))}</small></td>
+        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(r.sheet)}!${esc(r.row)} · ${esc(short(r.description, 70))}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${r.seen ? `<b>${r.seen}</b>${r.fail ? `<br><small class="hint">${r.fail} lệch</small>` : ''}` : '—'}</td>
         <td>${issueText(r) || (r.seen ? '<span class="hint">Đủ trường theo sample</span>' : '')}${evidence ? `<button type="button" class="evlink" data-evidence="${esc(evidence)}">Xem event</button>` : ''}</td>
         <td><small>${esc(short(r.notes, 90))}</small></td></tr>`; }).join('')}
@@ -776,7 +808,8 @@
     },
     import: async () => {
       const file = $('spec-path').value.trim().replace(/^"(.*)"$/, '$1'); if (!file) throw new Error('Nhập đường dẫn file XLSX hoặc JSON.');
-      $('spec-path').value = file; await api('import', { path: file, sheet: $('sheet')?.value.trim() }, 'import');
+      $('spec-path').value = file; const result = await api('import', { path: file, sheet: $('sheet')?.value.trim() }, 'import');
+      if ($('spec-file-status')) $('spec-file-status').textContent = `Đã nhập ${result.cases.length} dòng. ` + (result.cases.some(c => c.payload_format === 'default_custom_parameters') ? 'Mẫu AppOTA: xem lưu ý cấu trúc và bảng chi tiết.' : 'Mở tab Đối chiếu đặc tả để xem chi tiết từng event.');
       resetSelection(); selectTab('spec'); toast(`Đã nhập ${ui.state?.cases.length ?? ''} dòng đặc tả. Event bắt được sẽ tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
     },
     'demo-spec': async () => { await api('demo-spec', {}, 'demo-spec'); resetSelection(); toast('Đã nạp 3 case demo.', 'ok'); },
@@ -808,12 +841,29 @@
   };
 
   function bindCommon() {
+    $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
+    $('sheet-select')?.addEventListener('change', () => { $('sheet').value = $('sheet-select').value; });
+    $('spec-file')?.addEventListener('change', run(async () => {
+      const file = $('spec-file').files[0]; if (!file) return;
+      if (file.size > 3 * 1024 * 1024) throw new Error('Chọn file nhỏ hơn 3 MB.');
+      const content = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = reject; reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(file); });
+      const uploaded = await api('spec-upload', { name: file.name, content }, 'spec-upload');
+      $('spec-path').value = uploaded.path;
+      const names = uploaded.sheets.map(s => s.name);
+      const selected = names.includes('R1511') ? 'R1511' : names.includes('Tổng hợp Event tracking') ? 'Tổng hợp Event tracking' : names[0] || '';
+      $('sheet-select').innerHTML = names.map(name => `<option>${esc(name)}</option>`).join('') || '<option>JSON — không có sheet</option>';
+      $('sheet-select').disabled = !names.length; $('sheet-select').value = selected;
+      $('sheet-list').innerHTML = names.map(name => `<option value="${esc(name)}"></option>`).join('');
+      $('sheet').value = selected;
+      $('spec-file-status').textContent = `${file.name} · ${names.length} sheet. Đã chọn ${selected || 'JSON'}; bấm Nhập file để áp dụng.`;
+    }));
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail]');
       if (!target || target.disabled) return;
       const d = target.dataset;
+      if (d.specDetail) return run(() => openSpecDetail(d.specDetail))();
       if (d.action && actions[d.action]) return run(actions[d.action])();
       if (d.action && ui.hooks.actions?.[d.action]) return run(ui.hooks.actions[d.action])();
       if (d.case) return selectCase(d.case);

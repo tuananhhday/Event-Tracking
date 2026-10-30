@@ -4,16 +4,20 @@ Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Down
 
 1. Giải nén **toàn bộ** ZIP vào thư mục có quyền ghi, ví dụ Documents\EventQA.
 2. Mở `START_PORTABLE.cmd`; giữ cửa sổ lệnh mở khi dùng.
-3. Giao diện tự mở. Chọn Chrome hoặc Edge đã có trên máy để chạy trình duyệt test.
-4. Kết thúc phiên và xuất báo cáo, sau đó chạy `STOP_PORTABLE.cmd` để dừng.
+3. Trang chính có **3 lựa chọn: CDP không AI / CDP có AI / Proxy**. Chọn chế độ, rồi chọn Chrome hoặc Edge đã có trên máy.
+4. Ở bước **Đặc tả tracking**, bấm chọn file Excel của bạn. Chọn sheet **R1511** trong danh sách rồi bấm **Nhập file**.
+5. Tab **Đối chiếu đặc tả** → **Xem chi tiết đặc tả** hiển thị Event Name và Chi tiết event nguyên văn, cùng bảng từng trường mong đợi / thực tế. Sheet R1511 của file được cung cấp đã kiểm tra đọc đủ 8 event. File Excel không được đóng kèm gói tải; bạn chọn file trên máy mình.
+6. Kết thúc phiên và xuất báo cáo, sau đó chạy `STOP_PORTABLE.cmd` để dừng.
 
-Gói chứa Node.js **24.19.0 Windows x64** và thư viện theo lockfile. Không cần cài Node, chạy npm, tải package hay quyền quản trị. Chế độ được đóng gói là **CDP không AI**; không kèm Python/mitmproxy hoặc API key. Dữ liệu phiên và báo cáo nằm trong `runs/` trên máy sử dụng.
+Gói chứa Node.js **24.19.0 Windows x64** và thư viện theo lockfile. Không cần cài Node, chạy npm, tải package hay quyền quản trị để dùng CDP và đọc Excel. AI cần API key riêng; Proxy cần Python/mitmproxy riêng, chưa kèm trong gói. Dữ liệu phiên và báo cáo nằm trong `runs/` trên máy sử dụng.
+
+Ứng dụng giữ riêng Event Name trong cột Excel (`listing_page_view`) và tên trong payload mẫu (`Listing Page View`). Không sửa payload thực tế để giống mẫu. Mẫu AppOTA có cấu trúc default/custom khác website thì sẽ hiện rõ chưa thấy/thiếu/lệch; không tự suy diễn thành kết quả PASS. Giá trị mẫu của thiết bị, ngày, giá tiền được kiểm kiểu/có mặt; cột **Quy tắc hiện tại** cho biết chính xác điều đang được kiểm. Muốn so giá trị động với thao tác thực tế cần duyệt rule/context.
 
 Máy phải cho phép chạy `node.exe`, file CMD và Chrome/Edge với cổng debug. Nếu công ty chặn thực thi hoặc có chính sách chặn debug trình duyệt, cần IT phê duyệt. Không tắt bảo vệ hoặc tìm cách vượt chính sách. Website vẫn cần truy cập được qua mạng công ty.
 
 Gói được tạo trên Linux: đã kiểm tra checksum Node từ nguồn chính thức, cấu trúc ZIP, chạy code được giải nén và smoke CDP trên Linux. **Chưa chạy thử trực tiếp trên Windows**. Kiểm tra tại máy công ty: launcher hiện phiên bản Node, giao diện mở, chạy demo và xuất báo cáo XLSX được.
 
-SHA-256 của ZIP: `ef0d317e7776a3d157f6ca1ab8b1cb45ccf98e6baa6f341e3da3bf6353ca8558`.
+SHA-256 của ZIP: `51781d501bf473295079878ff28130cce05f11ea23ab77071aded794f2afeb8c`.
 
 ## Tạo lại gói
 

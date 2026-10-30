@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import JSON5 from 'json5';
 import Ajv from 'ajv';
 import JSZip from 'jszip';
+import { sensitivePath } from './sanitize.mjs';
 
 const fieldSchema = {
   type: 'object', required: ['op'], additionalProperties: true,
@@ -26,7 +27,7 @@ export const caseSchema = {
     rules: { type: 'array', items: {
       type: 'object', required: ['event_name', 'layer', 'fields'], additionalProperties: true,
       properties: {
-        event_name: { type: 'string', minLength: 1 }, source: { type: 'string' }, layer: { enum: ['JS_QUEUE', 'TRACKING_REQUEST'] },
+        event_name: { type: 'string', minLength: 1 }, event_aliases: { type: 'array', items: { type: 'string', minLength: 1 } }, source: { type: 'string' }, layer: { enum: ['JS_QUEUE', 'TRACKING_REQUEST'] },
         needs_review: { type: 'boolean' }, within_ms: { type: 'number', minimum: 0 }, after: { type: 'string' },
         count: { type: 'object', required: ['min', 'max'], properties: { min: { type: 'integer', minimum: 0 }, max: { type: 'integer', minimum: 0 } }, additionalProperties: false },
         fields: { type: 'object', additionalProperties: fieldSchema },
@@ -51,7 +52,7 @@ const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u030
 const aliases = {
   id: ['stt', 'id', 'testcaseid'], source: ['nentang', 'platform', 'source'], flow: ['luong', 'flow'],
   event: ['eventname', 'tenevent', 'event'], description: ['eventdescription', 'description', 'mota'],
-  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample'], note: ['note', 'notes', 'ghichu'],
+  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'chitietevent', 'eventdetails'], note: ['note', 'notes', 'ghichu'],
   rules: ['rules', 'expectedrules', 'rulejson'],
 };
 
@@ -136,7 +137,8 @@ function inferredFields(payload) {
   const visit = (object, prefix = '') => {
     for (const [key, value] of Object.entries(object)) {
       const fieldPath = prefix ? `${prefix}.${key}` : key;
-      if (key.startsWith('gtm.') || key.startsWith('gtag.') || ignoredKeys.has(key)) fields[fieldPath] = { op: 'ignore' };
+      if (sensitivePath(fieldPath)) fields[fieldPath] = { op: 'exists' };
+      else if (key.startsWith('gtm.') || key.startsWith('gtag.') || ignoredKeys.has(key)) fields[fieldPath] = { op: 'ignore' };
       else if (fixed.has(key) && (!prefix || /^value\.0$/.test(prefix)) && typeof value === 'string') fields[fieldPath] = { op: 'eq', value };
       else if (dynamicRefs[key] && !prefix) fields[fieldPath] = { op: 'ref', value: dynamicRefs[key] };
       else if (value !== null && typeof value === 'object' && !Array.isArray(value)) visit(value, fieldPath);
@@ -180,6 +182,11 @@ async function readWorkbook(file) {
     await retry.xlsx.load(await zip.generateAsync({ type: 'nodebuffer' }));
     return retry;
   }
+}
+
+export async function specSheets(file) {
+  const workbook = await readWorkbook(file);
+  return workbook.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.rowCount }));
 }
 
 export async function importSpec(filePath, { sheet } = {}) {
@@ -246,15 +253,35 @@ export async function importSpec(filePath, { sheet } = {}) {
         else if (get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
       }
       const request = requestShape(payload);
+      // AppOTA exports use display names and default/custom parameters. Preserve that
+      // contract verbatim; it is not an InsiderQueue payload or a GA4 event literal.
+      const parameterExport = payload.default_parameters && payload.custom_parameters && typeof payload.event === 'string';
       const inferred = inferredFields(request ?? payload);
+      if (parameterExport) {
+        // These identify the platform/product family, unlike device, price or date examples.
+        for (const group of ['default_parameters', 'custom_parameters']) {
+          for (const key of ['platform', 'currency']) {
+            if (typeof payload[group]?.[key] === 'string') inferred.fields[`${group}.${key}`] = { op: 'eq', value: payload[group][key] };
+          }
+          if (Array.isArray(payload[group]?.taxonomy) && payload[group].taxonomy.length) inferred.fields[`${group}.taxonomy`] = { op: 'subset', value: payload[group].taxonomy };
+        }
+      }
       if (!Object.hasOwn(inferred.fields, 'event') && source === 'GA4') inferred.fields.event = { op: 'eq', value: eventName };
       // The Event Name column is authoritative when a pasted sample belongs to another event.
       for (const key of ['event', 'event_name', 'value.0.event_name']) {
         const field = inferred.fields[key];
-        if (field?.op === 'eq' && field.value !== eventName) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
+        if (!parameterExport && field?.op === 'eq' && field.value !== eventName) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
       }
-      testCase.rules = [{ event_name: eventName, source, layer: request ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true }];
+      testCase.rules = [{ event_name: eventName, source, layer: request || parameterExport ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
+        ...(parameterExport ? { event_aliases: [payload.event] } : {}) }];
       testCase.sample = payload;
+      testCase.sample_text = get('sample');
+      testCase.sample_available = Object.keys(payload).length > 0;
+      if (parameterExport) {
+        testCase.payload_format = 'default_custom_parameters';
+        warnings.push(`${worksheet.name}!${rowNumber}: mẫu default_parameters/custom_parameters (AppOTA); website phải phát đúng cấu trúc này mới đối chiếu được. Không tự chuyển InsiderQueue sang payload AppOTA.`);
+      }
+      if (!get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: không có chi tiết payload; chưa đủ dữ liệu để xác nhận khớp trường.`);
       validateTestCase(testCase);
       cases.push(testCase);
       warnings.push(`${worksheet.name}!${rowNumber}: draft rule; confirm trigger, dynamic context and network mapping before acceptance.`);

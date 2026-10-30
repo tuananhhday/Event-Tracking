@@ -10,6 +10,7 @@
 <header class="topbar">
   <div class="brand"><div class="brand-mark">03</div><div><h1>EventQA · Proxy không AI</h1><p>mitmdump tại localhost bắt request tracking của website thật · không cần quyền debug trình duyệt</p></div></div>
   <span id="proxy-chip" class="pill">mitmdump: đang kiểm tra</span>
+  <a class="btn ghost" href="http://127.0.0.1:4172/">← Chọn chế độ</a>
   <span id="conn" class="conn">Đã kết nối</span>
   <button type="button" class="btn ghost" data-action="shutdown" id="shutdown">Tắt ứng dụng</button>
 </header>
@@ -59,10 +60,14 @@
       <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>2</span></span><span class="stage-title"><strong>Đặc tả tracking <span class="hint">(không bắt buộc)</span></strong><small id="sum-spec">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
         <p class="hint" style="margin-top:0">Không có file đặc tả? Cứ thu thập, rồi bấm <b>Tạo rule</b> trên event thật ở tab Event. Rule đã lưu được tự nạp lại lần sau.</p>
-        <label for="spec-path">File XLSX / JSON trên máy</label>
+        <label for="spec-file">Chọn file hướng dẫn XLSX / JSON</label>
+        <input id="spec-file" type="file" accept=".xlsx,.json">
+        <p class="hint" id="spec-file-status" role="status">Chọn file, chọn sheet rồi bấm Nhập file. Hỗ trợ cột Chi tiết event.</p>
+        <label for="spec-path">Hoặc đường dẫn file trên máy</label>
         <input id="spec-path" placeholder="F:\...\Martech_WebOTA_20260501.xlsx" autocomplete="off">
         <label for="sheet">Sheet <span class="hint">(để trống: tự nhận diện)</span></label>
-        <input id="sheet" placeholder="Tổng hợp Event tracking">
+        <input id="sheet" list="sheet-list" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
+        <label for="sheet-select">Sheet trong file đã chọn</label><select id="sheet-select" disabled><option value="">Chọn file Excel trước</option></select>
         <button type="button" class="btn primary" id="import" data-action="import" style="margin-top:12px">Nhập file</button>
         <p class="hint">Nhập file thay toàn bộ case hiện có. Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
       </div>
@@ -164,6 +169,7 @@
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
         <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
+        <div id="spec-format-note" class="banner warn hidden"><p>File có mẫu AppOTA với default_parameters/custom_parameters. Website phải phát đúng cấu trúc này mới đối chiếu được; app không tự biến InsiderQueue thành event AppOTA. Giá trị mẫu như ngày, thiết bị, giá tiền là ví dụ: mặc định kiểm trường và kiểu; muốn so đúng giá trị thực tế, cần duyệt rule/context.</p></div>
         <div id="spec-table"></div>
       </div>
       <div class="tabpanel hidden" data-panel="firing">
@@ -216,5 +222,7 @@ EventQA.boot({ token, mode: 'proxy', hooks: {
 } });
 syncProxyInfo();
 </script>
+<dialog id="spec-detail-dialog" style="width:min(1100px,95vw);max-height:90vh;overflow:auto;border:1px solid #cbd5df;border-radius:12px;padding:24px">
+<button type="button" class="btn" id="spec-detail-close">Đóng</button><div id="spec-detail-content"></div></dialog>
 </body>
 </html>

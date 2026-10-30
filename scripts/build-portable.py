@@ -24,7 +24,7 @@ prefix = "EventQA-Windows-x64/"
 launcher = '''@echo off
 setlocal
 cd /d "%~dp0"
-title EventQA Portable - CDP
+title EventQA Portable - Choose mode
 if not exist "runtime\\node.exe" (
   echo Missing runtime\\node.exe. Extract the entire ZIP first.
   pause
@@ -36,7 +36,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-"runtime\\node.exe" src\\cli.mjs serve --mode cdp --open
+"runtime\\node.exe" --env-file-if-exists=.env src\\cli.mjs hub --open
 if errorlevel 1 pause
 '''
 stopper = '''@echo off
@@ -49,7 +49,7 @@ readme = '''EventQA portable - Windows 64-bit
 
 1. Extract the ENTIRE ZIP to a writable folder (for example Documents\\EventQA).
 2. Open START_PORTABLE.cmd. Do not run it from inside the ZIP viewer.
-3. Keep the command window open. The dashboard opens in your default browser.
+3. Keep the command window open. A web page opens with three mode choices.
 4. Select Chrome or Edge already installed on your computer.
 5. End/export the session before closing. Use STOP_PORTABLE.cmd to stop safely.
 
@@ -60,8 +60,12 @@ Company application-control and browser debugging policies still apply. If
 execution is blocked, ask IT to approve it; this package does not bypass policy.
 External websites still need normal company network access.
 
-This bundle supports CDP without AI. It does not include Python/mitmproxy or
-OpenRouter credentials. Session data and reports stay in runs/ on this machine.
+CDP runs immediately. AI features need your own OpenRouter credentials.
+Proxy needs Python/mitmproxy separately; neither is bundled. The mode selector
+explains these requirements. Session data and reports stay in runs/ locally.
+Choose your XLSX file in step 2 and select a sheet (for example R1511).
+The specification tab shows exact event names, descriptions and payload samples
+beside real evidence. AppOTA sample shapes may differ from website events.
 Do not commit runs/, profiles/, imports/ or credentials to GitHub.
 
 Built on Linux; Windows execution has not been validated on a Windows machine.

@@ -10,7 +10,7 @@ import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs'
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchEvent } from './core/catalog.mjs';
 import { firingChecks } from './core/firing.mjs';
-import { importSpec, validateTestCase } from './spec/import.mjs';
+import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser } from './browser/launcher.mjs';
@@ -201,7 +201,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         // The specification row this event was matched to, with its field-by-field outcome.
         const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
         const testCase = match && manager.cases.find(c => c.id === match.case_id);
-        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '' } : null;
+        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
         const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
         return send(res, 200, { event, spec, firing });
       }
@@ -232,7 +232,21 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       mutating = true;
       try {
         const data = await body(req);
-        if (url.pathname === '/api/import') {
+        if (url.pathname === '/api/spec-upload') {
+          if (manager.currentStep) throw new Error('Hoàn tất bước trước khi chọn file.');
+          const ext = path.extname(String(data.name)).toLowerCase();
+          if (!['.xlsx', '.json'].includes(ext) || typeof data.content !== 'string') throw new Error('Chỉ nhận XLSX hoặc JSON.');
+          const bytes = Buffer.from(data.content, 'base64');
+          if (!bytes.length || bytes.length > 3 * 1024 * 1024) throw new Error('File phải nhỏ hơn 3 MB.');
+          const dir = path.join(rootDir, 'imports', 'uploads');
+          await fs.mkdir(dir, { recursive: true });
+          const file = path.join(dir, `${randomBytes(12).toString('hex')}${/insider/i.test(String(data.name)) ? '-Insider' : ''}${ext}`);
+          await fs.writeFile(file, bytes, { flag: 'wx' });
+          try {
+            const sheets = ext === '.xlsx' ? await specSheets(file) : [];
+            return send(res, 200, { path: file, sheets });
+          } catch (error) { await fs.rm(file, { force: true }); throw error; }
+        } else if (url.pathname === '/api/import') {
           // A specification can arrive after exploring the site, as long as no step depends on the old one.
           if (manager.session?.status === 'RUNNING' && manager.steps.length) throw new Error('Phiên đã có bước dùng đặc tả hiện tại; kết thúc phiên trước khi đổi file đặc tả.');
           if (!['.xlsx', '.json'].includes(path.extname(String(data.path)).toLowerCase())) throw new Error('Chỉ nhận XLSX hoặc JSON.');
@@ -241,6 +255,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           manager.cases = imported.cases; specSource = 'file';
           if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
           status(`Đã nhập ${imported.cases.length} test case. ${imported.warnings.join(' ')}`);
+          return send(res, 200, { ...state(), importWarnings: imported.warnings });
         } else if (url.pathname === '/api/demo-spec') {
           if (manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên trước khi đổi specification.');
           manager.cases = await loadDemoCases(); specSource = 'demo'; status('Đã nạp 3 test case demo.');

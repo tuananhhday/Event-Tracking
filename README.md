@@ -1,5 +1,7 @@
 # Event Tracking QA
 
+**Trang chọn 3 chế độ:** chạy `START_EVENT_QA.cmd` hoặc `npm start`. Bản portable: giải nén ZIP và mở `START_PORTABLE.cmd`. Trang chính mở ba lựa chọn CDP không AI / CDP có AI / Proxy. Trong mỗi chế độ, dùng nút chọn file Excel và danh sách sheet; hỗ trợ cả cột **Chi tiết event** (ví dụ sheet **R1511**). Bấm **Xem chi tiết đặc tả** để xem Event Name, mô tả, payload mẫu nguyên văn và từng trường so với event thực tế. Mẫu AppOTA và payload website có thể khác cấu trúc; app hiển thị rõ và không tự chuyển đổi bằng chứng. Xem [hướng dẫn portable](PORTABLE_WINDOWS.md).
+
 Bản triển khai đầu tiên từ [deep-research-report.md](deep-research-report.md). Có **ba chế độ chạy riêng**, dùng chung rule engine, lưu bằng chứng và báo cáo. QC thao tác thủ công trên trình duyệt test; ứng dụng thu thập tự động, không cần F12, Selenium, Playwright hoặc extension.
 
 ## Chạy nhanh trên Windows

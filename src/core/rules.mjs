@@ -112,7 +112,7 @@ export function validateCase(testCase, events = [], step) {
       continue;
     }
     const matchesSource = event => !source || String(event.source).toUpperCase() === String(source).toUpperCase();
-    const matching = scoped.filter(event => event.event_name === rule.event_name && event.layer === rule.layer && matchesSource(event));
+    const matching = scoped.filter(event => [rule.event_name, ...(rule.event_aliases ?? [])].includes(event.event_name) && event.layer === rule.layer && matchesSource(event));
     const checks = [];
     const issues = [];
     const add = (code, expected, actual, evidenceId = stepEvidence, verdict = 'FAIL', path = undefined) => {

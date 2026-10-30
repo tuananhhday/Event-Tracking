@@ -6,7 +6,7 @@
   "description": "Local Event Tracking QA: CDP, optional OpenRouter, and mitmproxy",
   "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "start": "node src/cli.mjs serve",
+    "start": "node --env-file-if-exists=.env src/cli.mjs hub",
     "cdp": "node src/cli.mjs serve --mode cdp",
     "ai": "node --env-file-if-exists=.env src/cli.mjs serve --mode cdp-ai",
     "proxy": "node src/cli.mjs serve --mode proxy",
