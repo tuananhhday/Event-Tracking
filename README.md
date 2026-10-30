@@ -1,12 +1,12 @@
 # Event Tracking QA
 
-Bản triển khai đầu tiên từ [deep-research-report.md](deep-research-report.md). Có **ba chế độ chạy riêng**, dùng chung rule engine, lưu bằng chứng và báo cáo. QC thao tác thủ công trên trình duyệt test; ứng dụng thu thập tự động, không cần F12, Selenium, Playwright hoặc extension.
+Ứng dụng có **ba chế độ chạy riêng**, dùng chung rule engine, lưu bằng chứng và báo cáo. QC thao tác thủ công trên trình duyệt test; ứng dụng thu thập tự động, không cần F12, Selenium, Playwright hoặc extension.
 
 ## Chạy nhanh trên Windows
 
 Với **gói Windows đầy đủ**, giải nén toàn bộ rồi bấm [CHAY_EVENT_QA.cmd](CHAY_EVENT_QA.cmd). Ứng dụng tự mở giao diện CDP trong trình duyệt; không cần cài Node hay chạy lệnh npm. Gói này có sẵn `runtime/node.exe` và `node_modules`. Website test cần Chrome hoặc Edge trên máy. Giữ cửa sổ lệnh đang chạy; dùng [STOP_EVENT_QA.cmd](STOP_EVENT_QA.cmd) để dừng.
 
-Mở [START_EVENT_QA.cmd](START_EVENT_QA.cmd) để chọn phương án (hoặc mở cả ba, mỗi phương án một cửa sổ), hoặc mở trực tiếp `start.cmd` của từng phương án. Giao diện tự mở trong trình duyệt mặc định.
+Nếu muốn chọn chế độ nâng cao, mở [scripts/choose-mode.cmd](scripts/choose-mode.cmd) để chọn phương án (hoặc mở cả ba, mỗi phương án một cửa sổ), hoặc mở trực tiếp `start.cmd` của từng phương án. Giao diện tự mở trong trình duyệt mặc định.
 
 | Phương án | File chạy | Giao diện | Dùng khi |
 |---|---|---|---|

@@ -39,4 +39,4 @@ Các nguồn trên là Mobile SDK; không khẳng định payload mạng Web gi�
 
 ## Kiểm tra
 
-`npm run check`, `node --test test/*.test.mjs tests/*.test.mjs` và `npm run smoke:local`. Full `npm test` còn lỗi có sẵn ở nhánh cloud do thiếu `cloud/security.mjs`; xem riêng kết quả suite đó. Smoke local kiểm ba case đúng và hai case cố ý sai; FAIL trong hai case này là kết quả mong đợi.
+`npm run check`, `npm test` và `npm run smoke:local`. Toàn bộ test ứng dụng nằm trong `tests/`. Prototype `cloud/` thiếu module/asset và không thuộc workflow hiện tại đã được loại bỏ. Smoke local kiểm ba case đúng và hai case cố ý sai; FAIL trong hai case này là kết quả mong đợi.

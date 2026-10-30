@@ -4,4 +4,4 @@ Chạy `start.cmd`; giao diện riêng tự mở tại http://127.0.0.1:4175 (m�
 
 Chỉ quan sát `TRACKING_REQUEST`; JS queue không thể xác nhận nên được đánh REVIEW/LAYER_UNAVAILABLE. Dùng decoder, bằng chứng và báo cáo chung. Không replay request, không đổi proxy hệ thống, không cài CA vào Windows hay trình duyệt cá nhân.
 
-Xem [hướng dẫn Proxy](../../docs/AI_PROXY.md) và [trạng thái kiểm thử](../../docs/IMPLEMENTATION_STATUS.md).
+Xem [hướng dẫn Proxy](../../docs/AI_PROXY.md).

@@ -3,7 +3,7 @@
 Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Download raw file** trên GitHub.
 
 1. Giải nén **toàn bộ** ZIP vào một thư mục có quyền ghi.
-2. Bấm **CHAY_EVENT_QA.cmd** hoặc **START_PORTABLE.cmd**. Giao diện CDP tự mở trong trình duyệt.
+2. Bấm **CHAY_EVENT_QA.cmd**. Giao diện CDP tự mở trong trình duyệt.
 3. Giữ cửa sổ lệnh mở khi dùng. Bấm **STOP_EVENT_QA.cmd** để dừng.
 
 Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không cần cài Node hay gõ lệnh npm. Máy cần có Chrome hoặc Edge. AI cần key riêng; Proxy cần mitmproxy riêng.

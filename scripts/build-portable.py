@@ -37,6 +37,8 @@ output.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as target:
     # Explicit source selection prevents recursive ZIPs and local credentials/data.
     for name in tracked:
+        if name.startswith("docs/archive/"):
+            continue
         if not name or not (name.startswith(("src/", "scripts/", "docs/", "examples/", "solutions/"))
                             or name in {"package.json", "package-lock.json", "README.md", "PORTABLE_WINDOWS.md"}
                             or "/" not in name and name.endswith(".cmd")):
@@ -76,14 +78,10 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
                         json.dumps(definitions, ensure_ascii=False, indent=2))
         for name in ("event-catalogue.json", "event-catalogue.xlsx"):
             target.write(catalogue / name, prefix + "event-catalogue/" + name)
-    target.writestr(prefix + "START_PORTABLE.cmd",
-                    '@echo off\r\ncall "%~dp0CHAY_EVENT_QA.cmd"\r\nexit /b %errorlevel%\r\n')
-    target.writestr(prefix + "STOP_PORTABLE.cmd",
-                    '@echo off\r\ncall "%~dp0STOP_EVENT_QA.cmd"\r\nexit /b %errorlevel%\r\n')
     target.writestr(prefix + "DOC_TRUOC_KHI_CHAY.txt", (
         "BAN WINDOWS X64 - GIAI NEN ROI BAM CHAY\n\n"
         "1. Giai nen TOAN BO ZIP ra thu muc co quyen ghi.\n"
-        "2. Bam dup CHAY_EVENT_QA.cmd (hoac START_PORTABLE.cmd).\n"
+        "2. Bam dup CHAY_EVENT_QA.cmd.\n"
         "3. Giao dien CDP tu mo. Giu cua so lenh dang chay.\n"
         "4. Dung STOP_EVENT_QA.cmd de dung ung dung.\n\n"
         "Khong can cai Node.js hay go lenh npm. Can Chrome hoac Edge tren may.\n"
