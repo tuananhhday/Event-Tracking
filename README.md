@@ -1,5 +1,7 @@
 # Event Tracking QA
 
+**Định hướng theo yêu cầu nghiệm thu Web + App:** xem [đánh giá dự án và lộ trình](docs/PRODUCT_DIRECTION.md). Tài liệu phân biệt chức năng đang có với phần còn thiếu để kiểm đúng trigger, giá trị tham số, từng luồng và lập lỗi cho dev; kết quả khớp mẫu tự động chưa thay thế nghiệm thu kịch bản.
+
 **Xem dữ liệu thực tế dạng JSON:** tab Event mặc định hiển thị **Hoạt động · JSON**, mỗi dòng là một lần phát. Bấm **Xem JSON** để xem/sao chép/tải `event`, `default_parameters`, `custom_parameters`; tab **Payload gốc** giữ nguyên cấu trúc đã thu. Không lấy dữ liệu Excel để điền tham số thiếu và không khẳng định đó là dữ liệu đã vào server Insider. Có lịch sử phân trang để không mất event cũ ngoài 100 dòng gần nhất.
 
 **Website lag / không thao tác được khi gắn bộ thu:** kết thúc phiên, bật **Chỉ bắt request · không gắn hook vào website** ở CDP rồi mở phiên mới. Chế độ này không đọc JS queue; kết quả cho tầng chưa quan sát được giữ REVIEW. Bộ chụp queue không gọi getter/toJSON của payload website, giới hạn công việc đồng bộ và đánh dấu rõ bản thu không đầy đủ. Chạy `node scripts/checkout-smoke.mjs` để kiểm tra click đặt hàng và JSON trên trang thử cục bộ; lệnh này không tạo đơn ở website thật.
