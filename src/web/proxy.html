@@ -28,7 +28,8 @@
     <li class="stage" data-stage="session">
       <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>1</span></span><span class="stage-title"><strong>Website &amp; trình duyệt</strong><small id="sum-session">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
-        <label for="url">URL website cần test</label>
+        <label for="url">URL website cần test — nhập URL UAT nếu kiểm UAT</label>
+        <p class="hint">Nền tảng: Web trên PC. Môi trường kiểm thử theo URL bạn nhập; UAT và điện thoại là hai khái niệm riêng.</p>
         <input id="url" type="text" inputmode="url" placeholder="https://website-can-kiem-tra.vn" autocomplete="url" data-lock-running>
         <div id="recent" class="chips hidden"></div>
         <span class="label">Trình duyệt</span>
@@ -160,8 +161,8 @@
         </div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
-        <div id="activity-filters" class="toolbar"><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
-        <div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
+        <div id="activity-filters" class="toolbar"><label class="activity-date">Luồng kiểm tra<select id="activity-flow"><option value="">Tất cả luồng (chẩn đoán)</option><option value="golf">Golf</option><option value="flight">Flight</option><option value="hotel">Hotel</option><option value="combo">Combo</option><option value="attraction">VinWonders / Attraction</option><option value="event">Sự kiện</option><option value="voucher">Voucher</option><option value="merchandise">Merchandise</option><option value="unknown">Chưa xác định</option></select></label><label class="activity-date">Lấy dữ liệu từ<select id="activity-channel"><option value="network">Request gửi đi (nguồn chính)</option><option value="queue">dataLayer / InsiderQueue</option><option value="sdk">SDK trước khi gửi</option><option value="all">Tất cả lớp — chẩn đoán</option></select></label><label class="check"><input id="activity-spec-only" type="checkbox"> Chỉ event trong đặc tả đã nhập</label><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
+        <p id="activity-scope-note" class="banner info"></p><div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
         <div id="event-groups" class="hidden"></div>
         <div id="events" class="hidden"></div>
       </div>
@@ -200,6 +201,7 @@
 <dialog id="spec-detail-dialog" class="spec-dialog">
 <div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
 <dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
+<dialog id="queues-dialog" class="spec-dialog"><div class="spec-dialog-head"><span>QUEUE HIỆN TẠI · CẤU TRÚC NGUYÊN BẢN</span><button type="button" class="btn small" id="queues-close">Đóng ✕</button></div><div id="queues-content" style="padding:20px"></div></dialog>
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';

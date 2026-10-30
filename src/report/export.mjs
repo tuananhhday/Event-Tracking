@@ -89,6 +89,7 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   const tallies = Object.fromEntries(['PASS', 'FAIL', 'REVIEW', 'NOT_EXECUTED'].map(verdict => [verdict, results.filter(result => result.verdict === verdict).length]));
   addSheet(workbook, 'Run Summary', ['Metric', 'Value'], [
     ['Session', session.id ?? session.session_id], ['Mode', session.mode], ['Started', session.started_at], ['Completed', session.completed_at],
+    ['Platform', 'Web desktop (Chrome/Edge)'], ['Target URL', session.target_url ?? session.environment ?? ''],
     ['Test cases', cases.length], ['Steps', steps.length], ['Evidence records', events.length], ...Object.entries(tallies),
     ...(coverage ? [['Spec rows', coverage.totals.rows], ['Spec rows fired', coverage.totals.seen], ['Spec rows matching sample', coverage.totals.match], ['Spec rows mismatching', coverage.totals.mismatch], ['Spec rows not seen', coverage.totals.not_seen], ['Events outside spec', coverage.totals.unmatched]] : []),
     ['Ingestion', 'NOT_VERIFIED: HTTP response does not confirm vendor ingestion.'],

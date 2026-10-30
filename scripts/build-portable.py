@@ -36,7 +36,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-"runtime\\node.exe" --env-file-if-exists=.env src\\cli.mjs hub --open
+set "NO_PROXY=localhost,127.0.0.1,%NO_PROXY%"
+"runtime\\node.exe" --use-env-proxy --env-file-if-exists=.env src\\cli.mjs hub --open
 if errorlevel 1 pause
 '''
 stopper = '''@echo off
@@ -61,13 +62,24 @@ execution is blocked, ask IT to approve it; this package does not bypass policy.
 External websites still need normal company network access.
 
 CDP runs immediately. AI features need your own OpenRouter credentials.
+Choose CDP + AI, open the AI tab, paste your key and click Save key locally.
+The key is kept in .env on YOUR computer, works immediately and after restart.
+It is never bundled in this public ZIP. No configuration file editing is needed.
+AI tries all eligible free models first, then the cheapest eligible paid model
+if enabled. Total estimated cost is capped at USD 0.01 per task.
 Proxy needs Python/mitmproxy separately; neither is bundled. The mode selector
 explains these requirements. Session data and reports stay in runs/ locally.
-Choose your XLSX file in step 2 and select a sheet (for example R1511).
+Choose your XLSX file in step 2. For WebOTA, select Tong hop Event tracking
+(the Vietnamese sheet name is selected automatically). AppOTA R1511 is a
+separate mobile reference; do not apply its device fields to Web by default.
 The specification tab shows exact event names, descriptions and payload samples
 beside real evidence. AppOTA sample shapes may differ from website events.
+The AI tab can load a selected event's requirements from your imported workbook.
+Unreviewed requirements and dynamic values without context remain REVIEW.
 
 The default Events view is Activity / JSON: one row per observed event.
+Choose Golf, Flight, Hotel or another flow. Outgoing requests, JS queues and
+SDK observations are separate selections. SDK lifecycle chatter is hidden.
 Open a row to see, copy or download event/default_parameters/custom_parameters.
 The Raw Payload tab retains original captured field names. Missing mobile app
 attributes are never filled from the workbook. Sensitive fields are masked.
@@ -86,7 +98,7 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
     for name in tracked:
         if not name or not (name.startswith(("src/", "examples/", "docs/"))
-                            or name in {"package.json", "package-lock.json", "README.md", "scripts/stop-apps.mjs"}):
+                            or name in {"package.json", "package-lock.json", "README.md", ".env.example", "scripts/stop-apps.mjs"}):
             continue
         target.write(root / name, prefix + name)
     for file in sorted((root / "node_modules").rglob("*")):

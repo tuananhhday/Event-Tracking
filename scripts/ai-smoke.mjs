@@ -8,7 +8,7 @@ import { redact } from '../src/core/privacy.mjs';
 if (!(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS)) throw new Error('Điền key vào .env và chạy node --env-file=.env scripts/ai-smoke.mjs.');
 const output = path.resolve('runs/ai-smoke'); await fs.mkdir(output, { recursive: true });
 const routingOnly = process.argv.includes('--routing-only');
-const options = { enabled: true, modelSpec: 'auto', modelExplain: 'auto', maxRetries: 0, maxModelAttempts: 6, maxFreeAttempts: 2, maxOutputTokens: 1800, requestBudgetUsd: 0.003, timeoutMs: 20000 };
+const options = { enabled: true, modelSpec: 'auto', modelExplain: 'auto', maxRetries: 0, maxModelAttempts: 40, maxFreeAttempts: 0, maxCompletionRequests: 48, maxOutputTokens: 1800, requestBudgetUsd: 0.003, timeoutMs: 20000 };
 const input = { test_case_id: 'TC-AI-DEMO', verdict: 'FAIL', issues: [{ code: 'MISSING_FIELD', path: 'destination_id', expected: 'UUID exists', actual: null, evidence_id: 'DEMO-EV-001' }] };
 const before = structuredClone(input);
 const observations = { tested_at: new Date().toISOString(), inputs: 'Synthetic demo only', maximum_reserved_usd: routingOnly ? 0.006 : 0.009, operations: [] };

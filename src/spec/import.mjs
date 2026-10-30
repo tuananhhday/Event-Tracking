@@ -51,8 +51,9 @@ export function validateTestCase(value) {
 const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/[^a-z0-9]/g, '');
 const aliases = {
   id: ['stt', 'id', 'testcaseid'], source: ['nentang', 'platform', 'source'], flow: ['luong', 'flow'],
-  event: ['eventname', 'tenevent', 'event'], description: ['eventdescription', 'description', 'mota'],
-  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'chitietevent', 'eventdetails'], note: ['note', 'notes', 'ghichu'],
+  event: ['eventname', 'tenevent', 'event'], description: ['eventdescription', 'description', 'mota', 'triggerpointtrenapp'],
+  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'chitietevent', 'eventdetails', 'samplepayloadapp', 'samplepayload'], note: ['note', 'notes', 'ghichu'],
+  parameter_notes: ['chitietparam', 'diengiaiparam'], sdk_notes: ['cachfireinsidermobilesdk'],
   rules: ['rules', 'expectedrules', 'rulejson'],
 };
 
@@ -235,6 +236,7 @@ export async function importSpec(filePath, { sheet } = {}) {
       const provenance = { file: absolute, sheet: worksheet.name, row: rowNumber };
       const caseId = `TC-${normalized(worksheet.name).slice(0, 30)}-${get('id').replace(/[^a-zA-Z0-9_-]/g, '') || rowNumber}-${rowNumber}`;
       const testCase = { id: caseId, name: [get('flow'), eventName].filter(Boolean).join(' / '), source, flow: get('flow'), stt: get('id'), description: get('description'), notes: get('note'), provenance, needs_review: true, rules: [] };
+      testCase.parameter_notes = get('parameter_notes'); testCase.sdk_notes = get('sdk_notes');
       if (get('rules')) {
         try {
           const rules = JSON5.parse(get('rules'));

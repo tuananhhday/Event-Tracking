@@ -106,6 +106,21 @@ test('large queue items yield a marked partial snapshot while the original push 
   assert.ok(JSON.stringify(f.events[0]).length < 300000);
 });
 
+test('SDK lifecycle chatter cannot exhaust checkout capture and live queue reads do not create events', () => {
+  const f = fixture('Insider={eventManager:{dispatch(){return 7}}};dataLayer=[];InsiderQueue=[];');
+  [...f.timers.values()].forEach(fn => fn());
+  f.run('for(let i=0;i<400;i++)Insider.eventManager.dispatch("nativeSdk:permission:prompted",{x:i});');
+  assert.equal(f.events.length, 0);
+  f.run('Insider.eventManager.dispatch("Ucd:event:beforeSend",{events:[{event_name:"golf_checkout",event_params:{c_total:3150000}}]});');
+  assert.equal(f.events.length, 1);
+  f.run('InsiderQueue.push({type:"custom_event",value:[{event_name:"golf_checkout",event_parameters:{custom:{total:3150000}}}]});');
+  const count = f.events.length;
+  const snapshot = JSON.parse(f.run("JSON.stringify(window[Symbol.for('eventqa.collector.v1')].readQueues())"));
+  assert.equal(snapshot.queues.InsiderQueue.status, 'CAPTURED');
+  assert.equal(snapshot.queues.InsiderQueue.item[0].value[0].event_parameters.custom.total, 3150000);
+  assert.equal(f.events.length, count, 'reading a queue must not replay it');
+});
+
 test('browser launcher rejects unsafe inputs without starting any browser', async () => {
   await assert.rejects(launchBrowser({ port: 2 }), /port/);
   await assert.rejects(launchBrowser({ url: 'javascript:alert(1)' }), /HTTP/);

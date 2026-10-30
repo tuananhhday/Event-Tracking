@@ -1,11 +1,12 @@
 // Redact before persistence, reporting and external AI calls.
-const sensitive = /^(authorization|proxy[-_]?authorization|cookies?|set[-_]?cookie|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|secret|session([-_]?id|[-_]?token)?|visitor[-_]?id|device[-_]?id|sid|vid|email|e[-_]?mail|phone|phone[-_]?number|mobile|telephone|full[-_]?name|first[-_]?name|last[-_]?name|address|credit[-_]?card|card[-_]?number|cvv|user[-_]?id|client[-_]?id|cid|uid|_ga|gclid|fbclid)$/i;
+const sensitive = /^(authorization|proxy[-_]?authorization|cookies?|set[-_]?cookie|x[-_]?api[-_]?key|api[-_]?key|secure[-_]?hash|vpc[-_]?securehash|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|secret|session([-_]?id|[-_]?token)?|visitor[-_]?id|insider[-_]?id|device[-_]?id|sid|vid|email|e[-_]?mail|phone|phone[-_]?number|mobile|telephone|full[-_]?name|first[-_]?name|last[-_]?name|address|credit[-_]?card|card[-_]?number|cvv|user[-_]?id|client[-_]?id|cid|uid|_ga|gclid|fbclid)$/i;
 const MASK = '[REDACTED]';
 function cleanText(value) {
   return value
+    .replace(/\bsk-or-v1-[A-Za-z0-9_-]+/g, MASK)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${MASK}`)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, MASK)
-    .replace(/((?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|cookie)["']?\s*[=:]\s*["']?)([^\s&,;"'}]+)/gi, `$1${MASK}`)
+    .replace(/((?:authorization|api[_-]?key|secure[_-]?hash|vpc[_-]?securehash|access[_-]?token|refresh[_-]?token|token|password|secret|cookie)["']?\s*[=:]\s*["']?)([^\s&,;"'}]+)/gi, `$1${MASK}`)
     .replace(/(?<![\w-])(?:\+?84[ .-]?|0)(?:\d[ .-]?){8,10}(?![\w-])/g, MASK);
 }
 export function redactUrl(value) {

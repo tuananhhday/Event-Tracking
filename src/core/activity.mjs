@@ -1,5 +1,6 @@
 // Presentation of observed parameters. Never fill this from a specification or
 // infer mobile device/app attributes from a desktop browser.
+import { inferEventFlow } from './flows.mjs';
 const INSIDER_NAMES = {
   homepage_view: 'Homepage View', listing_page_view: 'Listing Page View', product_detail_page_view: 'Product Page View',
   cart_page_view: 'Cart Page View', confirmation_page_view: 'Purchase', purchase: 'Purchase',
@@ -9,8 +10,15 @@ const object = value => value !== null && typeof value === 'object' && !Array.is
 export function activityEvent(event) {
   const p = object(event.payload) ? event.payload : {};
   let defaults = Object.create(null), custom = Object.create(null), mapping = 'payload_fields';
+  const origins = Object.create(null);
+  const origin = (group, key, path) => {
+    origins[`${group}.${key}`] = event.queue_type === 'sdk_before_send'
+      ? path.replace(/^payload\./, `original_payload.events[${event.original_event_index}].`) : path;
+  };
   if (object(p.default_parameters) || object(p.custom_parameters)) {
     defaults = p.default_parameters || {}; custom = p.custom_parameters || {}; mapping = 'explicit_parameter_groups';
+    for (const key of Object.keys(defaults)) origin('default_parameters', key, `payload.default_parameters.${key}`);
+    for (const key of Object.keys(custom)) origin('custom_parameters', key, `payload.custom_parameters.${key}`);
   } else {
     let params = p;
     if (event.source === 'INSIDER') {
@@ -19,10 +27,17 @@ export function activityEvent(event) {
       else if (object(p.value)) { params = p.value; mapping = 'value'; }
     }
     const entries = Object.entries(params).filter(([key]) => !['event', 'event_name', 'type', 'processed'].includes(key));
+    const prefix = mapping === 'payload_fields' ? 'payload' : `payload.${mapping}`;
     for (const [key, value] of entries) {
-      if (event.source === 'INSIDER' && key === 'custom' && object(value)) custom = { ...custom, ...value };
-      else if (event.source === 'INSIDER' && mapping === 'event_params' && key.startsWith('c_')) custom[key.slice(2)] = value;
-      else defaults[key] = value;
+      if (event.source === 'INSIDER' && key === 'custom' && object(value)) {
+        for (const [name, item] of Object.entries(value)) {
+          Object.defineProperty(custom, name, { value: item, enumerable: true, configurable: true, writable: true });
+          origin('custom_parameters', name, `${prefix}.custom.${name}`);
+        }
+      } else if (event.source === 'INSIDER' && mapping === 'event_params' && key.startsWith('c_')) {
+        Object.defineProperty(custom, key.slice(2), { value, enumerable: true, configurable: true, writable: true });
+        origin('custom_parameters', key.slice(2), `${prefix}.${key}`);
+      } else { defaults[key] = value; origin('default_parameters', key, `${prefix}.${key}`); }
     }
   }
   const display = event.source === 'INSIDER' ? INSIDER_NAMES[event.event_name]
@@ -31,8 +46,22 @@ export function activityEvent(event) {
     evidence_id: event.evidence_id, event_name: event.event_name, display_name: display,
     captured_at: event.captured_at, source: event.source, layer: event.layer,
     historical: !!event.historical, capture: event.capture || null,
-    parameter_mapping: mapping,
+    parameter_mapping: mapping, parameter_origins: origins, queue_name: event.queue_name || null,
+    diagnostic: !!event.diagnostic || (event.queue_type === 'dispatch' && event.event_name.includes(':')),
+    observation: event.layer === 'TRACKING_REQUEST' ? 'network_request' : event.queue_type === 'sdk_before_send' ? 'sdk_before_send' : event.queue_name === 'InsiderDispatch' ? 'sdk_dispatch' : 'queue_push',
+    sdk_event: event.sdk_event || null,
+    ...inferEventFlow(event, { default_parameters: defaults, custom_parameters: custom }),
     json: { event: display, default_parameters: defaults, custom_parameters: custom,
       ...(event.capture?.incomplete ? { _capture: event.capture } : {}) },
   };
+}
+
+export function activityChannel(event) {
+  if (event.layer === 'TRACKING_REQUEST') return 'network';
+  if (event.queue_name === 'dataLayer' || event.queue_name === 'InsiderQueue') return 'queue';
+  return 'sdk';
+}
+
+export function comparisonPayload(testCase, event) {
+  return testCase.payload_format === 'default_custom_parameters' ? activityEvent(event).json : event.payload;
 }

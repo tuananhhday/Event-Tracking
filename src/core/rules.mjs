@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { comparisonPayload, activityEvent } from './activity.mjs';
+import { flowId } from './flows.mjs';
 
 const MISSING = Symbol('missing');
 const SUPPORTED = new Set(['eq', 'exists', 'not_exists', 'type', 'regex', 'one_of', 'range', 'ref', 'subset', 'ignore']);
@@ -112,7 +114,13 @@ export function validateCase(testCase, events = [], step) {
       continue;
     }
     const matchesSource = event => !source || String(event.source).toUpperCase() === String(source).toUpperCase();
-    const matching = scoped.filter(event => [rule.event_name, ...(rule.event_aliases ?? [])].includes(event.event_name) && event.layer === rule.layer && matchesSource(event));
+    const expectedFlow = flowId(testCase.flow);
+    const matching = scoped.filter(event => {
+      const names = [rule.event_name, ...(rule.event_aliases ?? [])];
+      if (!(names.includes(event.event_name) || (testCase.payload_format === 'default_custom_parameters' && names.includes(activityEvent(event).display_name))) || event.layer !== rule.layer || !matchesSource(event)) return false;
+      const actualFlow = expectedFlow === 'unknown' ? 'unknown' : activityEvent(event).flow_id;
+      return expectedFlow === 'unknown' || actualFlow === 'unknown' || actualFlow === expectedFlow;
+    });
     const checks = [];
     const issues = [];
     const add = (code, expected, actual, evidenceId = stepEvidence, verdict = 'FAIL', path = undefined) => {
@@ -145,8 +153,9 @@ export function validateCase(testCase, events = [], step) {
           }
         }
       }
+      const observedPayload = comparisonPayload(testCase, event);
       for (const [path, fieldRule] of Object.entries(rule.fields ?? {})) {
-        const check = checkField(event.payload, path, fieldRule, step.context ?? {}, evidenceId);
+        const check = checkField(observedPayload, path, fieldRule, step.context ?? {}, evidenceId);
         checks.push(check);
         if (check.verdict !== 'PASS') issues.push({ ...check, code: check.code });
       }

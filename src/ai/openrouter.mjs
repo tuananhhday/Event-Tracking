@@ -117,9 +117,11 @@ export class OpenRouterClient {
     this.maxPromptUsdPerMillion = numberOption(options.maxPromptUsdPerMillion ?? process.env.OPENROUTER_MAX_PROMPT_USD_PER_MILLION, 0.25, 0, 100);
     this.maxCompletionUsdPerMillion = numberOption(options.maxCompletionUsdPerMillion ?? process.env.OPENROUTER_MAX_COMPLETION_USD_PER_MILLION, 1, 0, 1000);
     this.requestBudgetUsd = numberOption(options.requestBudgetUsd ?? process.env.OPENROUTER_REQUEST_BUDGET_USD, 0.01, 0, 10);
-    this.maxModelAttempts = Math.floor(numberOption(options.maxModelAttempts ?? options.maxAttempts ?? process.env.OPENROUTER_MAX_MODEL_ATTEMPTS, 6, 1, 10));
-    this.maxCompletionRequests = Math.floor(numberOption(options.maxCompletionRequests ?? process.env.OPENROUTER_MAX_COMPLETION_REQUESTS, this.maxModelAttempts + this.keys.length - 1, 1, 40));
-    this.maxFreeAttempts = Math.floor(numberOption(options.maxFreeAttempts ?? process.env.OPENROUTER_MAX_FREE_ATTEMPTS, 2, 1, 10));
+    this.maxModelAttempts = Math.floor(numberOption(options.maxModelAttempts ?? options.maxAttempts ?? process.env.OPENROUTER_MAX_MODEL_ATTEMPTS, 40, 1, 100));
+    this.maxCompletionRequests = Math.floor(numberOption(options.maxCompletionRequests ?? process.env.OPENROUTER_MAX_COMPLETION_REQUESTS, this.maxModelAttempts + this.keys.length - 1, 1, 160));
+    // Zero tries the whole eligible free pool, subject to the overall request caps.
+    // Reaching a cap stops the task; it never skips untried free models to spend money.
+    this.maxFreeAttempts = Math.floor(numberOption(options.maxFreeAttempts ?? process.env.OPENROUTER_MAX_FREE_ATTEMPTS, 0, 0, 100));
     this.maxOutputTokens = Math.floor(numberOption(options.maxOutputTokens ?? process.env.OPENROUTER_MAX_OUTPUT_TOKENS, 1800, 100, 10000));
     this.cooldownMs = numberOption(options.cooldownMs, 30000, 0, 300000);
     this.timeoutMs = Math.min(60000, Math.max(100, Number(options.timeoutMs ?? Number(process.env.AI_TIMEOUT_SEC ?? 20) * 1000) || 20000));
@@ -150,6 +152,7 @@ export class OpenRouterClient {
       max_prompt_usd_per_million: this.maxPromptUsdPerMillion, max_completion_usd_per_million: this.maxCompletionUsdPerMillion,
       request_budget_usd: this.requestBudgetUsd, max_model_attempts: this.maxModelAttempts, max_completion_requests: this.maxCompletionRequests, max_free_attempts: this.maxFreeAttempts,
       max_output_tokens: this.maxOutputTokens,
+      cooling_models: [...this.modelCooldowns.entries()].filter(([, until]) => until > Date.now()).map(([model, until]) => ({ model, retry_at: new Date(until).toISOString() })),
       keys: this.keyStates.map(key => ({ label: key.label, available: key.disabledUntil <= Date.now(), paid_available: key.disabledUntil <= Date.now() && key.paidDisabledUntil <= Date.now(), reason: key.reason })),
       last_trace: structuredClone(this.lastTrace), last_result: this.lastResult,
     };
@@ -210,13 +213,16 @@ export class OpenRouterClient {
         }));
         this.throwIfClosed();
         if (!response.ok) {
+          const retryValue = response.headers?.get?.('retry-after');
+          const retryMs = retryValue == null || retryValue.trim() === '' ? 0
+            : Number.isFinite(Number(retryValue)) ? Number(retryValue) * 1000 : Date.parse(retryValue) - Date.now();
+          const retryAfterMs = Number.isFinite(retryMs) ? Math.max(0, Math.min(86400000, retryMs)) : 0;
           if ((response.status === 429 || response.status >= 500) && attempt < retries) {
-            const retryAfter = Number(response.headers?.get?.('retry-after'));
-            await this.pause(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(3000, retryAfter * 1000) : 200 * 2 ** attempt);
+            await this.pause(retryAfterMs > 0 ? Math.min(3000, retryAfterMs) : 200 * 2 ** attempt);
             continue;
           }
           // Provider error bodies can echo prompts, credentials or payloads. Never expose them.
-          throw new Error(`OPENROUTER_HTTP_${response.status}`);
+          throw Object.assign(new Error(`OPENROUTER_HTTP_${response.status}`), { retryAfterMs });
         }
         const result = await this.withCancellation(response.json());
         this.throwIfClosed();
@@ -296,14 +302,14 @@ export class OpenRouterClient {
     const selection = await this.listRoutingCandidates({ model, inputTokens, outputTokens: this.maxOutputTokens });
     if (!selection.available) return { available: false, reason: selection.reason };
     this.lastTrace = []; this.lastResult = null;
-    const freeLimit = this.maxModelAttempts > 1 && selection.candidates.some(item => !item.free)
-      ? Math.min(this.maxFreeAttempts, this.maxModelAttempts - 1) : this.maxFreeAttempts;
     let attempts = 0, freeAttempts = 0, reserved = 0, completionRequests = 0, lastReason = 'NO_SUITABLE_MODELS';
     let stopOperation = false;
     for (const candidate of selection.candidates) {
       if (this.closed) { lastReason = 'AI_CANCELLED'; break; }
-      if (attempts >= this.maxModelAttempts) break;
-      if (model === 'auto' && candidate.free && freeAttempts >= freeLimit) continue;
+      if (attempts >= this.maxModelAttempts) { lastReason = 'AI_MAX_MODEL_ATTEMPTS'; break; }
+      if (model === 'auto' && candidate.free && this.maxFreeAttempts > 0 && freeAttempts >= this.maxFreeAttempts) {
+        lastReason = 'AI_MAX_FREE_ATTEMPTS'; break;
+      }
       const keys = this.availableKeys({ paid: !candidate.free });
       if (!keys.length) { lastReason = this.availableKeys().length ? 'CREDIT_EXHAUSTED' : 'API_KEYS_UNAVAILABLE'; continue; }
       attempts++; if (candidate.free) freeAttempts++;
@@ -314,7 +320,7 @@ export class OpenRouterClient {
         const reserve = candidate.estimated_cost_usd * (1 + explicitRetries);
         if (reserved + reserve > this.requestBudgetUsd + Number.EPSILON) { lastReason = 'AI_REQUEST_BUDGET_EXCEEDED'; break; }
         reserved += reserve;
-        const trace = { model: candidate.id, key_label: this.keyStates[keyIndex].label, estimated_cost_usd: reserve, json_mode: candidate.json_mode };
+        const trace = { model: candidate.id, key_label: this.keyStates[keyIndex].label, status: 'RUNNING', estimated_cost_usd: reserve, json_mode: candidate.json_mode };
         this.lastTrace.push(trace);
         try {
           const jsonMode = candidate.json_mode;
@@ -339,7 +345,7 @@ export class OpenRouterClient {
           if (validationError) throw new Error(validationError);
           trace.status = 'SUCCESS'; this.activeKey = keyIndex;
           const usageCost = response.usage?.cost;
-          const routing = { model: candidate.id, key_label: trace.key_label, estimated_cost_usd: candidate.estimated_cost_usd, reserved_cost_usd: reserved, attempts: this.lastTrace.length, completion_requests: completionRequests, json_mode: jsonMode,
+          const routing = { model: candidate.id, free: candidate.free, free_models_attempted: freeAttempts, key_label: trace.key_label, estimated_cost_usd: candidate.estimated_cost_usd, reserved_cost_usd: reserved, attempts: this.lastTrace.length, completion_requests: completionRequests, json_mode: jsonMode,
             response: trace.response,
             ...(typeof usageCost === 'number' && Number.isFinite(usageCost) && usageCost >= 0 ? { actual_cost_usd: usageCost } : {}) };
           const output = { available: true, data, routing };
@@ -351,7 +357,9 @@ export class OpenRouterClient {
           trace.status = 'FAILED'; trace.reason = lastReason;
           if (['OPENROUTER_HTTP_401', 'OPENROUTER_HTTP_402'].includes(lastReason)) { this.disableKey(keyIndex, lastReason); continue; }
           if (['OPENROUTER_HTTP_403', 'AI_MAX_COMPLETION_REQUESTS', 'AI_CANCELLED'].includes(lastReason)) { stopOperation = true; break; }
-          this.modelCooldowns.set(candidate.id, Date.now() + this.cooldownMs);
+          const cooldown = Math.max(this.cooldownMs, error.retryAfterMs || 0, lastReason === 'OPENROUTER_HTTP_429' ? 60000 : 0);
+          this.modelCooldowns.set(candidate.id, Date.now() + cooldown);
+          trace.retry_at = new Date(this.modelCooldowns.get(candidate.id)).toISOString();
           if (model === 'auto') {
             try { await this.pause(Math.min(1000, 150 * attempts)); }
             catch { lastReason = 'AI_CANCELLED'; stopOperation = true; }
@@ -361,7 +369,7 @@ export class OpenRouterClient {
       }
       if (stopOperation) break;
     }
-    const routing = { reserved_cost_usd: reserved, attempts: this.lastTrace.length, completion_requests: completionRequests, trace: structuredClone(this.lastTrace) };
+    const routing = { reserved_cost_usd: reserved, free_models_attempted: freeAttempts, attempts: this.lastTrace.length, completion_requests: completionRequests, trace: structuredClone(this.lastTrace) };
     this.lastResult = { available: false, reason: lastReason, ...routing };
     return { available: false, reason: lastReason, routing };
   }

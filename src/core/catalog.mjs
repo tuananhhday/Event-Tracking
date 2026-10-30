@@ -1,4 +1,6 @@
 import { checkField } from './rules.mjs';
+import { comparisonPayload, activityEvent } from './activity.mjs';
+import { flowId } from './flows.mjs';
 
 // Queue/request records that set up a vendor SDK rather than report a user action.
 const SETUP_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$|config$|js$|set$|consent$|UNPARSED$|tracking_request$)/;
@@ -16,7 +18,8 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
  */
 function evaluate(testCase, rule, event) {
   if (event.capture?.incomplete) return { checks: [{ code: 'INCOMPLETE_CAPTURE', path: '', verdict: 'REVIEW', actual: event.capture.reasons }], score: 0 };
-  const checks = Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
+  const payload = comparisonPayload(testCase, event);
+  const checks = Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
   const fixed = Object.entries(rule.fields ?? {}).filter(([, field]) => field?.op === 'eq' || field?.op === 'one_of').map(([path]) => path);
   const failedFixed = checks.filter(check => check.verdict !== 'PASS' && fixed.includes(check.path)).length;
   const passed = checks.filter(check => check.verdict === 'PASS').length;
@@ -24,7 +27,7 @@ function evaluate(testCase, rule, event) {
   let similar = 0;
   if (testCase.sample) {
     const expected = leaves(testCase.sample);
-    for (const [path, value] of leaves(event.payload)) {
+    for (const [path, value] of leaves(payload)) {
       const sample = expected.get(path);
       if (typeof sample === 'string' && typeof value === 'string' && sample.length <= 60 && sample.toLowerCase() === value.toLowerCase()) similar++;
     }
@@ -49,9 +52,18 @@ function flowHint(flow, pageUrl) {
 /** Assigns each captured event to the specification row it most likely implements. */
 export function matchEvent(cases, event, index = indexCases(cases)) {
   if (event.network?.phase && event.network.phase !== 'request') return null;
-  const candidates = index.get(`${event.layer}|${String(event.source).toUpperCase()}|${event.event_name}`) || [];
+  const prefix = `${event.layer}|${String(event.source).toUpperCase()}|`;
+  const candidates = [...(index.get(prefix + event.event_name) || [])];
+  for (const candidate of index.get(prefix + activityEvent(event).display_name) || []) {
+    if (candidate.testCase.payload_format === 'default_custom_parameters' && !candidates.includes(candidate)) candidates.push(candidate);
+  }
+  const actualFlow = activityEvent(event).flow_id;
+  const candidateFlows = new Set(candidates.map(c => flowId(c.testCase.flow)).filter(f => f !== 'unknown'));
+  if (actualFlow === 'unknown' && candidateFlows.size > 1) return null;
   let best = null;
   for (const { testCase, rule } of candidates) {
+    const expectedFlow = flowId(testCase.flow);
+    if (actualFlow !== 'unknown' && expectedFlow !== 'unknown' && actualFlow !== expectedFlow) continue;
     const result = evaluate(testCase, rule, event);
     if (!best || result.score > best.score) best = { testCase, rule, ...result };
   }
@@ -60,7 +72,12 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
   // Field paths the specification expects, so a viewer can mark every parameter of the event.
   const fields = Object.fromEntries(Object.entries(best.rule.fields ?? {}).map(([path, field]) => [path, field?.op]));
   if (!Object.keys(fields).length || best.testCase.sample_available === false) issues.push({ code: 'NO_EXPECTED_FIELDS', verdict: 'REVIEW', path: '', expected: 'Chi tiết event trong đặc tả' });
-  return { case_id: best.testCase.id, event_name: best.rule.event_name, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
+  for (const [path, field] of Object.entries(best.rule.fields ?? {})) if (field?.op === 'ref') {
+    issues.push({ code: 'MISSING_CONTEXT', verdict: 'REVIEW', path, expected: field.value });
+  }
+  const pendingReview = best.testCase.needs_review || best.rule.needs_review;
+  if (pendingReview) issues.push({ code: 'RULE_NEEDS_REVIEW', verdict: 'REVIEW', path: '', expected: 'Reviewed rule' });
+  return { case_id: best.testCase.id, event_name: best.rule.event_name, comparison_format: best.testCase.payload_format || 'raw', verdict: pendingReview ? 'REVIEW' : issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
 }
 
 export function indexCases(cases) {

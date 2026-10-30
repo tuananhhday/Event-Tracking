@@ -27,7 +27,7 @@ function transport(catalog, complete = () => completion({ note: 'QC explanation.
 function client(fetch, extra = {}) {
   return new OpenRouterClient({ enabled: true, apiKey: 'review-only-fake-key-a', apiKeys: ['review-only-fake-key-a'],
     modelSpec: 'auto', modelExplain: 'auto', allowPaid: true, maxPromptUsdPerMillion: 0.25,
-    maxCompletionUsdPerMillion: 1, requestBudgetUsd: 0.01, maxModelAttempts: 4, maxFreeAttempts: 2,
+    maxCompletionUsdPerMillion: 1, requestBudgetUsd: 0.01, maxModelAttempts: 4, maxFreeAttempts: 0,
     maxOutputTokens: 200, timeoutMs: 500, maxRetries: 0, delay: async () => {}, fetch, ...extra });
 }
 const explainInput = () => ({ verdict: 'FAIL', test_case_id: 'TC', issues: [{ code: 'MISSING_FIELD', path: 'destination_id', evidence_id: 'EV-1' }] });
@@ -122,14 +122,16 @@ test('exhausted invalid keys stop instead of retrying the catalog with each unus
   assert.equal(new Set(mock.calls.map(call => call.model)).size, 1);
 });
 
-test('a large failing free pool leaves room to try the cheapest eligible paid model', async () => {
+test('all eligible free models are exhausted before trying the cheapest paid model', async () => {
   const free = Array.from({ length: 20 }, (_, index) => model(`free/model-${String(index).padStart(2, '0')}`));
   const mock = transport([...free, priced('paid/expensive', '0.0000002', '0.0000009'), priced('paid/cheap', '0.0000001', '0.0000002')], call => call.model.startsWith('free/') ? reply({}, 429) : completion({ note: 'Paid fallback succeeded.' }));
-  const output = await client(mock.fetch).explain(explainInput());
+  const output = await client(mock.fetch, { maxModelAttempts: 25 }).explain(explainInput());
   assert.equal(output.available, true);
-  assert.equal(mock.calls.filter(call => call.model.startsWith('free/')).length, 2);
+  assert.equal(mock.calls.filter(call => call.model.startsWith('free/')).length, 20);
   assert.equal(mock.calls.at(-1).model, 'paid/cheap');
-  assert.ok(mock.calls.length <= 4);
+  assert.equal(mock.calls.length, 21);
+  assert.equal(output.routing.free, false);
+  assert.equal(output.routing.free_models_attempted, 20);
 });
 
 test('schema-invalid and non-JSON responses trigger model fallback before returning a result', async () => {
@@ -236,9 +238,53 @@ test('insufficient paid credits do not disable the same key for a subsequent fre
   assert.equal(instance.diagnostics().keys[0].paid_available, false);
 });
 
-test('even a high custom free-attempt limit reserves one allowed slot for a paid fallback', async () => {
+test('the model-attempt cap stops without skipping an untried free model to use paid', async () => {
   const mock = transport([model('free/a'), model('free/b'), model('free/c'), priced('paid/d', '0.0000001', '0.0000002')], call => call.model.startsWith('free/') ? reply({}, 429) : completion({ note: 'Paid fallback reached.' }));
   const output = await client(mock.fetch, { maxModelAttempts: 3, maxFreeAttempts: 10 }).explain(explainInput());
+  assert.equal(output.available, false);
+  assert.equal(output.reason, 'AI_MAX_MODEL_ATTEMPTS');
+  assert.deepEqual(mock.calls.map(call => call.model), ['free/a', 'free/b', 'free/c']);
+});
+
+test('a later free success avoids all paid calls after rate-limit, timeout and invalid JSON', async () => {
+  const mock = transport([
+    model('free/a'), model('free/b'), model('free/c'), model('free/d'), priced('paid/cheap', '0.0000001', '0.0000002'),
+  ], call => {
+    if (call.model === 'free/a') return reply({}, 429);
+    if (call.model === 'free/b') throw Object.assign(new Error('synthetic timeout'), { name: 'TimeoutError' });
+    if (call.model === 'free/c') return completion('invalid JSON');
+    return completion({ note: 'Valid from a later free model.' });
+  });
+  const output = await client(mock.fetch, { maxModelAttempts: 8 }).explain(explainInput());
   assert.equal(output.available, true);
-  assert.deepEqual(mock.calls.map(call => call.model), ['free/a', 'free/b', 'paid/d']);
+  assert.equal(output.routing.free, true);
+  assert.equal(output.routing.reserved_cost_usd, 0);
+  assert.deepEqual(mock.calls.map(call => call.model), ['free/a', 'free/b', 'free/c', 'free/d']);
+});
+
+test('an explicit free-attempt cap stops instead of spending with free models untried', async () => {
+  const mock = transport([model('free/a'), model('free/b'), model('free/c'), priced('paid/cheap', '0.0000001', '0.0000002')], () => reply({}, 503));
+  const output = await client(mock.fetch, { maxFreeAttempts: 2 }).explain(explainInput());
+  assert.equal(output.available, false);
+  assert.equal(output.reason, 'AI_MAX_FREE_ATTEMPTS');
+  assert.deepEqual(mock.calls.map(call => call.model), ['free/a', 'free/b']);
+});
+
+test('rate-limited free models honor Retry-After and another free model serves the next task', async () => {
+  const mock = transport([model('free/a'), model('free/b'), priced('paid/cheap', '0.0000001', '0.0000002')], call => {
+    if (call.model !== 'free/a') return completion({ note: 'Another free model is available.' });
+    return { ...reply({}, 429), headers: { get: name => name === 'retry-after' ? '120' : null } };
+  });
+  const instance = client(mock.fetch);
+  const started = Date.now();
+  assert.equal((await instance.explain(explainInput())).available, true);
+  assert.equal((await instance.explain({ ...explainInput(), test_case_id: 'NEXT-TASK' })).available, true);
+  assert.deepEqual(mock.calls.map(call => call.model), ['free/a', 'free/b', 'free/b']);
+  const cooling = instance.diagnostics().cooling_models;
+  assert.equal(cooling.length, 1);
+  assert.equal(cooling[0].model, 'free/a');
+  assert.ok(Date.parse(cooling[0].retry_at) >= started + 120000);
+  instance.modelCooldowns.set('free/a', 0);
+  await instance.explain({ ...explainInput(), test_case_id: 'AFTER-COOLDOWN' });
+  assert.equal(mock.calls.at(-2).model, 'free/a');
 });

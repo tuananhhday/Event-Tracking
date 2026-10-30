@@ -107,7 +107,15 @@ export function queueEvents(record) {
   let payload = record.item;
   let eventName;
   if (record.queue === 'InsiderDispatch') {
-    return [{ ...base, event_name: String(payload?.name || 'insider_dispatch'), queue_type: 'dispatch', payload: payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null } }];
+    const name = String(payload?.name || 'insider_dispatch');
+    const data = payload?.data;
+    if (/^ucd:event:beforeSend$/i.test(name) && Array.isArray(data?.events)) {
+      return data.events.filter(item => typeof item?.event_name === 'string').map((item, index) => ({
+        ...base, event_name: item.event_name, queue_type: 'sdk_before_send', sdk_event: name,
+        payload: item, original_payload: data, original_event_index: index,
+      }));
+    }
+    return [{ ...base, event_name: name, queue_type: 'dispatch', ...( name.includes(':') ? { diagnostic: true } : {}), payload: payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null } }];
   }
   if (record.queue === 'insider_object') {
     const pageType = String(payload?.page?.type ?? '').toLowerCase();
@@ -156,6 +164,23 @@ export class CDPCollector {
     for (const pattern of patterns) new RegExp(pattern, 'i');
     this.patterns = [...patterns];
     for (const key of this.discovered.keys()) if (matchesEndpoint(`https://${key}`, this.patterns)) this.discovered.delete(key);
+  }
+  async readQueues() {
+    if (!this.running || !this.captureQueues) throw new Error('Đọc queue cần phiên CDP có bật thu thập JS queue.');
+    const jobs = [];
+    for (const state of this.connections.values()) for (const context of state.contexts.values()) {
+      if (jobs.length >= 12) break;
+      jobs.push((async () => {
+        const result = await state.connection.send('Runtime.evaluate', {
+          expression: "JSON.stringify(window[Symbol.for('eventqa.collector.v1')]?.readQueues?.() ?? null)", contextId: context.id, returnByValue: true,
+        }, context.sessionId);
+        if (result.exceptionDetails) throw new Error('Frame không cho đọc queue.');
+        const snapshot = JSON.parse(result.result?.value || 'null');
+        return snapshot ? { target_id: state.target.id, frame_id: context.frameId, ...snapshot } : null;
+      })());
+    }
+    const results = await Promise.allSettled(jobs);
+    return { snapshots: results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value), failed_frames: results.filter(r => r.status === 'rejected').length };
   }
   #job(promise) { const generation = this.generation; this.jobs.add(promise); promise.catch(error => { if (this.running && generation === this.generation) this.#status(`CDP: ${error.message}`); }).finally(() => this.jobs.delete(promise)); }
   async #emit(event, generation) { if (this.running && generation === this.generation) await this.onEvent(event); }

@@ -8,8 +8,42 @@ import { createApp } from '../src/server.mjs';
 import { specCoverage } from '../src/core/catalog.mjs';
 import { firingChecks } from '../src/core/firing.mjs';
 import { validateCase } from '../src/core/rules.mjs';
+import { queueEvents } from '../src/collectors/cdp.mjs';
+import { decodeRequest } from '../src/core/decoder.mjs';
 
 const base = { evidence_id: 'EV-1', event_name: 'cart_page_view', source: 'INSIDER', layer: 'TRACKING_REQUEST', captured_at: '2026-10-30T00:00:00Z' };
+test('beforeSend is unwrapped into its business event and retains the SDK envelope as provenance', () => {
+  const envelope = { partner: 'test', source: 'web', events: [{ event_name: 'golf_checkout', timestamp: 123, event_params: { c_product_id: 'golf-1', c_total: 3150000, c_quantity: 1, ta: 'golf' } }] };
+  const [event] = queueEvents({ queue: 'InsiderDispatch', item: { name: 'Ucd:event:beforeSend', data: envelope } });
+  assert.equal(event.event_name, 'golf_checkout');
+  assert.equal(event.queue_type, 'sdk_before_send');
+  assert.deepEqual(event.original_payload, envelope);
+  const a = activityEvent(event);
+  assert.equal(a.json.event, 'Golf Checkout');
+  assert.equal(a.json.custom_parameters.total, 3150000);
+  assert.equal(a.json.custom_parameters.quantity, 1);
+  assert.equal(a.json.default_parameters.ta, 'golf');
+  assert.equal(a.json.default_parameters.partner, undefined);
+  assert.equal(a.json.default_parameters.events, undefined);
+  assert.equal(a.json.custom_parameters.app_version, undefined);
+  assert.equal(a.observation, 'sdk_before_send');
+  assert.equal(a.parameter_origins['custom_parameters.total'], 'original_payload.events[0].event_params.c_total');
+});
+
+test('Golf request comparisons read normalized fields and only report genuinely absent sample fields', () => {
+  const actual = { event_name: 'golf_checkout', event_params: { c_product_id: 'golf-1', c_name: 'Selected golf', c_total: 3150000, c_currency: 'VND', c_using_date: '2026-11-07T00:00:00.000Z', c_using_date_str: '2026-11-07', c_destination: 'HCM', c_destination_id: '', c_golf_club_id: 'golf-1', c_golf_club_code: 'CLUB', c_slug: 'club', c_items: '[course: A; players: 1]', c_quantity: 1, ta: 'golf' } };
+  const event = { ...decodeRequest({ url: 'https://unification.useinsider.com/api/event/', contentType: 'application/json', body: JSON.stringify({ events: [actual] }) })[0], evidence_id: 'EV-GOLF' };
+  const missing = ['default_parameters.sid', ...['app_version', 'device_manufacturer', 'device_model', 'os_version', 'platform', 'taxonomy'].map(k => `custom_parameters.${k}`)];
+  const fields = { event: { op: 'eq', value: 'Golf Checkout' }, ...Object.fromEntries(missing.map(k => [k, { op: 'exists' }])), 'custom_parameters.product_id': { op: 'type', value: 'string' }, 'custom_parameters.total': { op: 'type', value: 'integer' }, 'custom_parameters.quantity': { op: 'type', value: 'integer' } };
+  const c = { id: 'TC-GOLF', source: 'INSIDER', payload_format: 'default_custom_parameters', rules: [{ layer: 'TRACKING_REQUEST', event_name: 'golf_checkout', fields }] };
+  const row = specCoverage([c], [event]).rows[0];
+  assert.deepEqual(row.issues.map(i => i.path).sort(), missing.sort());
+  assert.ok(row.issues.every(i => i.code === 'MISSING_FIELD'));
+  const step = { id: 'STEP-GOLF', status: 'COMPLETED', started_at: '2026-01-01', completed_at: '2027-01-01' };
+  const result = validateCase(c, [{ ...event, step_id: step.id, test_case_id: c.id }], step);
+  assert.deepEqual(result.results[0].issues.map(i => i.path).sort(), missing.sort());
+  assert.equal(event.payload.event_params.ta, 'golf', 'raw wire name is retained rather than guessed as a custom taxonomy');
+});
 test('explicit Insider default/custom parameters are preserved without filling specification examples', () => {
   const payload = { event: 'Cart Page View', default_parameters: { product_id: 'real-id', unit_price: 110000, quantity: 1 }, custom_parameters: { platform: 'AppOTA', provider: 'actual-provider' } };
   const actual = activityEvent({ ...base, payload });

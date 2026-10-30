@@ -42,6 +42,9 @@ test('Chi tiết event preserves the AppOTA payload display name and exact Event
   const actual = { ...event(payload), evidence_id: 'EV-1' };
   assert.equal(actual.event_name, 'Listing Page View', 'raw evidence name must not be rewritten');
   let coverage = specCoverage(cases, [actual]);
+  assert.equal(coverage.rows[0].status, 'REVIEW', 'a draft contract is not an accepted match');
+  for (const candidate of cases) { candidate.needs_review = false; for (const rule of candidate.rules) rule.needs_review = false; }
+  coverage = specCoverage(cases, [actual]);
   assert.equal(coverage.rows[0].status, 'MATCH');
   assert.equal(coverage.rows[1].status, 'NOT_SEEN');
   const broken = structuredClone(payload);
@@ -50,7 +53,7 @@ test('Chi tiết event preserves the AppOTA payload display name and exact Event
   assert.equal(coverage.rows[0].status, 'MISMATCH');
   assert.equal(coverage.rows[0].issues[0].path, 'custom_parameters.platform');
   const otherFlow = structuredClone(payload); otherFlow.default_parameters.taxonomy = ['hotel'];
-  assert.equal(specCoverage(cases, [{ ...event(otherFlow), evidence_id: 'EV-FLOW' }]).rows[0].status, 'MISMATCH', 'a different product family must not pass by array type alone');
+  assert.equal(specCoverage(cases, [{ ...event(otherFlow), evidence_id: 'EV-FLOW', page: { url: 'https://test.example/vi/golf/checkout' } }]).rows[0].status, 'MISMATCH', 'a different product family on the Golf page must not pass by array type alone');
   const unrelated = { ...actual, evidence_id: 'EV-3', event_name: 'Unrelated' };
   assert.equal(specCoverage(cases, [unrelated]).unmatched[0].event_name, 'Unrelated');
   const queue = { ...actual, evidence_id: 'EV-4', layer: 'JS_QUEUE', event_name: 'listing_page_view', payload: { type: 'category' } };
@@ -94,7 +97,7 @@ test('browser upload lists sheets, imports R1511 and exposes missing fields and 
   assert.equal(detail.spec.provenance.sheet, 'R1511');
   assert.equal(detail.spec.provenance.row, 2);
   assert.equal(detail.spec.sample.event, 'Listing Page View');
-  assert.equal(detail.spec.verdict, 'FAIL');
+  assert.equal(detail.spec.verdict, 'REVIEW', 'draft requirements retain field differences without becoming acceptance failures');
   assert.ok(detail.spec.issues.some(i => i.path === 'custom_parameters.platform'));
 });
 

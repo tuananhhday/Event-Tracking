@@ -91,7 +91,7 @@ a { color: var(--accent); }
 
 /* Forms */
 label, .label { display: block; color: var(--muted); font-size: 12px; font-weight: 600; margin: 12px 0 6px; }
-input[type="text"], input[type="number"], input:not([type]), select, textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
+input[type="text"], input[type="password"], input[type="number"], input:not([type]), select, textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 textarea { resize: vertical; font-size: 12px; line-height: 1.55; }
 textarea.invalid { border-color: var(--fail); outline-color: var(--fail-soft); }
@@ -349,7 +349,7 @@ body:not(.home-page) { padding-left:76px; }
 .stage-body { padding:0 16px 18px; }
 .stage-body > .hint { font-size:11px; }
 label,.label { color:#4c5870; font-size:11px; }
-input[type="text"],input[type="number"],input:not([type]),select,textarea { min-height:38px; padding:9px 11px; border-radius:8px; font-size:12px; }
+input[type="text"],input[type="password"],input[type="number"],input:not([type]),select,textarea { min-height:38px; padding:9px 11px; border-radius:8px; font-size:12px; }
 .segmented { background:#f4f5fa; border-color:var(--line); }
 .segmented button { font-size:11px; padding:7px; }
 .segmented button[aria-pressed="true"] { color:var(--accent); box-shadow:0 1px 5px rgb(28 33 59 / 9%); }
@@ -412,6 +412,8 @@ body.setup-collapsed .flow { display:none; }
 .kv { grid-template-columns:repeat(auto-fit,minmax(90px,1fr)); gap:8px; }
 .kv div { padding:11px; background:#f9fafe; border-radius:8px; }
 .kv span { font-size:9px; }.kv b { font-size:19px; }
+#ai-config.kv { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); margin-top:16px; }
+#ai-config.kv span { font-size:11px; }#ai-config.kv b { font-size:14px; line-height:1.5; }
 .spec-dialog { width:min(1180px,calc(100vw - 40px)); max-height:90vh; padding:0; border:1px solid var(--line); border-radius:16px; color:var(--text); background:var(--surface); box-shadow:0 32px 90px #11182c4d; }
 .spec-dialog-head { position:sticky; top:0; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 24px; border-bottom:1px solid var(--line); background:var(--surface); }
 .spec-dialog-head > span { display:flex; gap:9px; align-items:center; font-size:10px; font-weight:700; letter-spacing:.1em; color:var(--muted); }

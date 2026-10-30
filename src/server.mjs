@@ -10,13 +10,15 @@ import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs'
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchEvent } from './core/catalog.mjs';
 import { firingChecks } from './core/firing.mjs';
-import { activityEvent } from './core/activity.mjs';
+import { activityEvent, activityChannel, comparisonPayload } from './core/activity.mjs';
+import { FLOWS, flowId, inferEventFlow } from './core/flows.mjs';
 import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser } from './browser/launcher.mjs';
 import { ProxyCollector, proxyCaSpki } from './collectors/proxy.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
+import { saveAISettings } from './ai/settings.mjs';
 import { loadDemoCases } from './demo.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
@@ -57,7 +59,7 @@ function summarize(events) {
   return [...groups.values()].filter(group => group.count).sort((a, b) => b.last_at.localeCompare(a.last_at));
 }
 
-export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo' } = {}) {
+export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, aiConfigPath = path.join(rootDir, '.env'), initialCases = 'demo' } = {}) {
   if (!['cdp', 'cdp-ai', 'proxy'].includes(mode)) throw new Error('Mode must be cdp, cdp-ai or proxy.');
   const csrf = randomBytes(24).toString('hex');
   const bundledProxy = path.join(rootDir, '.venv-proxy', process.platform === 'win32' ? 'Scripts/mitmdump.exe' : 'bin/mitmdump');
@@ -90,11 +92,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   const statuses = []; let collector = null, browserHandle = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
-  let ai = aiClient ?? new OpenRouterClient();
+  let aiSettings = {};
+  let ai = aiClient ?? new OpenRouterClient(aiSettings);
   const state = ({ compact = false } = {}) => {
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
-      specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
+      specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, flows: FLOWS, sessionFlow: inferEventFlow({ page: { url: manager.session?.target_url } }, {}).flow_id, specFlows: [...new Set(manager.cases.map(c => flowId(c.flow)).filter(f => f !== 'unknown'))], discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
       eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
@@ -144,7 +147,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       // Cancel remote work immediately; shutdown never waits for AI routing/retries.
       captureEpoch++;
       ai.close?.();
-      if (!closing && !aiClient) ai = new OpenRouterClient();
+      if (!closing && !aiClient) ai = new OpenRouterClient(aiSettings);
       await stopCapture();
       const interrupted = Boolean(manager.currentStep);
       if (interrupted) manager.abort(); else manager.finish();
@@ -196,7 +199,14 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
       if (req.method === 'GET' && url.pathname === '/api/activity') {
-        const events = manager.snapshot().events;
+        const all = manager.snapshot().events;
+        const channel = url.searchParams.get('channel') || 'all';
+        const vendor = url.searchParams.get('source') || '';
+        const flow = url.searchParams.get('flow') || '';
+        const specOnly = url.searchParams.get('spec_only') === '1' && manager.cases.length > 0;
+        const names = new Set(manager.cases.flatMap(c => (c.rules || []).flatMap(r => [r.event_name, ...(r.event_aliases || [])])));
+        const events = all.filter(e => (!vendor || e.source === vendor) && (channel === 'all' || activityChannel(e) === channel)
+          && (!flow || activityEvent(e).flow_id === flow) && (!specOnly || names.has(e.event_name) || names.has(activityEvent(e).display_name)));
         const count = events.filter(e => !e.network?.phase || e.network.phase === 'request').length;
         const before = url.searchParams.get('before');
         let end = before ? events.findIndex(e => e.evidence_id === before) : events.length;
@@ -218,7 +228,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         // The specification row this event was matched to, with its field-by-field outcome.
         const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
         const testCase = match && manager.cases.find(c => c.id === match.case_id);
-        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
+        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', parameter_notes: testCase?.parameter_notes, sdk_notes: testCase?.sdk_notes, provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text, observed: comparisonPayload(testCase, event) } : null;
         const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
         return send(res, 200, { event, spec, firing, activity: activityEvent(event) });
       }
@@ -249,7 +259,16 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       mutating = true;
       try {
         const data = await body(req);
-        if (url.pathname === '/api/spec-upload') {
+        if (url.pathname === '/api/ai-settings') {
+          if (mode !== 'cdp-ai') throw new Error('Chọn chế độ CDP có AI để lưu key.');
+          if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi đổi key.');
+          aiSettings = await saveAISettings(aiConfigPath, data);
+          ai.close?.(); ai = new OpenRouterClient(aiSettings);
+          status('Đã lưu cấu hình AI trên máy này: ưu tiên toàn bộ model free, sau đó model trả phí rẻ nhất nếu được bật.');
+        } else if (url.pathname === '/api/queues/read') {
+          if (!(collector instanceof CDPCollector)) throw new Error('Hãy mở phiên CDP trước khi đọc queue trên website.');
+          return send(res, 200, redact(await collector.readQueues()));
+        } else if (url.pathname === '/api/spec-upload') {
           if (manager.currentStep) throw new Error('Hoàn tất bước trước khi chọn file.');
           const ext = path.extname(String(data.name)).toLowerCase();
           if (!['.xlsx', '.json'].includes(ext) || typeof data.content !== 'string') throw new Error('Chỉ nhận XLSX hoặc JSON.');

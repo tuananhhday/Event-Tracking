@@ -101,15 +101,19 @@
   }
   // Insider also takes events through Insider.eventManager.dispatch(name, data) and reads the
   // legacy window.insider_object; neither goes through InsiderQueue.
-  let dispatchEmits = 0;
   function hookDispatch() {
     try {
       const manager = window.Insider && window.Insider.eventManager;
       if (!manager || typeof manager.dispatch !== 'function' || manager.dispatch === state.dispatchWrapper) return;
       const original = manager.dispatch;
       const wrapper = function (...args) {
-        if (!state.dispatching && typeof args[0] === 'string' && dispatchEmits < 300) {
-          state.dispatching = true; dispatchEmits++;
+        // Lifecycle chatter is not a business event. Keep the beforeSend envelope
+        // because it contains actual named events; never exhaust a global quota on
+        // SDK internals before the user reaches checkout.
+        const name = typeof args[0] === 'string' ? args[0] : '';
+        const internal = name.includes(':');
+        if (!state.dispatching && name && (!internal || /^ucd:event:beforeSend$/i.test(name))) {
+          state.dispatching = true;
           try { emit('InsiderDispatch', { name: args[0], data: args[1] }, false); } finally { state.dispatching = false; }
         }
         return Reflect.apply(original, this, args);
@@ -131,6 +135,19 @@
     } catch (_) { /* Unserializable object. */ }
   }
   let ticks = 0;
+  state.readQueues = () => {
+    const queues = {};
+    for (const name of ['dataLayer', 'InsiderQueue']) {
+      const descriptor = Object.getOwnPropertyDescriptor(window, name);
+      const owned = state.properties.find(p => p.name === name && descriptor?.get === p.getter);
+      if (!descriptor) { queues[name] = { status: 'ABSENT', items: [] }; continue; }
+      if (!owned && !Object.hasOwn(descriptor, 'value')) { queues[name] = { status: 'ACCESSOR_UNAVAILABLE', items: [] }; continue; }
+      const array = owned ? owned.current() : descriptor.value;
+      queues[name] = Array.isArray(array) ? { status: 'CAPTURED', length: array.length, ...snapshotItem(array) }
+        : { status: 'NOT_ARRAY', items: [] };
+    }
+    return { read_at: new Date().toISOString(), url: location.href, title: document.title, queues };
+  };
   state.timer = setInterval(() => {
     for (const name of ['dataLayer', 'InsiderQueue']) {
       try { hook(name, window[name], true); } catch (_) { /* Isolate hostile getters. */ }

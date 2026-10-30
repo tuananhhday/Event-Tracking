@@ -2,7 +2,11 @@
 
 Chế độ này giữ nguyên collector và verdict của phương án 1. AI chỉ tạo bản nháp rule hoặc ghi chú giải thích; không được ghi đè PASS/FAIL/REVIEW. Mọi bản nháp AI đều có `needs_review=true` ở cả case và rule. Đọc, chỉnh và duyệt rule trước khi dùng như đặc tả chính thức.
 
-Mặc định AI tắt. Bật bằng biến môi trường hoặc file `.env` tại thư mục dự án:
+Trong bản portable, chọn CDP có AI → Trợ lý AI → dán key → **Lưu key trên máy này**. Không cần sửa file; endpoint nội bộ yêu cầu token và đúng origin. Key chỉ lưu trong `.env` có quyền riêng tại máy đang chạy, không gửi lại API/state/HTML hoặc báo cáo; bỏ khỏi ZIP/Git. Có thể bật/tắt fallback trả phí tại cùng vị trí. Key dùng ngay và được nạp lại khi chạy launcher lần sau.
+
+Chọn event đã nhập từ file Excel rồi bấm **Dùng yêu cầu của event đã chọn** để đưa tên event, luồng, trigger, notes, sample và nguồn sheet/dòng vào input AI. Xem lại trước khi bấm tạo nháp; nhập Excel không tự gửi dữ liệu ra OpenRouter.
+
+Mặc định AI tắt khi chưa cấu hình. Với source, cũng có thể bật bằng biến môi trường hoặc file `.env` tại thư mục dự án:
 
 ```dotenv
 AI_ENABLED=true
@@ -14,8 +18,9 @@ OPENROUTER_ROUTING=free-first
 OPENROUTER_ALLOW_PAID=true
 OPENROUTER_MAX_PROMPT_USD_PER_MILLION=0.25
 OPENROUTER_MAX_COMPLETION_USD_PER_MILLION=1
-OPENROUTER_MAX_MODEL_ATTEMPTS=6
-OPENROUTER_MAX_FREE_ATTEMPTS=2
+OPENROUTER_MAX_MODEL_ATTEMPTS=40
+OPENROUTER_MAX_FREE_ATTEMPTS=0
+OPENROUTER_MAX_COMPLETION_REQUESTS=48
 OPENROUTER_MAX_OUTPUT_TOKENS=1800
 OPENROUTER_REQUEST_BUDGET_USD=0.01
 AI_MAX_RETRIES=1
@@ -24,7 +29,9 @@ AI_TIMEOUT_SEC=20
 
 `auto` lấy catalog hiện hành, loại model hết hạn, batch, không hỗ trợ text/JSON hoặc thiếu giá prompt/completion hợp lệ. Giá âm/không xác định, giá điều kiện `pricing.overrides` và phí reasoning riêng không thể chặn chắc chắn đều bị loại. Trường phí `request` được API cho phép bỏ trống; khi thiếu, app dùng 0 và ép provider nhận phí request tối đa 0. Không có tên model cụ thể bị đóng cứng.
 
-App ưu tiên model miễn phí, sau đó xếp model trả phí theo chi phí ước tính cho đúng input và output tối đa của thao tác. Mặc định thử tối đa 2 model free để còn chỗ chuyển sang model trả phí trong tổng 6 model. HTTP 429/5xx, timeout, JSON sai và output không đạt schema sẽ chuyển sang ứng viên tiếp theo với cooldown có giới hạn. Model có `structured_outputs` nhận `json_schema`; model chỉ có `response_format` nhận `json_object` kèm schema trong system prompt. Mọi output đều được kiểm tra bằng Ajv và kiểm tra ngữ nghĩa trước khi chấp nhận.
+App lần lượt thử các model miễn phí phù hợp trong catalog hiện hành; chỉ khi hết ứng viên free đang dùng được mới chuyển sang model trả phí, xếp theo chi phí ước tính cho đúng input và output tối đa của thao tác. `OPENROUTER_MAX_FREE_ATTEMPTS=0` nghĩa là thử toàn bộ pool free trong giới hạn tổng 40 model và 48 HTTP completion/tác vụ. Nếu chạm giới hạn khi vẫn còn model free chưa thử, tác vụ dừng, không tự bỏ qua chúng để phát sinh phí. Có thể đặt giới hạn free riêng bằng số dương; quy tắc dừng này vẫn áp dụng.
+
+HTTP 429/5xx, timeout, JSON sai và output không đạt schema chuyển sang model tiếp theo. Model lỗi được tạm bỏ khỏi các tác vụ tiếp theo: mặc định 30 giây, HTTP 429 ít nhất 60 giây; tôn trọng `Retry-After` tối đa 24 giờ. Sau thời gian chờ, model lại được xét. Model có `structured_outputs` nhận `json_schema`; model chỉ có `response_format` nhận `json_object` kèm schema trong system prompt. Mọi output đều được kiểm tra bằng Ajv và kiểm tra ngữ nghĩa trước khi chấp nhận. Quota free có thể áp dụng chung cho tài khoản; đổi model không đảm bảo có thêm quota.
 
 Để tránh model dùng hết output cho reasoning rồi trả content trống, gateway tắt reasoning nếu model cho phép; nếu reasoning bắt buộc, dùng mức thấp nhất `minimal/low` được công bố hoặc token cap tối đa 128 khi có hỗ trợ. Model bắt buộc reasoning nhưng không công bố cách giới hạn phù hợp sẽ bị loại. Ước tính ngân sách cộng phần dự phòng reasoning này. Diagnostics chỉ giữ finish_reason, kiểu/độ dài content, số token và chi phí; không lưu text reasoning. Xem [tài liệu reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
 

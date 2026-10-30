@@ -28,7 +28,8 @@
     <li class="stage" data-stage="session">
       <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>1</span></span><span class="stage-title"><strong>Website &amp; trình duyệt</strong><small id="sum-session">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
-        <label for="url">URL website cần test</label>
+        <label for="url">URL website cần test — nhập URL UAT nếu kiểm UAT</label>
+        <p class="hint">Nền tảng: Web trên PC. Môi trường kiểm thử theo URL bạn nhập; UAT và điện thoại là hai khái niệm riêng.</p>
         <input id="url" type="text" inputmode="url" placeholder="https://website-can-kiem-tra.vn" autocomplete="url" data-lock-running>
         <div id="recent" class="chips hidden"></div>
         <span class="label">Trình duyệt</span>
@@ -128,7 +129,7 @@
     <div id="error" class="banner error hidden" role="alert"></div>
     <div id="ai-off-banner" class="banner warn hidden"><p></p></div>
     <div class="metrics">
-      <div class="metric"><span>Event thu được</span><b id="event-count">0</b></div>
+      <div class="metric"><span>Quan sát toàn phiên</span><b id="event-count">0</b></div>
       <div class="metric"><span>Loại event</span><b id="kind-count">0</b></div>
       <div class="metric PASS"><span>Đạt</span><b id="pass-count">0</b></div>
       <div class="metric FAIL"><span>Cần sửa</span><b id="fail-count">0</b></div>
@@ -160,8 +161,9 @@
         </div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
-        <div id="activity-filters" class="toolbar"><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
-        <div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
+        <div id="activity-filters" class="toolbar"><label class="activity-date">Luồng kiểm tra<select id="activity-flow"><option value="">Tất cả luồng (chẩn đoán)</option><option value="golf">Golf</option><option value="flight">Flight</option><option value="hotel">Hotel</option><option value="combo">Combo</option><option value="attraction">VinWonders / Attraction</option><option value="event">Sự kiện</option><option value="voucher">Voucher</option><option value="merchandise">Merchandise</option><option value="unknown">Chưa xác định</option></select></label><label class="activity-date">Lấy dữ liệu từ<select id="activity-channel"><option value="network">Request gửi đi (nguồn chính)</option><option value="queue">dataLayer / InsiderQueue</option><option value="sdk">SDK trước khi gửi</option><option value="all">Tất cả lớp — chẩn đoán</option></select></label><label class="check"><input id="activity-spec-only" type="checkbox"> Chỉ event trong đặc tả đã nhập</label><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
+        <button type="button" class="btn small" id="queues-read" data-action="queues-read">Đọc dataLayer / InsiderQueue hiện tại</button>
+        <p id="activity-scope-note" class="banner info"></p><div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
         <div id="event-groups" class="hidden"></div>
         <div id="events" class="hidden"></div>
       </div>
@@ -187,12 +189,19 @@
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>
       <div class="tabpanel hidden" data-panel="ai">
         <h3 class="section-title">Kết nối &amp; giới hạn chi phí</h3>
+        <label for="ai-api-key">OpenRouter API key</label>
+        <input id="ai-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Dán key tại đây — không hiển thị lại sau khi lưu">
+        <label class="check"><input id="ai-allow-paid" type="checkbox" checked> Khi hết model free phù hợp, dùng model trả phí rẻ nhất (tối đa 0,01 USD/tác vụ)</label>
+        <button type="button" class="btn primary" data-action="ai-save-key">Lưu key trên máy này</button>
+        <p class="hint">Key lưu trong .env tại thư mục đã giải nén, dùng ngay và cho lần mở sau. Key không được gửi lại giao diện hoặc đưa vào báo cáo. Không chia sẻ file .env.</p>
         <div id="ai-config" class="kv"></div>
         <div id="ai-keys" class="not-run"></div>
         <div class="row" style="margin-top:12px"><button type="button" class="btn" data-action="ai-test">Kiểm tra kết nối</button><button type="button" class="btn" data-action="ai-models">Xem model &amp; giá</button></div>
         <div id="ai-check" style="margin-top:10px"></div>
 
         <h3 class="section-title">Tạo rule nháp từ đặc tả</h3>
+        <label for="ai-spec-case">Event trong file Excel đã nhập</label><select id="ai-spec-case"><option value="">Nhập file WebOTA ở bước Đặc tả trước</option></select>
+        <button type="button" class="btn" data-action="ai-use-spec">Dùng yêu cầu của event đã chọn</button>
         <p class="hint" style="margin-top:0">Mô tả event và dán sample payload từ đặc tả (hoặc copy payload từ tab Event). Dữ liệu được che trước khi gửi. Bản nháp phải được QC duyệt trước khi dùng.</p>
         <textarea id="ai-input" class="code" rows="8" spellcheck="false"></textarea>
         <div id="ai-input-error" class="field-error"></div>
@@ -216,10 +225,11 @@
 <dialog id="spec-detail-dialog" class="spec-dialog">
 <div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
 <dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
+<dialog id="queues-dialog" class="spec-dialog"><div class="spec-dialog-head"><span>QUEUE HIỆN TẠI · CẤU TRÚC NGUYÊN BẢN</span><button type="button" class="btn small" id="queues-close">Đóng ✕</button></div><div id="queues-content" style="padding:20px"></div></dialog>
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';
-let attach = false, targetId = '', lastDraft = null, aiSig = '';
+let attach = false, targetId = '', lastDraft = null, aiSig = '', specSig = '', importedCases = [];
 const $ = id => document.getElementById(id);
 const { esc, short } = EventQA;
 const AI_REASON = {
@@ -228,6 +238,9 @@ const AI_REASON = {
   MODEL_STRUCTURED_OUTPUT_UNSUPPORTED: 'Model cấu hình không hỗ trợ xuất JSON.', MODEL_UNSUITABLE_OR_OVER_BUDGET: 'Model cấu hình vượt giới hạn giá hoặc ngân sách.',
   AI_REQUEST_BUDGET_EXCEEDED: 'Vượt ngân sách ước tính cho một tác vụ.', CREDIT_EXHAUSTED: 'Key hết credit cho model trả phí; chỉ còn model free.', API_KEYS_UNAVAILABLE: 'Tất cả key đang bị tạm khoá (sai key hoặc hết quota).',
   AI_INPUT_TOO_LARGE: 'Đầu vào quá lớn; rút gọn sample.', INVALID_AI_INPUT: 'Đầu vào cần là JSON object.', INVALID_AI_JSON: 'Model trả JSON không hợp lệ.',
+  AI_MAX_MODEL_ATTEMPTS: 'Đã chạm giới hạn số model thử; tác vụ dừng và không bỏ qua model free để chuyển sang trả phí.',
+  AI_MAX_FREE_ATTEMPTS: 'Đã chạm giới hạn thử model free; tăng giới hạn hoặc đặt OPENROUTER_MAX_FREE_ATTEMPTS=0 để thử toàn bộ.',
+  AI_MAX_COMPLETION_REQUESTS: 'Đã chạm giới hạn số request AI của tác vụ.',
 };
 const reasonText = reason => AI_REASON[reason] || reason || 'Không rõ lý do';
 const usd = value => typeof value === 'number' ? `$${value < 0.01 ? value.toPrecision(2) : value.toFixed(2)}` : '—';
@@ -247,14 +260,15 @@ document.addEventListener('click', event => {
 function renderAi(ai) {
   const sig = JSON.stringify(ai); if (!ai || sig === aiSig) return; aiSig = sig;
   const ready = ai.enabled && ai.configured_key_count > 0 && !ai.closed;
-  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? `AI sẵn sàng · ${ai.routing}` : 'AI chưa sẵn sàng';
+  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? `AI đã cấu hình · ${ai.routing}` : 'AI chưa cấu hình';
   const off = $('ai-off-banner'); off.classList.toggle('hidden', ready);
   off.querySelector('p').textContent = !ai.enabled ? reasonText('AI_DISABLED') + ' Thu thập và đối chiếu vẫn chạy bình thường.' : !ai.configured_key_count ? reasonText('API_KEY_MISSING') : '';
   const items = [
     ['Trạng thái', ai.enabled ? 'Bật' : 'Tắt'], ['Key đã cấu hình', ai.configured_key_count], ['Định tuyến', ai.routing],
     ['Model đặc tả / giải thích', `${ai.model_spec} / ${ai.model_explain}`], ['Cho phép trả phí', ai.allow_paid ? 'Có' : 'Không (chỉ free)'],
     ['Giá tối đa in / out', `${ai.max_prompt_usd_per_million} / ${ai.max_completion_usd_per_million} USD/1M`], ['Ngân sách / tác vụ', usd(ai.request_budget_usd)],
-    ['Số model thử tối đa', `${ai.max_model_attempts} (free: ${ai.max_free_attempts})`],
+    ['Số model thử tối đa', `${ai.max_model_attempts} (free: ${ai.max_free_attempts === 0 ? 'tất cả model phù hợp' : ai.max_free_attempts})`],
+    ['Model đang chờ thử lại', (ai.cooling_models || []).length],
   ];
   $('ai-config').innerHTML = items.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
   $('ai-keys').innerHTML = (ai.keys || []).map(k => `<span class="pill ${k.available ? (k.paid_available ? 'PASS' : 'REVIEW') : 'FAIL'}">${esc(k.label)} · ${k.available ? (k.paid_available ? 'sẵn sàng' : 'chỉ free') : esc(k.reason || 'tạm khoá')}</span>`).join('');
@@ -273,11 +287,36 @@ function renderDraft(result) {
     <details class="more"><summary>JSON bản nháp</summary><pre>${esc(JSON.stringify(lastDraft, null, 2))}</pre></details>`;
 }
 
+function renderImportedSpecs(cases) {
+  importedCases = cases || [];
+  const sig = JSON.stringify(importedCases.map(c => [c.id, c.name])); if (sig === specSig) return; specSig = sig;
+  const select = $('ai-spec-case'), previous = select.value;
+  select.innerHTML = importedCases.length ? importedCases.map(c => `<option value="${esc(c.id)}">${esc(c.flow || 'Chung')} · ${esc(c.source)} · ${esc(c.rules?.[0]?.event_name || c.name)}</option>`).join('') : '<option value="">Nhập file WebOTA ở bước Đặc tả trước</option>';
+  if (importedCases.some(c => c.id === previous)) select.value = previous;
+}
+
 $('ai-input').value = JSON.stringify(SAMPLE, null, 2);
 EventQA.boot({ token, mode: 'cdp-ai', hooks: {
   startPayload: () => { if (attach && !targetId) throw new Error('Quét và chọn tab cần gắn trước.'); return attach ? { attach: true, targetId } : { attach: false }; },
-  render: s => renderAi(s.ai),
+  render: s => { renderAi(s.ai); renderImportedSpecs(s.cases); },
   actions: {
+    'ai-save-key': async () => {
+      const input = $('ai-api-key');
+      try {
+        await EventQA.api('ai-settings', { apiKey: input.value.trim(), allowPaid: $('ai-allow-paid').checked }, 'ai-save-key');
+        EventQA.toast('Đã lưu key. Bấm Kiểm tra kết nối để gọi thử.', 'ok');
+      } finally { input.value = ''; }
+    },
+    'ai-use-spec': () => {
+      const c = importedCases.find(c => c.id === $('ai-spec-case').value);
+      if (!c) throw new Error('Chọn và nhập file Excel đặc tả trước.');
+      $('ai-input').value = JSON.stringify({ event_name: c.rules?.[0]?.event_name, source: c.source, flow: c.flow,
+        description: c.description, notes: c.notes, parameter_notes: c.parameter_notes, sdk_notes: c.sdk_notes,
+        sample: c.sample, sample_text: c.sample_text, provenance: c.provenance,
+        instruction: 'Đề xuất rule cho Web từ yêu cầu này. Giá trị động lấy từ context; điểm chưa rõ giữ needs_review. Không dùng sample làm actual.' }, null, 2);
+      $('ai-input').classList.remove('invalid'); $('ai-input-error').textContent = '';
+      EventQA.toast('Đã lấy yêu cầu từ file. Xem lại rồi bấm Tạo nháp bằng AI.', 'ok');
+    },
     'scan-targets': async () => {
       const { targets } = await EventQA.api('targets', { port: Number($('debug-port').value) }, 'scan');
       $('targets').innerHTML = targets.map(t => `<button type="button" class="case" data-target="${esc(t.id)}" data-tab-url="${esc(t.url)}" aria-pressed="false"><span class="case-main"><strong>${esc(t.title || '(không tiêu đề)')}</strong><small>${esc(short(t.url, 80))}</small></span></button>`).join('') || '<p class="hint">Không thấy tab nào trên cổng này.</p>';

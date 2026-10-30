@@ -2,6 +2,8 @@
 
 Ngày rà soát: 30/10/2026. Phạm vi: source hiện tại, tài liệu dự án và workbook `Martech_AppOTA_Insider_20260801.xlsx` người dùng cung cấp. Những phần ghi “cần làm” chưa phải chức năng đã bàn giao.
 
+**Cập nhật sau rà soát:** người dùng đã bổ sung file WebOTA và yêu cầu gói Windows chạy trên máy cá nhân. Bản đóng gói kế tiếp bổ sung lưu key qua giao diện, AI dùng yêu cầu từng event trong file Web, model free trước/rẻ nhất sau và tách nguồn/luồng. Auto coverage đã được sửa để rule nháp và field động thiếu context giữ REVIEW. Xem [đánh giá file Web](WEB_SPEC_REVIEW.md); các nhận xét bên dưới về lỗi trước sửa được giữ làm lịch sử rà soát, không thay thế kiểm chứng bản phát hành.
+
 **Phạm vi người dùng đã chốt:** làm tốt bản Web trước. QC tự thao tác, hệ thống tự thu thập, kiểm tra và báo lỗi. Native App và tự động thực hiện thao tác không nằm trong điều kiện nghiệm thu bản Web đầu tiên.
 
 Người dùng xác định workbook là **file tham khảo**, không phải hợp đồng nghiệm thu Web đã duyệt. File gửi lại có cùng nội dung với file đã phân tích (SHA-256 `f1ffdf4a7d33fc31a3b01e796d74385b4162b78be74bdb244ff736d1cd03f2e7`). Các trigger và quy tắc trích từ file phải đi qua bước mapping/duyệt cho Web trước khi tạo kết luận nghiệm thu.
@@ -25,7 +27,7 @@ Kiến trúc dùng chung collector, rule engine, evidence store và report có t
 | App Android/iOS | Chưa có native collector trong đường chạy `src/cli.mjs` | CDP desktop không quan sát được Insider/Firebase SDK trong App. Proxy Web hiện tại không tự trở thành bộ thu native SDK. |
 | Phân phối | Có ZIP Windows kèm Node, 3 chế độ dùng chung core | Giữ cách chạy portable; ba chế độ là tùy chọn kỹ thuật thu dữ liệu, không thay thế lựa chọn Web/App, Golf/Flight và kịch bản. |
 
-Source đang có thay đổi cục bộ để tách luồng, nguồn quan sát và bóc event trong `Ucd:event:beforeSend`. Các thay đổi này chưa nằm trong ZIP đã commit ở `4b0b600`; không coi chúng là bản phát hành mới.
+Tại thời điểm rà soát ban đầu, source có thay đổi cục bộ để tách luồng, nguồn quan sát và bóc event trong `Ucd:event:beforeSend`; ZIP ở `4b0b600` chưa chứa các thay đổi đó. Bản portable được đóng gói sau rà soát thay thế ZIP này.
 
 ## 2. Những gì workbook thực tế cho thấy
 

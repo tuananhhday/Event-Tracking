@@ -45,9 +45,20 @@ test('captured events are assigned to the specification row of their flow and ch
   assert.equal(row('31').seen, 2, 'flight search goes to the flight row, not the hotel row');
   assert.equal(row('3').seen, 0);
   assert.equal(row('31').status, 'MISMATCH');
-  assert.deepEqual(row('31').issues.map(i => [i.code, i.path]), [['WRONG_TYPE', 'departure_code'], ['MISSING_FIELD', 'destination']]);
+  assert.deepEqual(row('31').issues.map(i => [i.code, i.path]), [['MISSING_CONTEXT', 'destination'], ['WRONG_TYPE', 'departure_code'], ['MISSING_FIELD', 'destination']]);
   assert.equal(row('75').status, 'MATCH', 'Insider listing is placed by its breadcrumb');
   assert.equal(row('67').status, 'NOT_SEEN');
   assert.deepEqual(coverage.unmatched.map(u => u.event_name), ['promo_click'], 'GTM lifecycle events are not reported as outside the spec');
   assert.deepEqual({ seen: coverage.totals.seen, match: coverage.totals.match, mismatch: coverage.totals.mismatch }, { seen: 2, match: 1, mismatch: 1 });
+});
+
+test('automatic coverage cannot accept a dynamic value without independent step context', () => {
+  const c = { id: 'GOLF', name: 'Golf', source: 'GA4', flow: 'Golf', rules: [{ event_name: 'search_submit', layer: 'JS_QUEUE',
+    fields: { destination: { op: 'ref', value: 'context.search.destination_name' } } }] };
+  const e = { evidence_id: 'DYNAMIC', source: 'GA4', layer: 'JS_QUEUE', event_name: 'search_submit',
+    page: { url: 'https://example.test/vi/golf' }, payload: { destination: 'Some destination' } };
+  const row = specCoverage([c], [e]).rows[0];
+  assert.equal(row.status, 'REVIEW');
+  assert.equal(row.pass, 0);
+  assert.ok(row.issues.some(i => i.code === 'MISSING_CONTEXT'));
 });

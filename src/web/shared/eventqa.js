@@ -339,7 +339,7 @@
     return `<div class="list-title"><b>Cách bắn</b></div><table class="params"><tbody>${ordered.map(check => { const [cls, icon] = FIRING_STATUS[check.status]; return `<tr><td><span class="pill ${cls}">${icon} ${esc(RULE_TEXT[check.rule] || check.rule)}</span></td><td>${esc(check.message)}${check.evidence_id ? ` <button type="button" class="evlink" data-evidence="${esc(check.evidence_id)}">xem</button>` : ''}</td></tr>`; }).join('')}</tbody></table>`;
   }
   function eventDetailHtml(e, spec, firing) {
-    const { base, params } = eventParams(e);
+    const { base, params } = spec?.comparison_format === 'default_custom_parameters' ? { base: '', params: spec.observed || {} } : eventParams(e);
     const rows = paramRows(params).filter(row => !/^gtm\./.test(row.path));
     const full = path => base ? `${base}.${path}` : path;
     const pageUrl = (() => { try { const u = new URL(e.page?.url); return u.host + u.pathname; } catch { return e.page?.url || ''; } })();
@@ -390,20 +390,43 @@
   }
 
   // ---- live evidence ------------------------------------------------------
+  function activityFilterQuery() {
+    return new URLSearchParams({ channel: $('activity-channel')?.value || 'network', source: $('ev-source')?.value || '',
+      flow: $('activity-flow')?.value || '', spec_only: $('activity-spec-only')?.checked ? '1' : '0' }).toString();
+  }
+  function setupFlowFilter(s) {
+    if ($('activity-flow') && s.flows) {
+      const select = $('activity-flow'), options = JSON.stringify(s.flows);
+      if (select.dataset.flows !== options) {
+        const current = select.value;
+        select.innerHTML = '<option value="">Tất cả luồng (chẩn đoán)</option>' + Object.entries(s.flows).map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join('');
+        select.value = current; select.dataset.flows = options;
+      }
+    }
+    const key = `${s.session?.id || ''}:${s.cases.map(c => c.id).join('|')}`;
+    if (ui.flowFilterKey === key) return;
+    ui.flowFilterKey = key;
+    const preferred = s.sessionFlow !== 'unknown' ? s.sessionFlow : s.specFlows?.length === 1 ? s.specFlows[0] : '';
+    if (preferred && $('activity-flow')) $('activity-flow').value = preferred;
+    if (preferred && s.specFlows?.length && !s.specFlows.includes(preferred)) $('activity-spec-only').checked = false;
+  }
   async function refreshActivity(more = false) {
     if (ui.activityLoading || !ui.state) return;
     const session = ui.state.session?.id || null;
     if (ui.activitySession !== session) {
       ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activitySession = session;
     }
-    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}`;
+    const filters = activityFilterQuery();
+    if (ui.activityFilters !== filters) { ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activityFilters = filters; }
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${filters}`;
     if (!more && version === ui.activityVersion) return;
     ui.activityLoading = true;
     try {
-      const response = await fetch('/api/activity?compact=1' + (more && ui.activityNext ? `&before=${encodeURIComponent(ui.activityNext)}` : ''), { signal: AbortSignal.timeout(10000) });
+      const response = await fetch('/api/activity?compact=1&' + filters + (more && ui.activityNext ? `&before=${encodeURIComponent(ui.activityNext)}` : ''), { signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error('Chưa tải được danh sách event.');
       const page = await response.json();
       if (page.session_id !== (ui.state.session?.id || null)) return;
+      if (filters !== activityFilterQuery()) return;
       if (more) ui.activityExtended = true;
       if (more) ui.activity = [...ui.activity, ...page.events];
       else if (ui.activityExtended) ui.activity = [...new Map([...page.events, ...ui.activity].map(e => [e.evidence_id, e])).values()];
@@ -418,33 +441,41 @@
   }
   function renderActivity(f, emptyHtml) {
     const from = $('activity-from')?.value, to = $('activity-to')?.value;
+    setText('activity-scope-note', `Luồng: ${$('activity-flow')?.selectedOptions[0]?.textContent || 'Tất cả'} · Nguồn: ${$('activity-channel')?.selectedOptions[0]?.textContent || 'Request'} · ${f.source || 'Mọi vendor'}. Queue, request và SDK không ghép chung ở chế độ mặc định.`);
     const items = ui.activity.filter(e => {
       const at = new Date(e.captured_at); const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
-      return (f.system || !SYSTEM_EVENT.test(e.event_name)) && (!f.layer || e.layer === f.layer) && (!f.source || e.source === f.source)
+      return (f.system || (!e.diagnostic && !SYSTEM_EVENT.test(e.event_name))) && (!f.source || e.source === f.source)
         && (!f.marked || !ui.marker || at.getTime() >= ui.marker) && (!from || day >= from) && (!to || day <= to)
         && (!f.query || JSON.stringify(e).toLowerCase().includes(f.query));
     });
-    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} event đã ghi. Mỗi dòng là một lần phát; JS queue và request được giữ riêng.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button><br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.source)}</span><br><small class="hint">${esc(LAYER_TEXT[e.layer] || e.layer)}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem JSON</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} event trong nguồn và luồng đã chọn. Các lần bắn lặp trong cùng nguồn được giữ nguyên.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Luồng</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button><br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.flow_label)}</span>${e.flow_conflict ? '<br><small class="hint">URL / payload khác luồng</small>' : ''}</td><td><span class="pill">${esc(e.source)}</span><br><small class="hint">${esc(activitySource(e))}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem JSON</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
     $('activity-more').classList.toggle('hidden', !ui.activityNext);
+  }
+  function activitySource(a) {
+    if (a.observation === 'network_request') return 'Request mạng';
+    if (a.observation === 'sdk_before_send') return 'SDK trước khi gửi';
+    if (a.observation === 'sdk_dispatch') return 'Lệnh gọi Insider SDK';
+    return a.queue_name ? `${a.queue_name}.push` : (LAYER_TEXT[a.layer] || a.layer);
   }
   async function openActivity(id) {
     const response = await fetch(`/api/event?id=${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error('Không đọc được event này.');
     const detail = await response.json(); ui.activitySelected = detail;
     const a = detail.activity, e = detail.event;
-    const parameters = group => Object.entries(group).map(([key, value]) => `<tr><td><code>${esc(key)}</code></td><td><pre>${esc(JSON.stringify(value, null, 2))}</pre></td></tr>`).join('') || '<tr><td colspan="2" class="hint">Nguồn thực tế không có tham số trong nhóm này.</td></tr>';
-    $('activity-content').innerHTML = `<h2>${esc(a.display_name)}</h2><div class="kv"><div><span>Thời điểm</span><b>${esc(new Date(a.captured_at).toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc(LAYER_TEXT[a.layer])}</b></div></div><p class="hint">Nhóm tham số đọc từ <code>${esc(a.parameter_mapping)}</code> của event thực tế. Không dùng dữ liệu Excel để điền thiếu. Request gửi đi không xác nhận Insider đã tiếp nhận. Dữ liệu nhạy cảm được che.</p>${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
+    const rawPayload = e.original_payload || e.payload;
+    const parameters = (group, name) => Object.entries(group).map(([key, value]) => `<tr><td><code>${esc(key)}</code></td><td><pre>${esc(JSON.stringify(value, null, 2))}</pre><small class="hint">${esc(a.parameter_origins?.[`${name}.${key}`] || '')}</small></td></tr>`).join('') || '<tr><td colspan="2" class="hint">Nguồn thực tế không có tham số trong nhóm này.</td></tr>';
+    $('activity-content').innerHTML = `<h2>${esc(a.display_name)}</h2><div class="kv"><div><span>Thời điểm</span><b>${esc(new Date(a.captured_at).toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc(activitySource(a))}</b></div><div><span>Luồng được nhận diện</span><b>${esc(a.flow_label)}${a.flow_conflict ? ' · URL/payload không thống nhất' : ''}</b></div></div><p class="hint">Nhóm tham số đọc từ <code>${esc(a.parameter_mapping)}</code> của event thực tế. Không dùng dữ liệu Excel để điền thiếu. Request gửi đi không xác nhận Insider đã tiếp nhận. Dữ liệu nhạy cảm được che.</p>${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
       <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div><div class="segmented"><button type="button" data-activity-view="json" aria-pressed="true">JSON tham số</button><button type="button" data-activity-view="params" aria-pressed="false">Default / Custom</button><button type="button" data-activity-view="raw" aria-pressed="false">Payload gốc</button></div>
-      <section data-activity-panel="json"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section><section data-activity-panel="params" class="hidden"><h3>Default Parameters</h3><table class="params"><tbody>${parameters(a.json.default_parameters)}</tbody></table><h3>Custom Parameters</h3><table class="params"><tbody>${parameters(a.json.custom_parameters)}</tbody></table></section><section data-activity-panel="raw" class="hidden"><p class="hint">Payload đã thu, không đổi tên trường hoặc chuyển nhóm. Bằng chứng ${esc(e.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(e.payload, null, 2))}</pre></section>`;
+      <section data-activity-panel="json"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section><section data-activity-panel="params" class="hidden"><h3>Default Parameters</h3><table class="params"><tbody>${parameters(a.json.default_parameters, 'default_parameters')}</tbody></table><h3>Custom Parameters</h3><table class="params"><tbody>${parameters(a.json.custom_parameters, 'custom_parameters')}</tbody></table></section><section data-activity-panel="raw" class="hidden"><p class="hint">Payload đã thu, không đổi tên trường hoặc chuyển nhóm. Bằng chứng ${esc(e.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(rawPayload, null, 2))}</pre></section>`;
     $('activity-copy').onclick = run(async () => {
       const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
-      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: rawPayload } : rawPayload) : a.json;
       try { await navigator.clipboard.writeText(JSON.stringify(value, null, 2)); toast('Đã sao chép toàn bộ JSON.', 'ok'); }
       catch { throw new Error('Trình duyệt chưa cho phép sao chép. Dùng nút Tải JSON để lấy đầy đủ dữ liệu.'); }
     });
     $('activity-download').onclick = () => {
       const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
-      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: rawPayload } : rawPayload) : a.json;
       const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${e.evidence_id}${raw ? '-raw' : ''}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
@@ -459,11 +490,16 @@
   }
   function renderSourceFilter(s) {
     const select = $('ev-source'); if (!select) return;
-    const sources = [...new Set((s.eventSummary || []).map(g => g.source))].sort();
-    const sig = sources.join('|'); if (sig === ui.sig.sources) return; ui.sig.sources = sig;
-    const current = select.value;
+    const specSources = [...new Set(s.cases.map(c => c.source).filter(Boolean))];
+    const sources = [...new Set(['INSIDER', ...specSources, ...(s.eventSummary || []).map(g => g.source)])].sort();
+    const specKey = s.cases.map(c => c.id).join('|');
+    const changedSpec = ui.sourceSpecKey !== specKey;
+    const sig = sources.join('|') + specKey; if (sig === ui.sig.sources) return; ui.sig.sources = sig;
+    const current = changedSpec && specSources.length === 1 ? specSources[0] : ui.sourceSpecKey === undefined ? 'INSIDER' : select.value;
     select.innerHTML = '<option value="">Mọi nguồn</option>' + sources.map(src => `<option value="${esc(src)}">${esc(src)}</option>`).join('');
     select.value = sources.includes(current) ? current : '';
+    ui.sourceSpecKey = specKey;
+    if (changedSpec && $('activity-spec-only')) $('activity-spec-only').checked = s.cases.length > 0;
   }
   function renderFilterBar(f) {
     const bar = $('ev-filterbar'); if (!bar) return;
@@ -482,8 +518,9 @@
       ${active ? '<button type="button" class="btn ghost small" data-action="events-clear">✕ Bỏ lọc</button>' : ''}`;
   }
   function renderEvents(s) {
-    if (ui.view === 'activity') void refreshActivity();
     renderSourceFilter(s);
+    setupFlowFilter(s);
+    if (ui.view === 'activity') void refreshActivity();
     const f = eventFilters();
     if ($('ev-search')) $('ev-search').placeholder = ui.view === 'activity' ? 'Tìm tên event, nguồn hoặc evidence ID…' : 'Tìm event, giá trị, evidence ID…';
     const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup, $('activity-from')?.value, $('activity-to')?.value, ui.activity.length]);
@@ -500,6 +537,10 @@
     $('events')?.classList.toggle('hidden', ui.view !== 'stream');
     $('activity-events')?.classList.toggle('hidden', ui.view !== 'activity');
     $('activity-filters')?.classList.toggle('hidden', ui.view !== 'activity');
+    $('activity-scope-note')?.classList.toggle('hidden', ui.view !== 'activity');
+    $('ev-layer')?.classList.toggle('hidden', ui.view === 'activity');
+    if ($('activity-spec-only')) $('activity-spec-only').disabled = !s.cases.length;
+    if ($('queues-read')) { $('queues-read').classList.toggle('hidden', ui.view !== 'activity'); $('queues-read').disabled = !s.running || s.session?.capture_queues === false || !!ui.busy; }
     if (ui.view !== 'activity') $('activity-more')?.classList.add('hidden');
     const emptyHtml = !s.session
       ? '<div class="empty"><span class="empty-art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18m-13 6 3-3 3 5 3-3"/></svg></span><strong>Sẵn sàng cho phiên kiểm tra đầu tiên?</strong><p>Nhập website cần kiểm tra, mở trình duyệt test và thực hiện thao tác. Event thực tế sẽ xuất hiện tại đây.</p><div class="empty-actions"><button type="button" class="btn primary" data-setup-stage="session">Thiết lập website →</button><button type="button" class="btn" data-action="use-demo">Thử với demo</button></div><div class="empty-steps"><span><b>1</b>Mở website</span><span><b>2</b>Thực hiện thao tác</span><span><b>3</b>Xem event &amp; đối chiếu</span></div></div>'
@@ -587,7 +628,7 @@
     const event = loaded?.event;
     const rule = c.rules[0];
     const comparisons = Object.entries(rule?.fields || {}).map(([path, field]) => {
-      const actual = event ? valueAt(event.payload, path) : undefined;
+      const actual = event ? valueAt(loaded?.spec?.observed || event.payload, path) : undefined;
       const issue = loaded?.spec?.issues.find(i => i.path === path);
       const verdict = !event ? 'Chưa có event' : issue ? (ISSUE_TEXT[issue.code] || issue.code) : field.op === 'ignore' ? 'Bỏ qua' : 'Đúng theo rule';
       return `<tr><td><code>${esc(path)}</code></td><td>${formatValue(valueAt(c.sample, path))}</td><td>${esc(field.op)}${field.value !== undefined ? ` · ${esc(short(field.value, 100))}` : ''}</td><td>${actual === undefined ? '<span class="hint">Chưa có / thiếu trường</span>' : formatValue(actual)}</td><td>${esc(verdict)}</td></tr>`;
@@ -596,7 +637,7 @@
       <p class="hint">Mẫu giữ nguyên theo file. Các giá trị ví dụ không tự trở thành giá trị bắt buộc: cột Quy tắc cho biết đang kiểm kiểu, có mặt hay giá trị chính xác. Event thực tế giữ nguyên tên và payload đã thu thập.</p>
       ${event ? `<p><b>Event thực tế:</b> ${esc(event.event_name)} · ${esc(event.evidence_id)}</p>` : '<p class="banner info">Chưa thu được event đúng nguồn/tầng/tên cho dòng này. Payload mẫu bên dưới không phải bằng chứng đã bắn.</p>'}
       <div class="table-scroll"><table class="params"><thead><tr><th>Trường</th><th>Ví dụ trong đặc tả</th><th>Quy tắc hiện tại</th><th>Thực tế</th><th>Đối chiếu</th></tr></thead><tbody>${comparisons || '<tr><td colspan="5">Chưa có chi tiết payload để kiểm.</td></tr>'}</tbody></table></div>
-      <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Payload · thực tế</h3><pre>${esc(event ? JSON.stringify(event.payload, null, 2) : 'Chưa có event')}</pre></section></div>`;
+      <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Tham số · thực tế</h3><pre>${esc(event ? JSON.stringify(loaded?.spec?.observed || event.payload, null, 2) : 'Chưa có event')}</pre></section></div><h3>Yêu cầu và cách fire trong file</h3><pre>${esc([c.parameter_notes, c.sdk_notes].filter(Boolean).join('\n\n') || 'Sheet không có hướng dẫn riêng; xem mô tả và sample bên trên.')}</pre>`;
     $('spec-detail-dialog').showModal();
   }
   const SPEC_STATUS = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy'] };
@@ -860,6 +901,11 @@
     return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
   }
   const actions = {
+    'queues-read': async () => {
+      const result = await api('queues/read');
+      $('queues-content').innerHTML = '<p class="hint">Đọc trực tiếp queue hiện đang có trên trang. Không bắn lại event, không tính lần đọc là event mới. Đây là trạng thái lúc đọc; dữ liệu có thể khác lúc push nếu SDK đã sửa/xóa phần tử. Dữ liệu nhạy cảm được che.</p>' + (result.snapshots.map(s => `<h3>${esc(s.title || s.url)}</h3><p class="hint">${esc(s.url)} · ${esc(s.read_at)}</p>${Object.entries(s.queues).map(([name, q]) => `<details open><summary><b>${esc(name)}</b> · ${esc(q.status)}${q.length !== undefined ? ` · ${q.length} phần tử` : ''}${q.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</summary><pre>${esc(JSON.stringify(q.item ?? q.items, null, 2))}</pre></details>`).join('')}`).join('') || '<p>Chưa đọc được queue trong frame hiện tại. Đợi website tải xong rồi đọc lại.</p>');
+      $('queues-dialog').showModal();
+    },
     start: async () => {
       const payload = startPayload(); saveSite();
       await api('start', payload, 'start'); ui.marker = null; selectTab('events');
@@ -933,9 +979,15 @@
   };
 
   function bindCommon() {
+    $('queues-close')?.addEventListener('click', () => $('queues-dialog').close());
     $('activity-close')?.addEventListener('click', () => $('activity-dialog').close());
     $('activity-more')?.addEventListener('click', run(() => refreshActivity(true)));
-    for (const id of ['activity-from', 'activity-to']) $(id)?.addEventListener('input', () => { ui.sig.events = null; render(); });
+    for (const id of ['activity-from', 'activity-to', 'activity-channel', 'activity-spec-only', 'activity-flow']) $(id)?.addEventListener('input', () => {
+      if (id === 'activity-flow' && $('activity-flow').value && ui.state?.specFlows?.length && !ui.state.specFlows.includes($('activity-flow').value)) {
+        $('activity-spec-only').checked = false; toast('Luồng đã chọn khác sheet hiện tại. Đã tắt lọc theo sheet; nhập sheet của luồng này để đối chiếu.');
+      }
+      ui.sig.events = null; render();
+    });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
     $('setup-toggle')?.addEventListener('click', () => toggleSetup());
     $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
