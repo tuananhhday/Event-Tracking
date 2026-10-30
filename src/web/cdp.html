@@ -40,6 +40,7 @@
           <button type="button" class="btn" data-action="scan-targets" data-lock-running>Quét tab trên cổng debug</button>
           <div id="targets" class="cases" style="margin-top:8px"></div>
         </div>
+        <label class="check"><input id="request-only" type="checkbox" data-lock-running> Chỉ bắt request · không gắn hook vào website</label><p class="hint">Dùng nếu website lag hoặc không thao tác được. Không đọc dataLayer / InsiderQueue; tầng JS chưa quan sát sẽ trả REVIEW. Áp dụng khi mở phiên mới.</p>
         <span class="label">Tracking cần bắt</span>
         <div id="vendors" class="vendor-list"></div>
         <details class="more"><summary>Endpoint bổ sung &amp; nâng cao</summary>
@@ -143,7 +144,7 @@
       </div>
       <div class="tabpanel" data-panel="events">
         <div class="toolbar">
-          <div class="segmented shrink"><button type="button" data-view="groups" aria-pressed="true">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
+          <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Hoạt động · JSON</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
           <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
           <select id="ev-source" aria-label="Lọc theo nguồn"><option value="">Mọi nguồn</option></select>
           <input id="ev-search" type="text" placeholder="Tìm event, giá trị, evidence ID…" aria-label="Tìm bằng chứng">
@@ -156,7 +157,9 @@
         </div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
-        <div id="event-groups"></div>
+        <div id="activity-filters" class="toolbar"><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
+        <div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
+        <div id="event-groups" class="hidden"></div>
         <div id="events" class="hidden"></div>
       </div>
       <div class="tabpanel hidden" data-panel="spec">
@@ -193,6 +196,7 @@
 
 <dialog id="spec-detail-dialog" class="spec-dialog">
 <div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
+<dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';

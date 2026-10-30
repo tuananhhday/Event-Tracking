@@ -5,21 +5,50 @@
   const state = { arrays: new WeakMap(), ownedArrays: new Set(), properties: [], timer: null, enabled: true };
   Object.defineProperty(window, marker, { value: state, configurable: true });
 
-  function emit(queue, item, historical) {
+  // Snapshot data properties only. JSON.stringify on the website's object would
+  // execute getters/toJSON inside its own click handler and can stall checkout.
+  function snapshotItem(item) {
+    const capture = { incomplete: false, reasons: [] };
+    let nodes = 0, chars = 0;
+    const ancestors = new WeakSet();
+    const omit = reason => { capture.incomplete = true; if (!capture.reasons.includes(reason)) capture.reasons.push(reason); return '[Not captured]'; };
+    const copy = (value, depth = 0) => {
+      if (++nodes > 4096 || depth > 12) return omit('snapshot_limit');
+      if (typeof value === 'bigint') return String(value);
+      if (typeof value === 'string') {
+        if (value.length > 50000 || chars + value.length > 200000) return omit('text_limit');
+        chars += value.length; return value;
+      }
+      if (typeof value === 'function' || typeof value === 'symbol' || value === undefined) return undefined;
+      if (value === null || typeof value !== 'object') return value;
+      if (ancestors.has(value)) return '[Circular]';
+      ancestors.add(value);
+      try {
+        if (Object.getPrototypeOf(value) === Date.prototype) return Date.prototype.toISOString.call(value);
+        const length = Object.getOwnPropertyDescriptor(value, 'length');
+        const isList = Array.isArray(value) || (!!Object.getOwnPropertyDescriptor(value, 'callee') && typeof length?.value === 'number');
+        const result = isList ? [] : Object.create(null);
+        if (isList) Object.defineProperty(result, 'toJSON', { value: undefined });
+        for (const key of Object.keys(value)) {
+          if (nodes >= 4096 || chars >= 200000) { omit('snapshot_limit'); break; }
+          chars += key.length;
+          const descriptor = Object.getOwnPropertyDescriptor(value, key);
+          if (!descriptor || !Object.hasOwn(descriptor, 'value')) { result[key] = omit('accessor_omitted'); continue; }
+          const child = copy(descriptor.value, depth + 1);
+          if (child !== undefined) Object.defineProperty(result, key, { value: child, enumerable: true, writable: true, configurable: true });
+        }
+        return result;
+      } catch (_) { return omit('unreadable_object'); }
+      finally { ancestors.delete(value); }
+    };
+    return { item: copy(item), capture };
+  }
+
+  function emit(queue, item, historical, prepared) {
     if (!state.enabled) return;
     try {
-      const ancestors = [];
-      const snapshot = JSON.stringify({ queue, item, historical, href: location.href,
-        title: document.title, ts: Date.now() }, function (_key, value) {
-        if (typeof value === 'bigint') return String(value);
-        if (typeof value === 'object' && value !== null) {
-          while (ancestors.length && ancestors[ancestors.length - 1] !== this) ancestors.pop();
-          if (ancestors.includes(value)) return '[Circular]';
-          if (Object.prototype.toString.call(value) === '[object Arguments]') value = Array.from(value);
-          ancestors.push(value);
-        }
-        return value;
-      });
+      const safe = prepared || snapshotItem(item);
+      const snapshot = JSON.stringify({ queue, ...safe, historical, href: location.href, title: document.title, ts: Date.now() });
       if (typeof window.__eventqa_emit === 'function') window.__eventqa_emit(snapshot);
     } catch (_) { /* Evidence capture must never break the site. */ }
   }
@@ -94,10 +123,11 @@
     try {
       const value = window.insider_object;
       if (!value || typeof value !== 'object') return;
-      const snapshot = JSON.stringify(value);
-      if (snapshot === lastInsiderObject || snapshot.length > 200000) return;
+      const safe = snapshotItem(value);
+      const snapshot = JSON.stringify(safe);
+      if (snapshot === lastInsiderObject) return;
       lastInsiderObject = snapshot;
-      emit('insider_object', value, false);
+      emit('insider_object', value, false, safe);
     } catch (_) { /* Unserializable object. */ }
   }
   let ticks = 0;
@@ -106,8 +136,8 @@
       try { hook(name, window[name], true); } catch (_) { /* Isolate hostile getters. */ }
     }
     hookDispatch();
-    if (++ticks % 5 === 0) watchInsiderObject();
-  }, 100);
+    if (++ticks % 2 === 0) watchInsiderObject();
+  }, 500);
   state.stop = () => {
     state.enabled = false;
     clearInterval(state.timer);

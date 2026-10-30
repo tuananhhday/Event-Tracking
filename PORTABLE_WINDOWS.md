@@ -2,6 +2,10 @@
 
 Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Download raw file** nếu GitHub hiển thị trang xem file.
 
+Mặc định mở **Hoạt động · JSON**: mỗi dòng là một lần phát event. Bấm **Xem JSON** để xem `event`, `default_parameters`, `custom_parameters`; có **Sao chép JSON**, **Tải JSON** và **Payload gốc**. Nhóm tham số được đọc từ dữ liệu thu thực tế, không điền bằng mẫu Excel và không phải bản đọc từ tài khoản Insider.
+
+Nếu cửa sổ test bị kẹt, kết thúc phiên, bật **Chỉ bắt request · không gắn hook vào website** rồi mở phiên mới. Đã kiểm tra click đặt hàng trên trang thử cục bộ; cần URL và bước thao tác để xác nhận website cụ thể.
+
 Giao diện mới có thanh điều hướng Event / Đặc tả / Kết quả / Xuất báo cáo; nút **Ẩn thiết lập** để dành toàn bộ vùng làm việc cho dữ liệu. Chọn Excel qua ô **Chọn file đặc tả**, chọn sheet rồi bấm **Nhập file**. Tùy chọn nhập đường dẫn thủ công nằm trong mục nâng cao. Cửa sổ chi tiết đặt mẫu và payload thực tế cạnh nhau, có thể đóng bằng nút **Đóng** hoặc phím Escape.
 
 1. Giải nén **toàn bộ** ZIP vào thư mục có quyền ghi, ví dụ Documents\EventQA.
@@ -19,7 +23,7 @@ Máy phải cho phép chạy `node.exe`, file CMD và Chrome/Edge với cổng d
 
 Gói được tạo trên Linux: đã kiểm tra checksum Node từ nguồn chính thức, cấu trúc ZIP, chạy code được giải nén và smoke CDP trên Linux. **Chưa chạy thử trực tiếp trên Windows**. Kiểm tra tại máy công ty: launcher hiện phiên bản Node, giao diện mở, chạy demo và xuất báo cáo XLSX được.
 
-SHA-256 của ZIP: `ada923cdefe7c0265464a9700dae51499821d2a30fc080ff779fec49ec3a470a`.
+SHA-256 của ZIP: `0cea1b6830a1dfe6581277297cd513497b6b7305f74505993c233d10cfb52201`.
 
 ## Tạo lại gói
 

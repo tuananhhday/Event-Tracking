@@ -66,6 +66,14 @@ explains these requirements. Session data and reports stay in runs/ locally.
 Choose your XLSX file in step 2 and select a sheet (for example R1511).
 The specification tab shows exact event names, descriptions and payload samples
 beside real evidence. AppOTA sample shapes may differ from website events.
+
+The default Events view is Activity / JSON: one row per observed event.
+Open a row to see, copy or download event/default_parameters/custom_parameters.
+The Raw Payload tab retains original captured field names. Missing mobile app
+attributes are never filled from the workbook. Sensitive fields are masked.
+For a website that cannot be operated with queue capture, end the session,
+enable request-only capture in CDP, then open a new session. This does not
+inject JavaScript queue hooks; queue checks are REVIEW, not a false missing event.
 Do not commit runs/, profiles/, imports/ or credentials to GitHub.
 
 Built on Linux; Windows execution has not been validated on a Windows machine.

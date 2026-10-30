@@ -62,6 +62,23 @@ test('connection resolves interleaved command responses and asynchronous events'
   assert.equal((await inner).method, 'inner');
 });
 
+test('request-only collector observes traffic without injecting code or pausing the website', async t => {
+  const commands = [], events = [];
+  const mock = await mockCDP((command, send) => { commands.push(command); send({ id: command.id, result: {} }); });
+  t.after(() => mock.close());
+  const collector = new CDPCollector({ port: mock.port, captureQueues: false, onEvent: e => events.push(e) });
+  t.after(() => collector.stop());
+  await collector.start({});
+  mock.send({ method: 'Runtime.executionContextCreated', params: { context: { id: 1, auxData: { isDefault: true } } } });
+  mock.send({ method: 'Network.requestWillBeSent', params: { requestId: 'order-event', request: { url: 'https://unification.useinsider.com/api/event/', method: 'POST', postData: '{"event_name":"purchase","event_params":{"total":110000}}', headers: { 'content-type': 'application/json' } } } });
+  for (let i = 0; i < 50 && !events.length; i++) await delay(10);
+  assert.equal(events[0]?.event_name, 'purchase');
+  assert.ok(!commands.some(c => c.method.startsWith('Runtime.') || c.method === 'Page.addScriptToEvaluateOnNewDocument' || c.method === 'Fetch.enable'));
+  assert.ok(commands.filter(c => c.method === 'Target.setAutoAttach').every(c => c.params.waitForDebuggerOnStart === false));
+  await collector.stop();
+  assert.ok(!commands.some(c => c.method === 'Runtime.removeBinding'));
+});
+
 test('CDP connection rejects remote hosts and times out pending commands', async t => {
   assert.throws(() => new CDPConnection('ws://evil.example:9222/'), /localhost/);
   const mock = await mockCDP(() => {});

@@ -103,7 +103,7 @@ const INSIDER_OBJECT_PAGES = { home: 'homepage_view', main: 'homepage_view', lis
 /** One queue push becomes one event, except an Insider custom_event push, which can carry several. */
 export function queueEvents(record) {
   const base = { schema_version: '1.0', source: record.queue === 'dataLayer' ? 'GA4' : 'INSIDER', layer: 'JS_QUEUE', queue_name: record.queue,
-    historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
+    historical: Boolean(record.historical), ...(record.capture?.incomplete ? { capture: record.capture } : {}), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
   let payload = record.item;
   let eventName;
   if (record.queue === 'InsiderDispatch') {
@@ -132,10 +132,11 @@ export function queueEvents(record) {
 }
 
 export class CDPCollector {
-  constructor({ port = 9222, targetId, urlFilter, onEvent, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS } = {}) {
+  constructor({ port = 9222, targetId, urlFilter, onEvent, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
     if (typeof onEvent !== 'function') throw new Error('CDPCollector requires onEvent.');
     this.port = Number(port); this.targetId = targetId; this.urlFilter = urlFilter;
     this.onEvent = onEvent; this.onStatus = onStatus;
+    this.captureQueues = captureQueues;
     this.patterns = endpointPatterns; this.discovered = new Map();
     this.connections = new Map(); this.attaching = new Map(); this.activeConnections = new Set(); this.jobs = new Set(); this.running = false; this.generation = 0;
   }
@@ -208,6 +209,12 @@ export class CDPCollector {
   }
   async #instrument(state, sessionId, generation) {
     const send = (method, params) => this.running && generation === this.generation ? state.connection.send(method, params, sessionId) : Promise.reject(new Error('CDP collector stopped.'));
+    if (!this.captureQueues) {
+      await send('Network.enable', { maxPostDataSize: 1048576 });
+      await send('Page.enable');
+      await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+      return;
+    }
     await send('Runtime.addBinding', { name: '__eventqa_emit' });
     await send('Runtime.enable');
     await send('Network.enable', { maxPostDataSize: 1048576 });
@@ -241,7 +248,7 @@ export class CDPCollector {
       }
     } else if (method === 'Runtime.executionContextCreated') {
       const context = params.context;
-      if (context?.auxData?.isDefault) {
+      if (this.captureQueues && context?.auxData?.isDefault) {
         state.contexts.set(`${sessionId || ''}:${context.id}`, { id: context.id, sessionId, frameId: context.auxData.frameId });
         await send('Runtime.evaluate', { expression: INJECT_JS, contextId: context.id }).catch(() => {});
       }
@@ -250,6 +257,7 @@ export class CDPCollector {
     } else if (method === 'Runtime.executionContextsCleared') {
       for (const [key, context] of state.contexts) if (context.sessionId === sessionId) state.contexts.delete(key);
     } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_emit') {
+      if (!this.captureQueues) return;
       let record;
       try { record = JSON.parse(params.payload); } catch { return; }
       if (!['dataLayer', 'InsiderQueue', 'InsiderDispatch', 'insider_object'].includes(record.queue)) return;
@@ -336,7 +344,7 @@ export class CDPCollector {
         for (const sessionId of new Set(['', ...state.scripts.keys(), ...state.childSessions])) {
           const identifier = state.scripts.get(sessionId);
           if (identifier) cleanup.push(state.connection.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, sessionId || undefined));
-          cleanup.push(state.connection.send('Runtime.removeBinding', { name: '__eventqa_emit' }, sessionId || undefined));
+          if (this.captureQueues) cleanup.push(state.connection.send('Runtime.removeBinding', { name: '__eventqa_emit' }, sessionId || undefined));
           cleanup.push(state.connection.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }, sessionId || undefined));
         }
       }

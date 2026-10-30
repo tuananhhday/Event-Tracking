@@ -129,6 +129,7 @@ export function validateCase(testCase, events = [], step) {
     }
     for (const event of matching) {
       const evidenceId = event.evidence_id || stepEvidence;
+      if (event.capture?.incomplete) { add('INCOMPLETE_CAPTURE', 'Complete captured payload', event.capture.reasons, evidenceId, 'REVIEW'); continue; }
       if (rule.layer === 'TRACKING_REQUEST' && event.network?.request_id) {
         const lifecycle = associated.filter(candidate => candidate.layer === 'TRACKING_REQUEST' && matchesSource(candidate)
           && candidate.network?.request_id === event.network.request_id

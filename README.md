@@ -1,5 +1,9 @@
 # Event Tracking QA
 
+**Xem dữ liệu thực tế dạng JSON:** tab Event mặc định hiển thị **Hoạt động · JSON**, mỗi dòng là một lần phát. Bấm **Xem JSON** để xem/sao chép/tải `event`, `default_parameters`, `custom_parameters`; tab **Payload gốc** giữ nguyên cấu trúc đã thu. Không lấy dữ liệu Excel để điền tham số thiếu và không khẳng định đó là dữ liệu đã vào server Insider. Có lịch sử phân trang để không mất event cũ ngoài 100 dòng gần nhất.
+
+**Website lag / không thao tác được khi gắn bộ thu:** kết thúc phiên, bật **Chỉ bắt request · không gắn hook vào website** ở CDP rồi mở phiên mới. Chế độ này không đọc JS queue; kết quả cho tầng chưa quan sát được giữ REVIEW. Bộ chụp queue không gọi getter/toJSON của payload website, giới hạn công việc đồng bộ và đánh dấu rõ bản thu không đầy đủ. Chạy `node scripts/checkout-smoke.mjs` để kiểm tra click đặt hàng và JSON trên trang thử cục bộ; lệnh này không tạo đơn ở website thật.
+
 **Trang chọn 3 chế độ:** chạy `START_EVENT_QA.cmd` hoặc `npm start`. Bản portable: giải nén ZIP và mở `START_PORTABLE.cmd`. Trang chính mở ba lựa chọn CDP không AI / CDP có AI / Proxy. Trong mỗi chế độ, dùng nút chọn file Excel và danh sách sheet; hỗ trợ cả cột **Chi tiết event** (ví dụ sheet **R1511**). Bấm **Xem chi tiết đặc tả** để xem Event Name, mô tả, payload mẫu nguyên văn và từng trường so với event thực tế. Mẫu AppOTA và payload website có thể khác cấu trúc; app hiển thị rõ và không tự chuyển đổi bằng chứng. Xem [hướng dẫn portable](PORTABLE_WINDOWS.md).
 
 Bản triển khai đầu tiên từ [deep-research-report.md](deep-research-report.md). Có **ba chế độ chạy riêng**, dùng chung rule engine, lưu bằng chứng và báo cáo. QC thao tác thủ công trên trình duyệt test; ứng dụng thu thập tự động, không cần F12, Selenium, Playwright hoặc extension.

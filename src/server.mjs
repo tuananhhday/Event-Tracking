@@ -10,6 +10,7 @@ import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs'
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchEvent } from './core/catalog.mjs';
 import { firingChecks } from './core/firing.mjs';
+import { activityEvent } from './core/activity.mjs';
 import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
@@ -90,12 +91,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let ai = aiClient ?? new OpenRouterClient();
-  const state = () => {
+  const state = ({ compact = false } = {}) => {
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
       eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
-      events: snapshot.events.slice(-100), eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
+      events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   async function bounded(promise, milliseconds) {
     let timer;
@@ -193,7 +194,23 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (req.method === 'POST' && ['/demo/g/collect', '/demo/insider/events'].includes(url.pathname)) {
         await bodyForDiscard(req); res.writeHead(204); return res.end();
       }
-      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state());
+      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
+      if (req.method === 'GET' && url.pathname === '/api/activity') {
+        const events = manager.snapshot().events;
+        const count = events.filter(e => !e.network?.phase || e.network.phase === 'request').length;
+        const before = url.searchParams.get('before');
+        let end = before ? events.findIndex(e => e.evidence_id === before) : events.length;
+        if (end < 0) return send(res, 400, { error: 'Mốc event không thuộc phiên hiện tại.' });
+        const page = []; let cursor = end;
+        while (cursor > 0 && page.length < 100) {
+          const event = events[--cursor];
+          if (!event.network?.phase || event.network.phase === 'request') {
+            const activity = activityEvent(event);
+            page.push(url.searchParams.get('compact') === '1' ? { ...activity, json: undefined, default_count: Object.keys(activity.json.default_parameters).length, custom_count: Object.keys(activity.json.custom_parameters).length } : activity);
+          }
+        }
+        return send(res, 200, { events: page, total: count, next: cursor > 0 ? events[cursor]?.evidence_id : null, session_id: manager.session?.id || null });
+      }
       if (req.method === 'GET' && url.pathname === '/api/event') {
         const id = url.searchParams.get('id');
         const event = manager.snapshot().events.find(candidate => candidate.evidence_id === id);
@@ -203,7 +220,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         const testCase = match && manager.cases.find(c => c.id === match.case_id);
         const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
         const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
-        return send(res, 200, { event, spec, firing });
+        return send(res, 200, { event, spec, firing, activity: activityEvent(event) });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });
@@ -303,7 +320,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             try { await dns.lookup(targetUrl.hostname); }
             catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
           }
-          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString() }); exported = null;
+          const captureQueues = mode !== 'proxy' && data.captureQueues !== false;
+          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues }); exported = null;
           const epoch = ++captureEpoch;
           const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
           try {
@@ -327,7 +345,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             } else {
               if (!data.attach) await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) });
               if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
-              collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns });
+              collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
               await collector.start(manager.session);
               if (!data.attach) {
                 const first = [...collector.connections.values()][0];
@@ -335,6 +353,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
                 if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
               }
               status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
+              if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
             }
             if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); }
           } catch (error) { await stopCapture(); manager.abort(); throw error; }

@@ -87,6 +87,25 @@ test('frozen queues and read-only window properties do not break page execution'
   assert.equal(f.run('Array.isArray(dataLayer)'), true);
 });
 
+test('capture does not execute website getters or toJSON inside a checkout queue push', () => {
+  const f = fixture('dataLayer=[]; getterReads=0; jsonCalls=0; vendorCalls=0; dataLayer.push=function(item){vendorCalls++;return 777};');
+  assert.equal(f.run('dataLayer.push({event:"begin_checkout",get total(){getterReads++;throw Error("site getter")},toJSON(){jsonCalls++;return {event:"wrong"}}})'), 777);
+  assert.equal(f.run('vendorCalls'), 1);
+  assert.equal(f.run('getterReads'), 0);
+  assert.equal(f.run('jsonCalls'), 0, 'capturing must not run a website serialization hook before its own handler');
+  assert.equal(f.events[0].item.event, 'begin_checkout');
+  assert.equal(f.events[0].capture.incomplete, true);
+});
+
+test('large queue items yield a marked partial snapshot while the original push still completes', () => {
+  const f = fixture('dataLayer=[]; large={event:"purchase"}; for(let i=0;i<10000;i++)large["p"+i]="x".repeat(500);');
+  assert.equal(f.run('dataLayer.push(large)'), 1);
+  assert.equal(f.run('dataLayer[0]===large'), true);
+  assert.equal(f.events[0].item.event, 'purchase');
+  assert.equal(f.events[0].capture.incomplete, true);
+  assert.ok(JSON.stringify(f.events[0]).length < 300000);
+});
+
 test('browser launcher rejects unsafe inputs without starting any browser', async () => {
   await assert.rejects(launchBrowser({ port: 2 }), /port/);
   await assert.rejects(launchBrowser({ url: 'javascript:alert(1)' }), /HTTP/);

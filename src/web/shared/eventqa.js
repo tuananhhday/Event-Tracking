@@ -28,7 +28,7 @@
     HTTP_ERROR: 'Request lỗi HTTP', REQUEST_FAILED: 'Request thất bại', TIMING_EXCEEDED: 'Quá thời gian cho phép', MISSING_TIMING: 'Thiếu mốc thời gian',
     OUT_OF_ORDER: 'Sai thứ tự', ORDER_PREDECESSOR_MISSING: 'Thiếu event đứng trước', MISSING_CONTEXT: 'Context chưa có giá trị này',
     INVALID_RULE: 'Rule không hợp lệ', RULE_NEEDS_REVIEW: 'Rule chưa được duyệt', LAYER_UNAVAILABLE: 'Phương án này không quan sát được tầng này',
-    VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review', NO_EXPECTED_FIELDS: 'Đặc tả chưa có chi tiết payload',
+    VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review', NO_EXPECTED_FIELDS: 'Đặc tả chưa có chi tiết payload', INCOMPLETE_CAPTURE: 'Payload thu chưa đầy đủ',
   };
   const VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', REVIEW: 'REVIEW', NOT_EXECUTED: 'Chưa chạy' };
   const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request' };
@@ -36,7 +36,8 @@
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
-    sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'groups', marker: null,
+    sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'activity', marker: null,
+    activity: [], activityVersion: null, activityNext: null, activityTotal: 0, activitySelected: null,
     hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null };
   const siteKey = () => `eventqa:${ui.mode}:site`;
 
@@ -66,16 +67,18 @@
     finally { ui.busy = null; await refresh(); }
   }
   async function refresh() {
-    if (ui.stopped) return;
+    if (ui.stopped || ui.refreshing || document.hidden) return;
+    ui.refreshing = true;
     try {
-      const response = await fetch('/api/state', { cache: 'no-store' });
+      const response = await fetch('/api/state' + (ui.view === 'stream' ? '' : '?compact=1'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error();
       ui.state = await response.json(); setOffline(false);
     } catch { setOffline(true); }
+    finally { ui.refreshing = false; }
     render();
   }
   async function fetchEvent(id) {
-    const local = ui.state?.events.find(e => e.evidence_id === id); if (local) return local;
+    const local = ui.state?.events.find(e => e.evidence_id === id); if (local && !ui.state?.eventsCompact) return local;
     const response = await fetch(`/api/event?id=${encodeURIComponent(id)}`); if (!response.ok) return null;
     return (await response.json()).event;
   }
@@ -387,6 +390,66 @@
   }
 
   // ---- live evidence ------------------------------------------------------
+  async function refreshActivity(more = false) {
+    if (ui.activityLoading || !ui.state) return;
+    const session = ui.state.session?.id || null;
+    if (ui.activitySession !== session) {
+      ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activitySession = session;
+    }
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}`;
+    if (!more && version === ui.activityVersion) return;
+    ui.activityLoading = true;
+    try {
+      const response = await fetch('/api/activity?compact=1' + (more && ui.activityNext ? `&before=${encodeURIComponent(ui.activityNext)}` : ''), { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Chưa tải được danh sách event.');
+      const page = await response.json();
+      if (page.session_id !== (ui.state.session?.id || null)) return;
+      if (more) ui.activityExtended = true;
+      if (more) ui.activity = [...ui.activity, ...page.events];
+      else if (ui.activityExtended) ui.activity = [...new Map([...page.events, ...ui.activity].map(e => [e.evidence_id, e])).values()];
+      else ui.activity = page.events;
+      ui.activityVersion = version;
+      if (more || !ui.activityExtended) ui.activityNext = page.next;
+      ui.activityTotal = page.total;
+      ui.sig.events = null;
+      render();
+    } catch (error) { showError(error.message); }
+    finally { ui.activityLoading = false; }
+  }
+  function renderActivity(f, emptyHtml) {
+    const from = $('activity-from')?.value, to = $('activity-to')?.value;
+    const items = ui.activity.filter(e => {
+      const at = new Date(e.captured_at); const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+      return (f.system || !SYSTEM_EVENT.test(e.event_name)) && (!f.layer || e.layer === f.layer) && (!f.source || e.source === f.source)
+        && (!f.marked || !ui.marker || at.getTime() >= ui.marker) && (!from || day >= from) && (!to || day <= to)
+        && (!f.query || JSON.stringify(e).toLowerCase().includes(f.query));
+    });
+    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} event đã ghi. Mỗi dòng là một lần phát; JS queue và request được giữ riêng.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button><br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.source)}</span><br><small class="hint">${esc(LAYER_TEXT[e.layer] || e.layer)}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem JSON</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+    $('activity-more').classList.toggle('hidden', !ui.activityNext);
+  }
+  async function openActivity(id) {
+    const response = await fetch(`/api/event?id=${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error('Không đọc được event này.');
+    const detail = await response.json(); ui.activitySelected = detail;
+    const a = detail.activity, e = detail.event;
+    const parameters = group => Object.entries(group).map(([key, value]) => `<tr><td><code>${esc(key)}</code></td><td><pre>${esc(JSON.stringify(value, null, 2))}</pre></td></tr>`).join('') || '<tr><td colspan="2" class="hint">Nguồn thực tế không có tham số trong nhóm này.</td></tr>';
+    $('activity-content').innerHTML = `<h2>${esc(a.display_name)}</h2><div class="kv"><div><span>Thời điểm</span><b>${esc(new Date(a.captured_at).toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc(LAYER_TEXT[a.layer])}</b></div></div><p class="hint">Nhóm tham số đọc từ <code>${esc(a.parameter_mapping)}</code> của event thực tế. Không dùng dữ liệu Excel để điền thiếu. Request gửi đi không xác nhận Insider đã tiếp nhận. Dữ liệu nhạy cảm được che.</p>${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
+      <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div><div class="segmented"><button type="button" data-activity-view="json" aria-pressed="true">JSON tham số</button><button type="button" data-activity-view="params" aria-pressed="false">Default / Custom</button><button type="button" data-activity-view="raw" aria-pressed="false">Payload gốc</button></div>
+      <section data-activity-panel="json"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section><section data-activity-panel="params" class="hidden"><h3>Default Parameters</h3><table class="params"><tbody>${parameters(a.json.default_parameters)}</tbody></table><h3>Custom Parameters</h3><table class="params"><tbody>${parameters(a.json.custom_parameters)}</tbody></table></section><section data-activity-panel="raw" class="hidden"><p class="hint">Payload đã thu, không đổi tên trường hoặc chuyển nhóm. Bằng chứng ${esc(e.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(e.payload, null, 2))}</pre></section>`;
+    $('activity-copy').onclick = run(async () => {
+      const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
+      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      try { await navigator.clipboard.writeText(JSON.stringify(value, null, 2)); toast('Đã sao chép toàn bộ JSON.', 'ok'); }
+      catch { throw new Error('Trình duyệt chưa cho phép sao chép. Dùng nút Tải JSON để lấy đầy đủ dữ liệu.'); }
+    });
+    $('activity-download').onclick = () => {
+      const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
+      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${e.evidence_id}${raw ? '-raw' : ''}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    $('activity-dialog').showModal();
+  }
   // SDK setup and GTM lifecycle pushes; hidden unless asked for, they are not user actions.
   const SYSTEM_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$)/;
   const isSystem = e => e.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(e.event_name);
@@ -419,9 +482,11 @@
       ${active ? '<button type="button" class="btn ghost small" data-action="events-clear">✕ Bỏ lọc</button>' : ''}`;
   }
   function renderEvents(s) {
+    if (ui.view === 'activity') void refreshActivity();
     renderSourceFilter(s);
     const f = eventFilters();
-    const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup]);
+    if ($('ev-search')) $('ev-search').placeholder = ui.view === 'activity' ? 'Tìm tên event, nguồn hoặc evidence ID…' : 'Tìm event, giá trị, evidence ID…';
+    const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup, $('activity-from')?.value, $('activity-to')?.value, ui.activity.length]);
     const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, view, s.cases.length]); if (sig === ui.sig.events) return;
     // Keep an expanded event steady while new evidence arrives; offer to refresh instead.
     const reading = ui.view === 'stream' && $$('#events details[open]').length > 0 && ui.sig.eventsView === view;
@@ -433,11 +498,16 @@
     renderFilterBar(f);
     $('event-groups')?.classList.toggle('hidden', ui.view !== 'groups');
     $('events')?.classList.toggle('hidden', ui.view !== 'stream');
+    $('activity-events')?.classList.toggle('hidden', ui.view !== 'activity');
+    $('activity-filters')?.classList.toggle('hidden', ui.view !== 'activity');
+    if (ui.view !== 'activity') $('activity-more')?.classList.add('hidden');
     const emptyHtml = !s.session
       ? '<div class="empty"><span class="empty-art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18m-13 6 3-3 3 5 3-3"/></svg></span><strong>Sẵn sàng cho phiên kiểm tra đầu tiên?</strong><p>Nhập website cần kiểm tra, mở trình duyệt test và thực hiện thao tác. Event thực tế sẽ xuất hiện tại đây.</p><div class="empty-actions"><button type="button" class="btn primary" data-setup-stage="session">Thiết lập website →</button><button type="button" class="btn" data-action="use-demo">Thử với demo</button></div><div class="empty-steps"><span><b>1</b>Mở website</span><span><b>2</b>Thực hiện thao tác</span><span><b>3</b>Xem event &amp; đối chiếu</span></div></div>'
       : s.eventCount ? '<div class="empty"><strong>Không có event khớp bộ lọc</strong>Bấm “Bỏ lọc”, bỏ tick “Chỉ sau mốc” hoặc tick “Hiện event hệ thống”.</div>'
       : '<div class="empty"><strong>Chưa nhận được event</strong>Thao tác trên trình duyệt test. Không thấy request? Xem tab <b>Endpoint</b> để thêm endpoint tracking của website.</div>';
-    if (ui.view === 'groups') {
+    if (ui.view === 'activity') {
+      renderActivity(f, emptyHtml);
+    } else if (ui.view === 'groups') {
       const markerSince = ui.marker && f.marked;
       // Counts after a marker come from the buffered recent events; totals come from the server summary.
       const recentCounts = new Map();
@@ -478,7 +548,7 @@
   function showGroup(key) {
     const [layer, source, ...name] = key.split('|');
     ui.groupFilter = { layer, source, name: name.join('|') }; ui.view = 'stream';
-    ui.sig.events = null; render();
+    ui.sig.events = null; if (ui.state?.eventsCompact) void refresh(); else render();
   }
   function clearEventFilters() {
     ui.groupFilter = null;
@@ -486,11 +556,12 @@
     if ($('ev-marked')) $('ev-marked').checked = false;
     ui.sig.events = null; render();
   }
-  function jumpToEvidence(id) {
+  async function jumpToEvidence(id) {
     selectTab('events'); ui.view = 'stream'; ui.groupFilter = null;
     for (const [elId, value] of [['ev-layer', ''], ['ev-source', '']]) if ($(elId)) $(elId).value = value;
     if ($('ev-marked')) $('ev-marked').checked = false;
-    if ($('ev-search')) $('ev-search').value = id; ui.openEvents.add(id); ui.sig.events = null; render();
+    if ($('ev-search')) $('ev-search').value = id; ui.openEvents.add(id); ui.sig.events = null;
+    if (ui.state?.eventsCompact) await refresh(); else render();
     const target = document.querySelector(`[data-ev="${CSS.escape(id)}"]`);
     if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
     else if (id.startsWith('STEP-')) toast('Đây là bằng chứng của bước (event vắng mặt). Xem steps.jsonl trong thư mục phiên.');
@@ -731,6 +802,7 @@
     $('step-idle')?.classList.toggle('hidden', phase === 'recording');
     if ($('context')) $('context').readOnly = phase === 'recording';
     for (const el of $$('[data-lock-running]')) el.disabled = s.running || busy;
+    if (s.running && $('request-only')) $('request-only').checked = s.session?.capture_queues === false;
     if (ui.mode === 'proxy') for (const el of $$('[data-lock-proxy]')) el.disabled = s.running || busy;
     if (phase === 'recording') setText('rec-count', String(s.stepEventCount ?? 0));
     $('review-banner')?.classList.toggle('hidden', !caseNeedsReview(caseById(ui.selectedCase)));
@@ -742,7 +814,7 @@
     const s = ui.state; if (!s || ui.stopped) return;
     const phase = phaseOf(s);
     const indicator = $('board-capture-status');
-    if (indicator) { indicator.textContent = s.running ? 'Đang thu thập' : s.session ? 'Đã kết thúc phiên' : 'Chưa mở phiên'; indicator.classList.toggle('active', !!s.running); }
+    if (indicator) { indicator.textContent = s.running ? (s.session?.capture_queues === false ? 'Chỉ bắt request' : 'Đang thu thập') : s.session ? 'Đã kết thúc phiên' : 'Chưa mở phiên'; indicator.classList.toggle('active', !!s.running); }
     const casesKey = JSON.stringify([s.specSource, s.cases.length, s.cases.at(-1)?.id]);
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
@@ -785,7 +857,7 @@
     let parsed; try { parsed = new URL(url); } catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
     $('url').value = parsed.toString();
     if (!/^https?:$/.test(parsed.protocol)) throw new Error('URL cần dùng http hoặc https.');
-    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
+    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
   }
   const actions = {
     start: async () => {
@@ -861,6 +933,10 @@
   };
 
   function bindCommon() {
+    $('activity-close')?.addEventListener('click', () => $('activity-dialog').close());
+    $('activity-more')?.addEventListener('click', run(() => refreshActivity(true)));
+    for (const id of ['activity-from', 'activity-to']) $(id)?.addEventListener('input', () => { ui.sig.events = null; render(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
     $('setup-toggle')?.addEventListener('click', () => toggleSetup());
     $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
     $('sheet-select')?.addEventListener('change', () => { $('sheet').value = $('sheet-select').value; });
@@ -881,9 +957,15 @@
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage], [data-activity-id], [data-activity-view]');
       if (!target || target.disabled) return;
       const d = target.dataset;
+      if (d.activityId) return run(() => openActivity(d.activityId))();
+      if (d.activityView) {
+        for (const button of $$('[data-activity-view]')) button.setAttribute('aria-pressed', String(button === target));
+        for (const panel of $$('[data-activity-panel]')) panel.classList.toggle('hidden', panel.dataset.activityPanel !== d.activityView);
+        return;
+      }
       if (d.workspaceTab) { selectTab(d.workspaceTab); if (d.workspaceTab === 'spec' && !ui.state?.cases.length) revealSetup('spec'); return; }
       if (d.setupStage) return revealSetup(d.setupStage);
       if (d.specDetail) return run(() => openSpecDetail(d.specDetail))();
@@ -895,7 +977,7 @@
       if (d.groupView) return showGroup(d.groupView);
       if (d.expand) { ui.expandedGroup = ui.expandedGroup === d.expand ? null : d.expand; ui.sig.events = null; return render(); }
       if (d.addEndpoint) return run(() => addEndpoint(d.addEndpoint))();
-      if (d.view) { ui.view = d.view; ui.sig.events = null; return render(); }
+      if (d.view) { ui.view = d.view; ui.sig.events = null; if (d.view === 'stream' && ui.state?.eventsCompact) return void refresh(); return render(); }
       if (d.url) { $('url').value = d.url; ui.hooks.urlChanged?.(); return; }
       if (d.browser) return setBrowser(d.browser);
       if (d.targetMode) {

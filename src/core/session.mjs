@@ -25,7 +25,7 @@ export class SessionManager {
     if (this.currentStep) throw new Error('Cần hoàn tất bước hiện tại trước.');
     if (!this.cases.some(c => c.id === testCaseId)) throw new Error('Test case không tồn tại.');
     const id = `STEP-${randomUUID()}`;
-    const step = { id, evidence_id: id, test_case_id: testCaseId, started_at: new Date().toISOString(), context: redact(context), status: 'RUNNING', observed_layers: this.mode === 'proxy' ? ['TRACKING_REQUEST'] : ['JS_QUEUE', 'TRACKING_REQUEST'] };
+    const step = { id, evidence_id: id, test_case_id: testCaseId, started_at: new Date().toISOString(), context: redact(context), status: 'RUNNING', observed_layers: this.mode === 'proxy' || this.session.capture_queues === false ? ['TRACKING_REQUEST'] : ['JS_QUEUE', 'TRACKING_REQUEST'] };
     this.steps.push(step); this.currentStep = step; this.store.appendStep(step); this.persist(); return step;
   }
   emit(partial) {

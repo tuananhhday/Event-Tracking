@@ -475,3 +475,18 @@ label,.label { font-size:12px; }.stage-title strong { font-size:13px; }.stage-ti
 .stage { min-width:0; }.stage-body .btn { white-space:normal; text-align:center; max-width:100%; }
 @media(max-width:1000px) { .flow { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:640px) { .toasts { bottom:72px; right:12px; }.session-meta code { word-break:break-all; } }
+
+/* Actual event activity and a JSON-first inspector. */
+.activity-caption { font-size:11px; color:var(--muted); margin:12px 0; }
+.activity-table td { vertical-align:middle; }.activity-table td:first-child { min-width:155px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.activity-table th { padding:13px; }.activity-table .ev-toggle b { font-family:inherit; font-size:13px; }
+.activity-date { display:flex; flex-direction:column; gap:4px; margin:0; font-size:10px; }
+.activity-date input { border:1px solid var(--line-strong); border-radius:7px; padding:6px 9px; font-size:11px; }
+#activity-more { margin-top:14px; }
+.activity-dialog { margin:0 0 0 auto; width:min(850px,100vw); height:100dvh; max-height:100dvh; border-radius:14px 0 0 14px; }
+#activity-content { padding:8px 24px 24px; }#activity-content h2 { font-size:23px; margin:16px 0; }#activity-content h3 { font-size:14px; }
+#activity-content .kv b { font-size:12px; }#activity-content .activity-actions { margin:18px 0 12px; }
+#activity-content .activity-json { margin-top:16px; max-height:none; min-height:250px; font-size:13px; line-height:1.8; background:#f8f9fe; padding:20px; user-select:text; }
+#activity-content table.params pre { border:0; margin:0; padding:0; background:transparent; max-height:220px; font-size:12px; }
+#activity-content table.params td:first-child { width:36%; }
+@media(max-width:640px) { #activity-content { padding:8px 14px 24px; }.activity-dialog { border-radius:0; }#activity-content .activity-json { padding:12px; font-size:12px; }.toolbar .segmented { max-width:100%; }.toolbar .segmented button { white-space:normal; } }

@@ -15,6 +15,7 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
  * dynamic values (`ref`) only need to be present, every other rule is applied as written.
  */
 function evaluate(testCase, rule, event) {
+  if (event.capture?.incomplete) return { checks: [{ code: 'INCOMPLETE_CAPTURE', path: '', verdict: 'REVIEW', actual: event.capture.reasons }], score: 0 };
   const checks = Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
   const fixed = Object.entries(rule.fields ?? {}).filter(([, field]) => field?.op === 'eq' || field?.op === 'one_of').map(([path]) => path);
   const failedFixed = checks.filter(check => check.verdict !== 'PASS' && fixed.includes(check.path)).length;

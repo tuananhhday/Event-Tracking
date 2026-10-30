@@ -78,12 +78,13 @@ function destinationCheck(payload) {
 
 /** Checks for every captured event, keyed by evidence ID, plus a per-rule summary. */
 export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindowMs = 1000 } = {}) {
-  const ordered = events.filter(event => Number.isFinite(time(event))).sort((a, b) => time(a) - time(b));
+  const ordered = events.filter(event => !event.capture?.incomplete && Number.isFinite(time(event))).sort((a, b) => time(a) - time(b));
   const queue = ordered.filter(event => event.layer === 'JS_QUEUE' && !event.historical);
   const requests = ordered.filter(isRequest);
   const used = new Set();
   const results = new Map();
   const add = (event, check) => { if (!check) return; if (!results.has(event.evidence_id)) results.set(event.evidence_id, []); results.get(event.evidence_id).push(check); };
+  for (const event of events.filter(e => e.capture?.incomplete)) add(event, { rule: 'INCOMPLETE_CAPTURE', status: 'WARN', message: 'Payload thu chưa đầy đủ; không dùng mẫu thiếu để kết luận cách bắn của website.' });
   const deliveredBy = (event, name, source, test = () => true) => {
     const request = requests.find(candidate => !used.has(candidate.evidence_id) && candidate.source === source && candidate.event_name === name
       && time(candidate) >= time(event) - 2000 && time(candidate) <= time(event) + deliveryWindowMs && sameTab(event, candidate) && test(candidate));
