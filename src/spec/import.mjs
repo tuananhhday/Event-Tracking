@@ -146,7 +146,9 @@ function inferredFields(payload) {
         visit(value[0], `${fieldPath}.0`);
       }
       else {
-        fields[fieldPath] = { op: 'type', value: value === null ? 'null' : Array.isArray(value) ? 'array' : Number.isInteger(value) ? 'integer' : typeof value };
+        // A null in a sample means "value not known when the sample was taken": the field must be
+        // present, with any value.
+        fields[fieldPath] = { op: 'type', value: value === null ? ['null', 'string', 'number', 'boolean', 'object', 'array'] : Array.isArray(value) ? 'array' : Number.isInteger(value) ? 'integer' : typeof value };
         uncertain = true;
       }
     }
