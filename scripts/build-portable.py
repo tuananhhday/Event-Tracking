@@ -5,6 +5,7 @@ Dependencies must already be installed using the repository lockfile.
 """
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -44,8 +45,9 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
         if name.endswith(".cmd"):
             content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
         target.writestr(prefix + name, content)
-    for file in sorted((root / "node_modules").rglob("*")):
-        relative = file.relative_to(root).as_posix()
+    dependency_root = pathlib.Path(os.environ.get("EVENTQA_PACKAGED_DEPS", root / "node_modules")).resolve()
+    for file in sorted(dependency_root.rglob("*")):
+        relative = "node_modules/" + file.relative_to(dependency_root).as_posix()
         # POSIX CLI symlinks are unnecessary: the launcher calls node.exe directly.
         if "/.bin/" in relative or not file.is_file():
             continue
