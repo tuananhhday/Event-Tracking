@@ -4,7 +4,7 @@ Bản triển khai đầu tiên từ [deep-research-report.md](deep-research-rep
 
 ## Chạy nhanh trên Windows
 
-Máy hiện có Node.js 24, Chrome và Edge. Dependency của dự án đã được cài trong `node_modules`.
+Với **gói Windows đầy đủ**, giải nén toàn bộ rồi bấm [CHAY_EVENT_QA.cmd](CHAY_EVENT_QA.cmd). Ứng dụng tự mở giao diện CDP trong trình duyệt; không cần cài Node hay chạy lệnh npm. Gói này có sẵn `runtime/node.exe` và `node_modules`. Website test cần Chrome hoặc Edge trên máy. Giữ cửa sổ lệnh đang chạy; dùng [STOP_EVENT_QA.cmd](STOP_EVENT_QA.cmd) để dừng.
 
 Mở [START_EVENT_QA.cmd](START_EVENT_QA.cmd) để chọn phương án (hoặc mở cả ba, mỗi phương án một cửa sổ), hoặc mở trực tiếp `start.cmd` của từng phương án. Giao diện tự mở trong trình duyệt mặc định.
 
@@ -18,7 +18,7 @@ Mã giao diện: [src/web/cdp.html](src/web/cdp.html), [src/web/cdp-ai.html](src
 
 **Event đầy đủ:** mở event để xem và sao chép nguyên JSON payload thực tế. Tín hiệu SDK và snapshot trạng thái được tách khỏi event nghiệp vụ. Trong tab **Đối chiếu đặc tả**, bấm tên event để xem toàn bộ mẫu (kể cả chưa thu được event), nguồn sheet/dòng, nhóm default/custom và các phần cần xác nhận. Importer hỗ trợ mẫu JSON, Swift/Java SDK và text Insider; mẫu App luôn cần xác nhận mapping sang Web. Xem [chi tiết cấu trúc event](docs/EVENT_STRUCTURES.md).
 
-Hoặc chạy tại thư mục dự án:
+Nếu lấy **mã nguồn từ Git** thay vì gói Windows đầy đủ, cài Node.js 24+ rồi chạy tại thư mục dự án:
 
 ```powershell
 npm.cmd ci --ignore-scripts --no-audit --no-fund
