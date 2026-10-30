@@ -48,6 +48,12 @@ export function activityEvent(event) {
   }
   const display = event.source === 'INSIDER' ? INSIDER_NAMES[event.event_name]
     || String(event.event_name || '').split(/[_\s]+/).map(word => word ? word[0].toUpperCase() + word.slice(1) : '').join(' ') : event.event_name;
+  // Item origins describe transformations inside a compact GA4 prN string.
+  // Keep them in addition to the top-level items source, without inventing an
+  // ecommerce.items queue object from the outgoing transport representation.
+  if (event.source === 'GA4') for (const [path, source] of Object.entries(event.decoded_parameter_origins || {})) {
+    if (path.startsWith('items.')) origins[`default_parameters.${path}`] = source;
+  }
   return {
     evidence_id: event.evidence_id, event_name: event.event_name, display_name: display,
     captured_at: event.captured_at, source: event.source, layer: event.layer,

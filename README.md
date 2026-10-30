@@ -2,9 +2,13 @@
 
 **Định hướng theo yêu cầu nghiệm thu Web + App:** xem [đánh giá dự án và lộ trình](docs/PRODUCT_DIRECTION.md). Tài liệu phân biệt chức năng đang có với phần còn thiếu để kiểm đúng trigger, giá trị tham số, từng luồng và lập lỗi cho dev; kết quả khớp mẫu tự động chưa thay thế nghiệm thu kịch bản.
 
-**Luồng sử dụng:** tải [ZIP Windows](portable/EventQA-Windows-x64.zip), giải nén và mở `START_PORTABLE.cmd` → nhập file yêu cầu → chọn website/UAT và luồng → AI hướng dẫn từng bước → bấm **Bắt đầu bước**, thao tác trên website, rồi **Tôi đã thao tác xong · Kiểm tra**. Kết quả đặt tên event và params mong muốn/thực tế cạnh nhau, chỉ rõ thiếu/sai/ngoài yêu cầu. Có thể tải Excel/HTML/JSON/danh sách lỗi. Không cần cài Node hoặc viết JSON. API key lưu một lần ở **Thiết lập AI**.
+**Luồng sử dụng:** tải [ZIP Windows](portable/EventQA-Windows-x64.zip), giải nén và mở `START_PORTABLE.cmd` → nhập file yêu cầu → chọn website/UAT và luồng → tích chọn từng event cần test → **Hướng dẫn phần đã chọn** → **Bắt đầu bước**, thao tác trên website, rồi **Tôi đã thao tác xong · Kiểm tra**. Có bộ lọc nền tảng, tên event/thao tác và tùy chọn hiện yêu cầu chung. Không tự chọn cả file hoặc thêm event ngoài lựa chọn. API key lưu một lần ở **Thiết lập AI**; không cần cài Node hoặc viết JSON.
+
+**Độ phủ và kết quả:** mỗi yêu cầu đã chọn có trạng thái riêng: chưa chạy, đang thực hiện, bỏ qua, thiếu/sai, đã kiểm nhưng chưa đủ căn cứ hoặc đã xác minh. Số đã chọn/đã thực hiện/chưa chạy/bỏ qua/không chọn được ghi trên màn hình và trong báo cáo. Khớp cấu trúc/kiểu dữ liệu chưa đồng nghĩa đúng giá trị nghiệp vụ. Xem tên event và bảng params mong muốn/thực tế; xuất Excel/HTML/JSON/danh sách lỗi khi cần. Xem [hướng dẫn từng bước](docs/GUIDED_WORKFLOW.md).
 
 **Lấy tracking đúng nguồn:** yêu cầu dataLayer/InsiderQueue được so với queue thật; SDK và request được giữ làm bằng chứng bổ sung. Yêu cầu request được so với request. Không lấy sample điền actual, không dùng event cũ trước bước và không tính một quan sát ở ba tầng thành ba lần bắn. Mở chi tiết để xem JSON và nguồn từng tham số. Sample mâu thuẫn hoặc giá trị chưa xác minh được đánh dấu rõ.
+
+**GTM/GA4 và công cụ đối chiếu:** parser GA4 đọc event params và item `pr1`, `pr2`… từ request, giữ nguồn trường và cảnh báo phần chưa giải mã được. Dữ liệu suy ra từ request không được gọi là raw dataLayer. Model dataLayer dựng từ các message đã quan sát chỉ phục vụ chẩn đoán và không tự bù field thiếu trong push mới. Tag Assistant/GTM Preview và GA4 DebugView có liên kết mở riêng để đội QC đối chiếu; app chưa tích hợp extension, private API hoặc nhập HAR. Nguồn Google/GitHub đã nghiên cứu và giới hạn của từng công cụ nằm trong [tài liệu nghiên cứu tracking](docs/TRACKING_TOOL_RESEARCH.md).
 
 **Website lag / không thao tác được khi gắn bộ thu:** kết thúc phiên, bật **Chỉ bắt request · không gắn hook vào website** ở CDP rồi mở phiên mới. Chế độ này không đọc JS queue; kết quả cho tầng chưa quan sát được giữ REVIEW. Bộ chụp queue không gọi getter/toJSON của payload website, giới hạn công việc đồng bộ và đánh dấu rõ bản thu không đầy đủ. Chạy `node scripts/checkout-smoke.mjs` để kiểm tra click đặt hàng và JSON trên trang thử cục bộ; lệnh này không tạo đơn ở website thật.
 
@@ -12,9 +16,9 @@
 
 Bản triển khai đầu tiên từ [deep-research-report.md](deep-research-report.md). Có **ba chế độ chạy riêng**, dùng chung rule engine, lưu bằng chứng và báo cáo. QC thao tác thủ công trên trình duyệt test; ứng dụng thu thập tự động, không cần F12, Selenium, Playwright hoặc extension.
 
-## Chạy nhanh trên Windows
+## Chạy source và chẩn đoán nâng cao
 
-Máy hiện có Node.js 24, Chrome và Edge. Dependency của dự án đã được cài trong `node_modules`.
+Bản ZIP có sẵn Node Windows và dependencies. Các lệnh bên dưới dành cho người chạy source: cần Node.js 24+, Chrome/Edge và cài dependencies bằng `npm.cmd ci`.
 
 Mở [START_EVENT_QA.cmd](START_EVENT_QA.cmd) để chọn phương án (hoặc mở cả ba, mỗi phương án một cửa sổ), hoặc mở trực tiếp `start.cmd` của từng phương án. Giao diện tự mở trong trình duyệt mặc định.
 
@@ -37,7 +41,7 @@ Sau khi clone Git, cấu hình riêng cho AI bằng cách copy `.env.example` th
 
 Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `npm.ps1`. Yêu cầu Node.js **24 trở lên**. Mỗi phương án chỉ chạy một bản: mở lần hai khi bản đầu còn chạy sẽ báo trùng cổng; dùng `STOP_EVENT_QA.cmd` để tắt bản cũ.
 
-## Test trên website thật
+## Thu tự do trên website trong Nâng cao
 
 Không cần file đặc tả để bắt đầu.
 
@@ -52,9 +56,11 @@ Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp k
 
 Rule tạo từ một lần quan sát chỉ phản ánh hành vi hiện tại của website, không thay thế đặc tả nghiệp vụ. HTTP 200 không xác nhận vendor ingestion.
 
-## Đối chiếu với file đặc tả (Martech_WebOTA_….xlsx)
+## Đối chiếu tự do với đặc tả trong Nâng cao
 
-Ở bước 2, nhập đường dẫn file đặc tả rồi bấm **Nhập file**. Nhập được cả khi phiên đang chạy, miễn là chưa ghi bước nào. App đọc sheet **Tổng hợp Event tracking** (STT, Nền tảng, Luồng, Event Name, Event Description, DataLayer Sample, Note) và:
+Luồng mặc định ở đầu tài liệu dùng các yêu cầu được tích chọn và cửa sổ thao tác từng bước. Phần dưới mô tả tab chẩn đoán tự do trong **Nâng cao**, không thay cho kết quả nghiệm thu theo lựa chọn.
+
+Ở bước nhập đặc tả của màn hình Nâng cao, nhập đường dẫn file rồi bấm **Nhập file**. Nhập được khi chưa ghi bước nào. App đọc sheet **Tổng hợp Event tracking** (STT, Nền tảng, Luồng, Event Name, Event Description, DataLayer Sample, Note) và:
 
 - **tự gắn mọi event bắt được** vào dòng đặc tả cùng nền tảng và tên event, không cần bấm Bắt đầu bước. Khi nhiều luồng cùng tên event (`search_submit`, `listing_page_view`…), luồng được chọn theo giá trị trong payload (`service`, `breadcrumb`, `taxonomy`…) và URL trang (`/flight/`, `/hotel/`…);
 - **kiểm từng trường theo DataLayer Sample**, kể cả trường trong `ecommerce.items[0]` và `value[0].event_parameters.custom` của Insider;
@@ -98,7 +104,7 @@ Nhập đường dẫn XLSX và sheet trong giao diện; hoặc dùng CLI:
 node src/cli.mjs import --spec "F:\duong-dan\Martech_WebOTA_20260501.xlsx" --sheet "Tổng hợp Event tracking" --out imports\rules.json
 ```
 
-Workbook thật được nhắc trong báo cáo **chưa có trong thư mục này**. Parser nhận header tiếng Việt/Anh, tìm header sau các dòng tiêu đề, giữ `file/sheet/row`, đọc cell merge bằng ExcelJS và phân tích sample như dữ liệu JSON/JSON5, không thực thi JavaScript. Sample có cấu trúc không hỗ trợ được đánh dấu cần review.
+Workbook riêng được người dùng nhập trên máy sử dụng và không đi kèm ZIP/Git công khai. Parser nhận header tiếng Việt/Anh, tìm header sau các dòng tiêu đề, giữ `file/sheet/row`, đọc cell merge bằng ExcelJS và phân tích sample như dữ liệu JSON/JSON5, không thực thi JavaScript. Sample có cấu trúc không hỗ trợ được đánh dấu cần review.
 
 Rule nhập từ Excel luôn là bản nháp `needs_review=true`. Dùng **Xem / sửa rule**, sửa mapping và giá trị expected, tick xác nhận đã duyệt rồi lưu. Rule được lưu tại `imports/reviewed-cases.json`; lần sau nhập lại file này. Có thể chỉnh trực tiếp theo [examples/cases.json](examples/cases.json). Sample dynamic không tự biến thành giá trị exact. `search_term=snack` được so với `context.search.term`, không với sample `keychain`.
 
@@ -132,26 +138,27 @@ CLI dùng `expected.json` của phiên; có thể cung cấp `--spec` khi muốn
 
 ## OpenRouter và Proxy
 
-- Phương án 2 đã cấu hình key được cung cấp tại `.env` và bật AI. Trên máy mới, copy `.env.example` thành `.env`, điền key rồi bật `AI_ENABLED=true`. Chế độ `auto` thử model miễn phí trước, sau đó chọn model trả phí phù hợp có chi phí ước tính thấp nhất theo giá catalog hiện tại. Đã gọi thật thành công cả model miễn phí và Mistral Nemo trả phí; xem [bằng chứng AI](runs/ai-smoke/observations.json) và [probe model](runs/ai-smoke/targeted-probes.json).
+- Lưu key trên máy sử dụng qua **Thiết lập AI**, hoặc copy `.env.example` thành `.env`, điền key và bật `AI_ENABLED=true`. Chế độ `auto` thử model miễn phí trước, sau đó chọn model trả phí phù hợp có chi phí ước tính thấp nhất theo giá catalog hiện tại. ZIP/Git không chứa key. Bộ thử cục bộ dùng transport AI giả lập; không coi đây là bằng chứng model thật hiểu đúng workbook hoặc đã kết nối thành công trên máy đích.
 - Model timeout, quá tải, không có provider hoặc JSON không hợp lệ được chuyển sang model tiếp theo. Key sai/hết credit được chuyển sang các key dự phòng trong `OPENROUTER_API_KEYS` (phân tách bằng dấu phẩy). Hiện chỉ có một key được cung cấp; thử đổi key bằng mock đã đạt. Key thiếu credit trả phí vẫn giữ để gọi free. Không thay verdict; rule nháp luôn cần QC duyệt.
 - Cấu hình mặc định thử toàn bộ model free phù hợp trước, sau đó mới tới model trả phí rẻ nhất theo chi phí ước tính của tác vụ. Tổng tối đa 40 model/48 request; chạm giới hạn khi còn free chưa thử thì dừng. Giá input ≤0,25 USD/triệu token, output ≤1 USD/triệu token, ngân sách ước tính tổng ≤0,01 USD/tác vụ. Giá provider được chặn theo từng candidate. Đây là giới hạn mỗi tác vụ, không phải hạn mức tổng tài khoản. Có thể tắt trả phí bằng `OPENROUTER_ALLOW_PAID=false`. Xem [docs/AI_PROXY.md](docs/AI_PROXY.md).
-- Phương án 3 cần `mitmdump.exe`; bản 12.3.1 đã được cài riêng trong `.venv-proxy` tại dự án này và app tự nhận diện. Chỉ chạy proxy tại localhost, không tự cài CA hay đổi proxy hệ thống. HTTPS dùng được ngay: chỉ cửa sổ test do app mở tin đúng khoá CA proxy cố định trong `profiles/mitmproxy/`. Có thể chỉ định đường dẫn executable trong giao diện. Xem [docs/AI_PROXY.md](docs/AI_PROXY.md).
+- Phương án 3 cần Python/mitmproxy cài riêng, chưa đóng kèm ZIP. Chỉ chạy proxy tại localhost, không tự cài CA hay đổi proxy hệ thống. Cửa sổ test do app mở được cấu hình tin đúng khoá CA proxy trong `profiles/mitmproxy/`. Có thể chỉ định đường dẫn executable trong giao diện. Xem [docs/AI_PROXY.md](docs/AI_PROXY.md).
 - Các endpoint ngoài GA4/Insider cần thêm regex ở ô **Endpoint bổ sung**. Regex đối chiếu `hostname + pathname`, không đối chiếu query. Payload không hỗ trợ chỉ giữ `UNPARSED`, hash và lý do; không suy đoán mã hóa.
 
 ## Kiểm chứng
 
 ```powershell
-npm.cmd test
+node --test --test-isolation=none test/*.test.mjs tests/*.test.mjs
 npm.cmd run check
 npm.cmd run demo
 node src/cli.mjs demo --failure
 node scripts/local-smoke.mjs
+node scripts/guided-smoke.mjs
 npm.cmd run smoke:proxy
 npm.cmd run smoke:proxy:https
 npm.cmd run smoke:ai
 ```
 
-Unit tests không gửi request ra ngoài. `scripts/local-smoke.mjs` chạy Chrome thật với website demo localhost và tạo screenshot/báo cáo. Có thể chọn Edge bằng biến môi trường `EVENTQA_SMOKE_BROWSER=edge`. Smoke Trip thật là tùy chọn `EVENTQA_LIVE_CDP=1` khi chạy `tests/cdp-live.test.mjs`.
+Unit tests không gửi request ra ngoài. `scripts/guided-smoke.mjs` kiểm luồng chọn yêu cầu, hướng dẫn, đối chiếu và tải báo cáo bằng Chromium thật với dữ liệu cục bộ và AI giả lập. `scripts/local-smoke.mjs` chạy Chrome với website demo localhost và tạo screenshot/báo cáo. Có thể chọn Edge bằng biến môi trường `EVENTQA_SMOKE_BROWSER=edge`. Smoke Trip thật là tùy chọn `EVENTQA_LIVE_CDP=1` khi chạy `tests/cdp-live.test.mjs`. Bộ kiểm `cloud/` là phần riêng; lệnh local ở trên không xác nhận triển khai cloud.
 
 Các test cần WebSocket Chrome hoạt động ngoài giới hạn sandbox. Trong môi trường Codex hiện tại, sandbox có thể đóng WebSocket 1006; chạy smoke được cấp quyền ngoài sandbox đã kiểm chứng thành công. Đây không phải tùy chọn bỏ qua bảo mật browser.
 
@@ -166,4 +173,4 @@ Các test cần WebSocket Chrome hoạt động ngoài giới hạn sandbox. Tro
 - **Reset đăng nhập:** đóng toàn bộ cửa sổ dùng profile test đó rồi xóa đúng thư mục con tương ứng trong `profiles/`. Thao tác này làm mất phiên đăng nhập test.
 - **Cleanup:** sau khi giữ report cần thiết, có thể xóa thủ công các thư mục phiên trong `runs/`, cache `.cache/`, hoặc profile test cụ thể. Không đụng profile Chrome/Edge cá nhân và không tự gỡ CA của tổ chức. Xoá `profiles/mitmproxy/` để bỏ CA proxy của app (lần sau tạo CA mới).
 
-Đây là bản đầu tiên có thể chạy và kiểm thử, chưa phải bản đóng gói EXE. Chưa thể xác nhận workbook/flow của hệ thống nội bộ khi chưa có file và phiên thao tác thực tế.
+Bản portable chạy bằng CMD và runtime Node Windows đi kèm. Gói được tạo và kiểm thử trên Linux; chưa xác nhận thực thi trực tiếp trên Windows hoặc nghiệm thu luồng UAT thật của công ty. Native App chưa nằm trong phạm vi bản Web hiện tại.

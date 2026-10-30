@@ -2,7 +2,7 @@
 
 Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Download raw file** nếu GitHub hiển thị trang xem file.
 
-Mở trực tiếp luồng đơn giản: **Nhập yêu cầu → Chọn website → Thao tác từng bước → Xem kết quả**. Không phải chọn chế độ kỹ thuật hoặc sửa JSON.
+Mở trực tiếp luồng đơn giản: **Nhập yêu cầu → Chọn từng event và website → Thao tác từng bước → Xem kết quả và độ phủ**. Không phải chọn chế độ kỹ thuật hoặc sửa JSON.
 
 Nếu cửa sổ test bị kẹt, kết thúc phiên, bật **Chỉ bắt request · không gắn hook vào website** rồi mở phiên mới. Đã kiểm tra click đặt hàng trên trang thử cục bộ; chưa nghiệm thu thao tác đặt dịch vụ trên website thật.
 
@@ -12,21 +12,25 @@ Mỗi bước có hướng dẫn thao tác, event mong muốn và các ô dữ l
 2. Mở `START_PORTABLE.cmd`; giữ cửa sổ lệnh mở khi dùng.
 3. Mở **Thiết lập AI**, dán API key và lưu trên máy này; dùng ngay và giữ cho lần mở sau.
 4. Chọn file yêu cầu WebOTA; app tự đọc sheet **Tổng hợp Event tracking**. Có thể chọn sheet khác nếu cần. Workbook riêng của bạn không đóng kèm ZIP công khai.
-5. Nhập URL Web/UAT, chọn Golf/Flight/luồng cần kiểm rồi bấm **AI hướng dẫn kiểm tra**. Website mở trong cửa sổ test.
-6. Đọc hướng dẫn, điền dữ liệu bạn sẽ chọn, bấm **Bắt đầu bước** rồi thao tác trên website. Quay lại bấm **Tôi đã thao tác xong · Kiểm tra**. Lặp lại cho bước tiếp theo. Nhánh tùy chọn có thể bỏ qua và không thành lỗi thiếu event.
-7. Xem tên event và bảng mong muốn/thực tế. Bấm **Kết thúc & xuất báo cáo** nếu cần Excel/HTML/JSON/danh sách lỗi. Chạy `STOP_PORTABLE.cmd` để dừng ứng dụng.
+5. Nhập URL Web/UAT, chọn Golf/Flight/luồng cần kiểm. Tích chọn từng event muốn test; có thể lọc GA4/Insider và tìm theo tên hoặc thao tác. Yêu cầu chung chỉ được thêm khi bạn hiện và chọn rõ. Bấm **Hướng dẫn phần đã chọn** để mở website và lập hướng dẫn.
+6. Đọc hướng dẫn, điền dữ liệu bạn sẽ chọn, bấm **Bắt đầu bước** rồi thao tác trên website. Quay lại bấm **Tôi đã thao tác xong · Kiểm tra**. Lặp lại cho bước tiếp theo. Bước bỏ qua được giữ là chưa nghiệm thu.
+7. Xem tên event, bảng params mong muốn/thực tế và **Độ phủ phần bạn đã chọn**. Đã kiểm, bỏ qua, chưa chạy và còn cần xác minh được đếm riêng. Bấm **Kết thúc & xuất báo cáo** nếu cần Excel/HTML/JSON/danh sách lỗi. Chạy `STOP_PORTABLE.cmd` để dừng ứng dụng.
 
 Gói chứa Node.js **24.19.0 Windows x64** và thư viện theo lockfile. Không cần cài Node, chạy npm, tải package hay quyền quản trị để dùng CDP và đọc Excel. AI cần mạng tới OpenRouter và API key lưu riêng trong `.env` trên máy bạn; ZIP/Git không chứa key. Mặc định lần lượt thử model free phù hợp, sau đó model trả phí rẻ nhất theo chi phí ước tính, tối đa 0,01 USD/tác vụ. Có thể bỏ tick trả phí trong tab AI. Proxy cần Python/mitmproxy riêng, chưa kèm trong gói. Dữ liệu phiên và báo cáo nằm trong `runs/` trên máy sử dụng.
 
 Yêu cầu queue được so với queue thật; request/SDK là bằng chứng riêng. Một thao tác xuất hiện ở nhiều tầng không tự trở thành event trùng. Event trước lúc bắt đầu bước không được dùng để đạt bước đó. Giá trị động cần dữ liệu độc lập bạn đã chọn; có mặt/đúng kiểu chưa chứng minh đúng giá trị. Mẫu mâu thuẫn, tầng chưa quan sát được và hợp đồng chưa đủ rõ giữ trạng thái cần kiểm tra. AI không tự duyệt yêu cầu hoặc tạo actual. Nếu AI chưa kết nối, app ghi rõ hướng dẫn được lấy từ file.
 
+GA4 request đọc cả danh sách sản phẩm `pr1`, `pr2`… và giữ nguồn từng trường. Raw dataLayer push và model gộp chẩn đoán được hiển thị riêng; không lấy param cũ bù vào event thiếu. Liên kết Tag Assistant/GTM Preview/DebugView phục vụ đối chiếu độc lập; chưa tích hợp extension hoặc quyền truy cập Analytics/GTM. Xem [nguồn nghiên cứu](docs/TRACKING_TOOL_RESEARCH.md).
+
 Máy phải cho phép chạy `node.exe`, file CMD và Chrome/Edge với cổng debug. Nếu công ty chặn thực thi hoặc có chính sách chặn debug trình duyệt, cần IT phê duyệt. Không tắt bảo vệ hoặc tìm cách vượt chính sách. Website vẫn cần truy cập được qua mạng công ty.
 
 Gói được tạo trên Linux: đã kiểm tra checksum Node từ nguồn chính thức, cấu trúc ZIP, chạy code được giải nén và smoke CDP trên Linux. **Chưa chạy thử trực tiếp trên Windows**. Kiểm tra tại máy công ty: launcher hiện phiên bản Node, giao diện mở, chạy demo và xuất báo cáo XLSX được.
 
-SHA-256 của ZIP: `476ae0f49cf41a23d64bf49ce7c58c3f2f948358e03a71ea0ac8101342e53b68`.
+SHA-256 của ZIP: `ebcdf4aa4af97fb846dbafc07abe9d8dfe95d66eb60b253b47fcaec0dc1938da`.
 
-Kiểm chứng bằng Chromium thật với trang và dữ liệu cục bộ: nhập file → tạo hướng dẫn → thao tác → phát hiện param sai/thiếu, event thiếu/thừa → bỏ qua nhánh tùy chọn → tải báo cáo expected/actual. Transport AI trong bài thử là giả lập; cloud hiện chặn kết nối OpenRouter nên không coi đây là bằng chứng gọi model thật hoặc nghiệm thu website của công ty.
+Kiểm chứng bằng Chromium thật với trang và dữ liệu cục bộ: nhập file → chọn riêng event, giữ lựa chọn qua bộ lọc → tạo hướng dẫn → thao tác → phát hiện param sai/thiếu, event thiếu/thừa → giữ bước bỏ qua/chưa chạy → tải báo cáo expected/actual và phạm vi kiểm. Transport AI trong bài thử là giả lập; cloud hiện chặn kết nối OpenRouter nên không coi đây là bằng chứng gọi model thật hoặc nghiệm thu website của công ty.
+
+Bộ kiểm thử local: 224 PASS, 1 bài website thật tùy chọn SKIP. Sáu click đặt hàng thử đều hoàn tất; bài kiểm tách Golf/Flight và nguồn queue/SDK/request đạt. Xem [chi tiết kiểm chứng và giới hạn](docs/VALIDATION_SELECTED_EVENTS.md).
 
 ## Tạo lại gói
 

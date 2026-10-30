@@ -52,9 +52,10 @@ readme = '''EventQA portable - Windows 64-bit
 2. Open START_PORTABLE.cmd. Do not run it from inside the ZIP viewer.
 3. Keep the command window open. The guided tracking page opens directly.
 4. Upload requirements, enter the Web/UAT URL and choose one business flow.
-5. Follow each instruction: Start step, perform the action, then Check.
-6. See expected/actual events and params; export a report if needed.
-7. End/export before closing. Use STOP_PORTABLE.cmd to stop safely.
+5. Select the individual requirements/events you want to test, then make a guide.
+6. Follow each instruction: Start step, perform the action, then Check.
+7. See expected/actual events and params plus coverage; export a report if needed.
+8. End/export before closing. Use STOP_PORTABLE.cmd to stop safely.
 Vietnamese quick guide: HUONG_DAN.txt.
 
 No Node installation, npm command, admin rights or package download is needed.
@@ -77,7 +78,10 @@ Choose your XLSX file first. For WebOTA, select Tong hop Event tracking
 separate mobile reference; do not apply its device fields to Web by default.
 The specification tab shows exact event names, descriptions and payload samples
 beside real evidence. AppOTA sample shapes may differ from website events.
-AI arranges the selected requirements into manual test steps. It cannot invent
+No requirements are selected initially. Filter by vendor or event/action text;
+Select visible only selects the currently displayed rows. Show shared requirements
+if needed, then select them explicitly. Unselected requirements are outside scope.
+AI arranges only the selected requirements into manual test steps. It cannot invent
 expected events or params. If AI is unavailable, file-derived guidance is labeled.
 Unreviewed requirements and dynamic values without context remain REVIEW.
 
@@ -86,7 +90,11 @@ Choose Golf, Flight, Hotel or another flow. Queue requirements compare against
 the actual queue; SDK and request evidence are supplementary observations.
 Lifecycle chatter does not become business events. Expand evidence to see raw
 payloads and field origins. Missing values are never filled from samples.
-Optional failure branches can be skipped and remain not executed.
+Any step can be skipped and remains not executed. Coverage distinguishes selected,
+executed, skipped, not run and excluded requirements. Matched types/presence do not
+prove correct business values; unverified values remain explicitly unresolved.
+Tag Assistant/GTM Preview and GA4 DebugView links open separate companion tools;
+there is no integrated extension, private API, HAR import or vendor receipt check.
 For a website that cannot be operated with queue capture, end the session,
 enable request-only capture in CDP, then open a new session. This does not
 inject JavaScript queue hooks; queue checks are REVIEW, not a false missing event.
@@ -103,17 +111,24 @@ vietnamese = '''EventQA - Hướng dẫn nhanh
 2. Ở Thiết lập AI, dán key và lưu một lần trên máy này.
 3. Chọn file yêu cầu WebOTA. App tự đọc sheet Tổng hợp Event tracking.
 4. Nhập URL website/UAT và chọn Golf, Flight hoặc luồng cần kiểm.
-5. Bấm AI hướng dẫn kiểm tra, đọc từng bước và điền dữ liệu bạn sẽ chọn.
-6. Bấm Bắt đầu bước -> thao tác trên website -> Tôi đã thao tác xong · Kiểm tra.
-7. Xem tên event và tham số mong muốn/thực tế, phần thiếu/thừa/sai.
-8. Có thể bỏ qua nhánh tùy chọn; bước bỏ qua chưa được nghiệm thu.
-9. Bấm Kết thúc & xuất báo cáo nếu cần Excel, HTML, JSON hoặc danh sách lỗi.
-10. Chạy STOP_PORTABLE.cmd để dừng ứng dụng.
+5. Tích chọn từng event muốn test; ban đầu chưa chọn dòng nào. Có thể lọc nền
+   tảng, tìm tên event/thao tác hoặc chọn các dòng đang thấy. Nếu cần yêu cầu
+   chung, bật hiện thêm rồi tích chọn riêng. Không chọn không có nghĩa là đạt.
+6. Bấm Hướng dẫn phần đã chọn, đọc từng bước và điền dữ liệu bạn sẽ chọn.
+7. Bấm Bắt đầu bước -> thao tác trên website -> Tôi đã thao tác xong · Kiểm tra.
+8. Xem tên event và tham số mong muốn/thực tế, phần thiếu/thừa/sai, cùng bảng
+   độ phủ: đã chọn, đã thực hiện, chưa chạy, bỏ qua và không chọn.
+9. Có thể bỏ qua một bước; bước bỏ qua chưa được nghiệm thu.
+10. Bấm Kết thúc & xuất báo cáo nếu cần Excel, HTML, JSON hoặc danh sách lỗi.
+11. Chạy STOP_PORTABLE.cmd để dừng ứng dụng.
 
 Không cần cài Node hoặc chạy npm. Cần Chrome/Edge đã có trên máy.
 Key lưu riêng trong .env, không chia sẻ file đó. ZIP này không chứa key.
 AI chưa kết nối thì hướng dẫn từ file được ghi rõ nguồn.
 Mẫu chưa rõ hoặc giá trị chưa xác minh không tự thành kết quả Đạt.
+Đúng kiểu/có tham số chưa chứng minh đúng giá trị nghiệp vụ. AI chỉ hướng dẫn
+phần bạn chọn, không tạo actual hoặc tự đổi yêu cầu. Liên kết công cụ Google
+mở riêng để đối chiếu; app không tích hợp extension hoặc xác nhận GA4 đã nhận.
 UAT là môi trường theo URL; bản này kiểm Web trên PC, không thu native App.
 '''
 output.parent.mkdir(parents=True, exist_ok=True)

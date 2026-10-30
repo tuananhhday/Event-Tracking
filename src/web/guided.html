@@ -13,7 +13,7 @@
   </header>
 
   <main>
-    <section class="intro"><span class="eyebrow">BẠN THAO TÁC · TRỢ LÝ HƯỚNG DẪN VÀ ĐỐI CHIẾU</span><h1>Kiểm tra đúng event,<br class="desktop-break"> đúng từng thao tác.</h1><p>Nhập yêu cầu, chọn website, rồi thực hiện từng bước. Kết quả đặt tracking mong muốn và thực tế cạnh nhau.</p></section>
+    <section class="intro"><span class="eyebrow">CHỌN PHẠM VI · THAO TÁC · ĐỐI CHIẾU BẰNG CHỨNG</span><h1>Bạn chọn phần cần test.<br class="desktop-break"> Trợ lý hướng dẫn từng bước.</h1><p>Nhập file, chọn đúng event hoặc kịch bản muốn kiểm tra. Mỗi yêu cầu đã chọn có kết quả riêng và trạng thái đầy đủ rõ ràng.</p></section>
     <nav class="progress" aria-label="Tiến độ kiểm tra"><span data-phase="file"><b>1</b> Nhập yêu cầu</span><i></i><span data-phase="website"><b>2</b> Chọn website</span><i></i><span data-phase="steps"><b>3</b> Thao tác</span><i></i><span data-phase="results"><b>4</b> Xem kết quả</span></nav>
     <div id="error" class="notice error hidden" role="alert"></div><div id="notice" class="notice info hidden" role="status"></div>
 
@@ -29,16 +29,24 @@
         <div id="file-summary" class="file-summary hidden"></div>
       </section>
 
-      <section class="card" id="website-card"><div class="card-heading"><span class="number">02</span><div><h2>Chọn website và luồng cần kiểm tra</h2><p>Nhập đúng URL của môi trường cần kiểm, ví dụ Web UAT.</p></div></div>
+      <section class="card" id="website-card"><div class="card-heading"><span class="number">02</span><div><h2>Chọn website và nội dung muốn test</h2><p>Lọc theo luồng, chọn từng event cần kiểm. Những phần không chọn không được tính là thiếu.</p></div></div>
         <div class="form-grid"><div class="url-field"><label for="website-url">Website cần kiểm tra</label><input id="website-url" type="text" inputmode="url" autocomplete="url" placeholder="https://website-uat-cua-ban.vn"></div><div><label for="business-flow">Luồng nghiệp vụ</label><select id="business-flow"><option value="">Nhập file yêu cầu trước</option></select></div></div>
+        <section id="requirement-selection" class="requirement-selection hidden" aria-label="Chọn yêu cầu cần kiểm tra">
+          <div class="selection-filters"><div><label for="requirement-vendor">Nền tảng tracking</label><select id="requirement-vendor"><option value="">Tất cả nền tảng</option></select></div><div><label for="requirement-search">Tìm event hoặc thao tác</label><input id="requirement-search" type="text" placeholder="Ví dụ: checkout, tìm kiếm, thêm giỏ hàng…"></div></div>
+          <label class="check shared-option"><input id="include-shared" type="checkbox"> Hiện thêm yêu cầu chung (All / đăng nhập…)</label>
+          <div class="selection-toolbar"><div><strong id="selection-count">Chưa chọn event</strong><small id="selection-hint">Tích chọn những phần bạn muốn test.</small></div><div class="selection-actions"><button type="button" class="button small" id="select-visible">Chọn các dòng đang thấy</button><button type="button" class="quiet" id="clear-visible">Bỏ chọn các dòng đang thấy</button><button type="button" class="quiet" id="clear-selection">Bỏ chọn tất cả</button></div></div>
+          <div id="requirement-list" class="requirement-list"></div>
+          <p class="help">Mẫu trong file giúp xác định trường cần kiểm; giá trị minh họa không tự trở thành dữ liệu đúng của thao tác. Mở chi tiết từng dòng để xem trigger, params và phần còn thiếu trong yêu cầu.</p>
+          <details class="minor-details google-tools"><summary>Đối chiếu với công cụ Google</summary><p>Message trong dataLayer, trạng thái dữ liệu GTM, request đã gửi và event GA4 đã nhận là các lớp bằng chứng riêng. Một event xuất hiện ở lớp trước chưa xác nhận lớp sau.</p><ul><li><a href="https://tagassistant.google.com/" target="_blank" rel="noopener noreferrer">Tag Assistant</a> để kiểm tra kết nối tag và phiên debug.</li><li><a href="https://support.google.com/tagmanager/answer/6107056" target="_blank" rel="noopener noreferrer">GTM Preview</a> để xem event, biến và tag fired/not fired trong container.</li><li><a href="https://support.google.com/analytics/answer/7201382" target="_blank" rel="noopener noreferrer">GA4 DebugView</a> để đối chiếu event phía GA4 khi đã bật debug đúng cách.</li></ul><p class="help">Một số thao tác cần quyền website/container/property. Các đường dẫn mở công cụ riêng; app không tự xác nhận GA4 đã nhận dữ liệu và không yêu cầu cài extension.</p></details>
+        </section>
         <details class="minor-details"><summary>Chọn trình duyệt</summary><label for="browser">Trình duyệt đã cài trên máy</label><select id="browser"><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option></select></details>
-        <div class="actions plan-actions"><button class="button primary" id="make-plan" type="button" disabled><span>AI hướng dẫn kiểm tra</span><span aria-hidden="true">→</span></button><span class="help" id="plan-help">Nhập file để bắt đầu.</span></div>
+        <div class="actions plan-actions"><button class="button primary" id="make-plan" type="button" disabled><span>Hướng dẫn phần đã chọn</span><span aria-hidden="true">→</span></button><span class="help" id="plan-help">Nhập file để bắt đầu.</span></div>
       </section>
     </div>
 
     <section id="guide" class="hidden" aria-live="polite">
       <div class="guide-heading"><div><span class="eyebrow">KỊCH BẢN CỦA BẠN</span><h2 id="plan-title">Hướng dẫn kiểm tra</h2><p id="plan-meta" class="muted"></p></div><button type="button" class="quiet" id="change-setup">Đổi yêu cầu / website</button></div>
-      <div id="plan-notes"></div>
+      <div id="plan-notes"></div><div id="scope-completeness" class="scope-completeness"></div>
       <div class="guide-layout"><section class="card instruction-card" id="current-instruction"></section><aside class="card outline"><h3>Các bước kiểm tra</h3><ol id="step-outline"></ol><p class="help">Bắt đầu ghi nhận trước khi thao tác. Chỉ hoàn tất khi website đã xử lý xong.</p></aside></div>
       <section class="card completion hidden" id="completion"><span class="completion-mark">✓</span><div><h2>Đã đi qua các bước</h2><p>Kết quả phía dưới cho biết event và tham số nào khớp, thiếu, thừa hoặc sai. Các bước bỏ qua được ghi riêng.</p></div></section>
     </section>

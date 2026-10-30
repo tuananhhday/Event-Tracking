@@ -3,6 +3,7 @@ import path from 'node:path';
 import ExcelJS from 'exceljs';
 import { redact as redactCore } from '../core/privacy.mjs';
 import { sanitizeCases, sanitizeRule, sensitivePath } from '../spec/sanitize.mjs';
+import { summarizeGuidedCompleteness } from '../core/guided.mjs';
 
 const MASK = '[REDACTED]';
 // Insider wire custom attributes use c_* names. Classify those names with the
@@ -27,11 +28,15 @@ const valueText = value => value == null ? '' : typeof value === 'string' ? valu
 const escapeHtml = value => valueText(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const statusLabels = {
   match: 'Khớp phần đã kiểm', missing: 'Thiếu', mismatch: 'Sai', extra: 'Bổ sung / ngoài mong muốn', review: 'Cần kiểm tra',
-  not_executed: 'Chưa thực hiện', interrupted: 'Bị gián đoạn', error: 'Lỗi',
+  not_executed: 'Chưa thực hiện', skipped: 'Đã bỏ qua', interrupted: 'Bị gián đoạn', error: 'Lỗi',
 };
 const statusOf = value => String(value ?? 'review').toLowerCase();
 const statusLabel = value => statusLabels[statusOf(value)] ?? valueText(value);
 const acceptanceLabel = value => ({ PASS: 'Đạt', FAIL: 'Có lỗi', REVIEW: 'Cần xác nhận', NOT_EXECUTED: 'Chưa thực hiện' })[value] ?? valueText(value);
+const coverageLabels = {
+  not_run: 'Chưa chạy', in_progress: 'Đang kiểm tra', skipped: 'Đã bỏ qua', missing: 'Thiếu event', mismatch: 'Có phần sai',
+  checked_unverified: 'Đã kiểm, còn giá trị chưa xác minh', verified: 'Đủ căn cứ phần đã chọn', excluded: 'Không chọn', out_of_scope: 'Ngoài luồng đã chọn',
+};
 const countLabel = value => value && typeof value === 'object'
   ? value.min === value.max ? value.min : value.max == null ? `Ít nhất ${value.min ?? 0}` : `${value.min ?? 0}–${value.max}`
   : value;
@@ -111,8 +116,8 @@ function evidenceIds(comparison) {
 function reportRows(plan, results, cases) {
   const steps = [], comparisons = [], parameters = [];
   const append = (step, result) => {
-    const executed = Boolean(result);
-    const stepStatus = executed ? statusOf(result.status ?? result.verdict) : 'not_executed';
+    const stepStatus = result ? statusOf(result.status ?? result.verdict) : 'not_executed';
+    const executed = Boolean(result) && !['not_executed', 'skipped'].includes(stepStatus);
     const stepAcceptance = executed ? acceptance(result) : 'NOT_EXECUTED';
     const context = result?.context ?? step.context ?? {};
     steps.push({ step_id: step.id, title: result?.title ?? step.title ?? step.id, instruction: step.instruction ?? '',
@@ -155,6 +160,47 @@ function reportRows(plan, results, cases) {
   // Retain evidence from a recovered/older plan instead of silently dropping it.
   for (const result of results) if (!consumed.has(result)) append({ id: result.plan_step_id ?? result.step_id, title: result.title }, result);
   return { steps, comparisons, parameters };
+}
+
+function reportScope(guided, cases) {
+  if (!guided.plan?.selection) return null;
+  const completeness = summarizeGuidedCompleteness(guided.plan, guided.results ?? [], cases, { currentStep: guided.currentStep });
+  const selection = guided.plan.selection;
+  const byId = new Map(cases.map(testCase => [testCase.id, testCase]));
+  const selected = new Set(selection.selected_case_ids || completeness.requirements.map(row => row.case_id));
+  const requirements = completeness.requirements.map(row => ({ ...row, scope: 'selected', provenance: byId.get(row.case_id)?.provenance ?? null }));
+  const appendExcluded = (ids, scope) => {
+    for (const id of ids || []) {
+      if (selected.has(id) || requirements.some(row => row.case_id === id)) continue;
+      const testCase = byId.get(id);
+      requirements.push({ case_id: id, scope, status: scope, event_name: testCase?.rules?.map(rule => rule.event_name).join(', ') || testCase?.name || '',
+        source: testCase?.source || '', flow: testCase?.flow || '', provenance: testCase?.provenance ?? null,
+        total_rules: testCase?.rules?.length ?? null,
+        total_parameters: testCase ? (testCase.rules ?? []).reduce((count, rule) => count + Object.keys(rule.fields || {}).length, 0) : null,
+        checked_rules: null, checked_parameters: null, verified_parameters: null, unverified_parameters: null,
+        missing_parameters: null, wrong_parameters: null, parameter_checks: null });
+    }
+  };
+  appendExcluded(selection.excluded_case_ids, 'excluded');
+  appendExcluded(selection.out_of_scope_case_ids, 'out_of_scope');
+  const selectedRows = requirements.filter(row => row.scope === 'selected');
+  const parameterTotals = Object.fromEntries(['total_parameters', 'checked_parameters', 'verified_parameters', 'unverified_parameters', 'missing_parameters', 'wrong_parameters']
+    .map(key => [key, selectedRows.reduce((count, row) => count + (Number(row[key]) || 0), 0)]));
+  const parameterCheckTotals = Object.fromEntries(['total', 'structural_matched', 'structural_failed', 'semantic_matched', 'semantic_failed', 'unverified', 'extra']
+    .map(key => [key, selectedRows.reduce((count, row) => count + (Number(row.parameter_checks?.[key]) || 0), 0)]));
+  return { selection, completeness, parameter_totals: parameterTotals, parameter_check_totals: parameterCheckTotals, requirements };
+}
+
+function scopeHtml(scope) {
+  if (!scope) return '';
+  const c = scope.completeness;
+  const rows = scope.requirements.map(row => `<tr>${[
+    row.scope === 'selected' ? 'Đã chọn' : coverageLabels[row.scope], row.event_name, row.source, row.flow,
+    coverageLabels[row.status] || row.status, row.total_parameters, row.checked_parameters, row.verified_parameters,
+    row.unverified_parameters, row.missing_parameters, row.wrong_parameters, row.parameter_checks?.total,
+    row.provenance ? `${row.provenance.sheet ?? ''}!${row.provenance.row ?? ''}` : '',
+  ].map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
+  return `<section><h2>Phạm vi kiểm đã chọn</h2><p>Đã chọn ${escapeHtml(c.selected)} · đã chạy ${escapeHtml(c.executed)} · bỏ qua ${escapeHtml(c.skipped)} · chưa chạy ${escapeHtml(c.remaining)} · không chọn ${escapeHtml(c.excluded)} · ngoài luồng ${escapeHtml(c.out_of_scope)}</p><p><strong>${c.complete ? 'Đủ căn cứ cho toàn bộ yêu cầu đã chọn.' : 'Chưa đủ căn cứ cho toàn bộ yêu cầu đã chọn.'}</strong> Đã kiểm cấu trúc hoặc đúng kiểu chưa xác nhận đúng mọi giá trị nghiệp vụ. Các dòng không chọn và ngoài luồng không được tính là event thiếu.</p><p>Param yêu cầu được đếm theo đường dẫn trong đặc tả. Phép kiểm thực tế có thể nhiều hơn vì kiểm riêng từng item và từng lần phát event.</p><table><thead><tr>${['Phạm vi', 'Event', 'Vendor', 'Luồng', 'Trạng thái', 'Param yêu cầu', 'Param đã kiểm', 'Param xác minh giá trị', 'Param chưa xác minh', 'Param thiếu', 'Param sai', 'Phép kiểm thực tế', 'Nguồn yêu cầu'].map(value => `<th>${escapeHtml(value)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 
 function cellValue(value) {
@@ -210,6 +256,12 @@ export async function exportGuidedReports({ session = {}, events = [], cases = [
   });
   const data = { report_version: 'guided-1.0', session: safeSession, guided,
     ...reportRows(guided.plan ?? {}, guided.results ?? [], safeCases), events: safeEvents };
+  const scope = reportScope(guided, safeCases);
+  if (scope) {
+    data.scope = scope;
+    data.guided.selection = scope.selection;
+    data.guided.completeness = scope.completeness;
+  }
   const directory = path.resolve(outputDir);
   await fs.mkdir(directory, { recursive: true });
   const files = Object.fromEntries(Object.entries({ xlsx: 'report.xlsx', html: 'report.html', json: 'comparison.json', bugs: 'bugs.md' }).map(([key, name]) => [key, path.join(directory, name)]));
@@ -221,8 +273,24 @@ export async function exportGuidedReports({ session = {}, events = [], cases = [
     ['Chưa thực hiện', data.steps.filter(step => step.status === 'not_executed').length],
     ['Bước nghiệm thu FAIL', data.steps.filter(step => step.acceptance_status === 'FAIL').length],
     ['Bước cần kiểm tra', data.steps.filter(step => step.acceptance_status === 'REVIEW').length],
+    ...(scope ? [
+      ['Yêu cầu đã chọn', scope.completeness.selected], ['Yêu cầu đã chạy', scope.completeness.executed], ['Yêu cầu bỏ qua', scope.completeness.skipped],
+      ['Yêu cầu chưa chạy', scope.completeness.remaining], ['Yêu cầu không chọn', scope.completeness.excluded], ['Yêu cầu ngoài luồng', scope.completeness.out_of_scope],
+      ['Yêu cầu đủ căn cứ', scope.completeness.verified], ['Yêu cầu đã kiểm còn chưa xác minh', scope.completeness.unverified],
+      ['Đủ căn cứ toàn bộ phạm vi đã chọn', scope.completeness.complete ? 'Có' : 'Chưa'],
+      ['Param yêu cầu trong phạm vi', scope.parameter_totals.total_parameters], ['Param đã kiểm cấu trúc', scope.parameter_totals.checked_parameters],
+      ['Param xác minh giá trị', scope.parameter_totals.verified_parameters], ['Param chưa xác minh giá trị', scope.parameter_totals.unverified_parameters],
+      ['Param thiếu', scope.parameter_totals.missing_parameters], ['Param sai', scope.parameter_totals.wrong_parameters],
+      ['Phép kiểm param thực tế (gồm từng item)', scope.parameter_check_totals.total],
+    ] : []),
     ['Lưu ý', 'Khớp phần đã kiểm không xác nhận mọi giá trị nghiệp vụ. Param bổ sung không mặc định là lỗi. Queue, SDK và request là các bằng chứng riêng; HTTP không xác nhận vendor ingestion.'],
   ]);
+  if (scope) addSheet(workbook, 'Phạm vi kiểm', [['Requirement ID', 30], ['Phạm vi', 23], ['Event', 30], ['Vendor', 14], ['Luồng', 20], ['Trạng thái', 43],
+    ['Quy tắc yêu cầu', 18], ['Quy tắc đã kiểm', 18], ['Param yêu cầu', 18], ['Param đã kiểm cấu trúc', 24], ['Param xác minh giá trị', 25], ['Param chưa xác minh', 24],
+    ['Param thiếu', 18], ['Param sai', 18], ['Phép kiểm thực tế (gồm từng item)', 32], ['Sheet', 30], ['Dòng', 12]],
+  scope.requirements.map(row => [row.case_id, row.scope === 'selected' ? 'Đã chọn' : coverageLabels[row.scope], row.event_name, row.source, row.flow,
+    coverageLabels[row.status] || row.status, row.total_rules, row.checked_rules, row.total_parameters, row.checked_parameters, row.verified_parameters,
+    row.unverified_parameters, row.missing_parameters, row.wrong_parameters, row.parameter_checks?.total, row.provenance?.sheet, row.provenance?.row]));
   addSheet(workbook, 'Các bước', [['Bước', 28], ['Hướng dẫn thao tác', 65], ['Kiểm tra dữ liệu', 24], ['Nghiệm thu', 18], ['Context', 55], ['Nhận xét', 65]],
     data.steps.map(step => [step.title, step.instruction, statusLabel(step.status), acceptanceLabel(step.acceptance_status), step.context, step.summary]));
   addSheet(workbook, 'Đối chiếu event', [['Bước', 28], ['Vendor', 14], ['Tầng', 23], ['Event mong muốn', 30], ['Event thực tế', 30], ['Số lần mong muốn', 22], ['Số lần thực tế', 17], ['Kiểm tra dữ liệu', 24], ['Nghiệm thu', 18], ['Payload mẫu tham khảo', 70], ['Quy tắc mong muốn', 70], ['Payload thực tế', 70], ['Vấn đề', 60], ['Evidence', 44]],
@@ -242,7 +310,7 @@ export async function exportGuidedReports({ session = {}, events = [], cases = [
       return `<article><h3>${escapeHtml(row.source)} · ${escapeHtml(row.event_name || '(event ngoài danh sách)')}</h3><table><thead><tr><th>Mong muốn</th><th>Thực tế</th><th>Đối chiếu</th></tr></thead><tbody><tr><td>${escapeHtml(row.event_name || '(không có trong danh sách)')}<br>Số lần: ${escapeHtml(row.expected_count)}</td><td>${escapeHtml(row.actual_event_names.join(', ') || '(chưa thấy)')}<br>Số lần: ${escapeHtml(row.actual_count)}</td><td>${escapeHtml(statusLabel(row.status))}<br>Nghiệm thu: ${escapeHtml(row.acceptance_status)}</td></tr></tbody></table>${parameters.length ? `<table><thead><tr><th>Param</th><th>Mong muốn</th><th>Thực tế</th><th>Kết quả</th></tr></thead><tbody>${parameters.map(parameter => `<tr><td>${escapeHtml(parameter.path)}</td><td><pre>${escapeHtml(parameter.expected)}</pre>${parameter.constraint ? `<small>Quy tắc: ${escapeHtml(parameter.constraint)}</small>` : ''}</td><td><pre>${escapeHtml(parameter.actual)}</pre></td><td>${escapeHtml(statusLabel(parameter.status))}<br>${escapeHtml(parameter.code)}</td></tr>`).join('')}</tbody></table>` : ''}<details><summary>Payload mẫu và tracking thực tế · ${escapeHtml(row.evidence_ids.join(', '))}</summary><div class="payloads"><div><h4>Mẫu tham khảo — không phải actual</h4><pre>${escapeHtml(JSON.stringify(row.expected_payload_sample, null, 2))}</pre></div><div><h4>Tracking thực tế</h4><pre>${escapeHtml(JSON.stringify(row.actual_payloads, null, 2))}</pre></div></div></details></article>`;
     }).join('')}</section>`;
   }).join('');
-  await fs.writeFile(files.html, `<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>Đối chiếu tracking</title><style>body{font:15px system-ui;color:#24304d;background:#f6f7fc;margin:24px auto;padding:0 20px;max-width:1200px}h1{font-size:26px}section,article{background:white;border:1px solid #dde1ef;border-radius:12px;padding:18px;margin:18px 0}article{background:#fafbff}table{border-collapse:collapse;width:100%;margin:12px 0;table-layout:fixed}th,td{border:1px solid #dce1ee;padding:10px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eef0fb}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font-size:12px}.payloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:18px}summary{cursor:pointer}.note{color:#61708b}</style><h1>Tracking mong muốn và thực tế</h1><p>${escapeHtml(guided.plan?.title)} · ${escapeHtml(guided.plan?.flow)}</p><p>${escapeHtml(safeSession.target_url ?? safeSession.environment)}</p><p class="note">Khớp phần đã kiểm không xác nhận mọi giá trị nghiệp vụ. Param bổ sung không mặc định là lỗi. Queue, SDK và request là các bằng chứng riêng; HTTP không xác nhận vendor ingestion.</p>${sections}</html>`, 'utf8');
+  await fs.writeFile(files.html, `<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>Đối chiếu tracking</title><style>body{font:15px system-ui;color:#24304d;background:#f6f7fc;margin:24px auto;padding:0 20px;max-width:1200px}h1{font-size:26px}section,article{background:white;border:1px solid #dde1ef;border-radius:12px;padding:18px;margin:18px 0}article{background:#fafbff}table{border-collapse:collapse;width:100%;margin:12px 0;table-layout:fixed}th,td{border:1px solid #dce1ee;padding:10px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#eef0fb}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font-size:12px}.payloads{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:18px}summary{cursor:pointer}.note{color:#61708b}</style><h1>Tracking mong muốn và thực tế</h1><p>${escapeHtml(guided.plan?.title)} · ${escapeHtml(guided.plan?.flow)}</p><p>${escapeHtml(safeSession.target_url ?? safeSession.environment)}</p><p class="note">Khớp phần đã kiểm không xác nhận mọi giá trị nghiệp vụ. Param bổ sung không mặc định là lỗi. Queue, SDK và request là các bằng chứng riêng; HTTP không xác nhận vendor ingestion.</p>${scopeHtml(scope)}${sections}</html>`, 'utf8');
   await fs.writeFile(files.bugs, markdownFindings(data), 'utf8');
   return files;
 }

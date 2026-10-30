@@ -2,29 +2,34 @@
   'use strict';
   const marker = Symbol.for('eventqa.collector.v1');
   if (window[marker]) return;
-  const state = { arrays: new WeakMap(), ownedArrays: new Set(), properties: [], timer: null, enabled: true };
+  const state = { arrays: new WeakMap(), ownedArrays: new Set(), properties: [], timer: null, enabled: true,
+    instance: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, nextArray: 0 };
   Object.defineProperty(window, marker, { value: state, configurable: true });
 
   // Snapshot data properties only. JSON.stringify on the website's object would
   // execute getters/toJSON inside its own click handler and can stall checkout.
   function snapshotItem(item) {
     const capture = { incomplete: false, reasons: [] };
+    const modelLimitations = new Set();
     let nodes = 0, chars = 0;
     const ancestors = new WeakSet();
     const omit = reason => { capture.incomplete = true; if (!capture.reasons.includes(reason)) capture.reasons.push(reason); return '[Not captured]'; };
     const copy = (value, depth = 0) => {
       if (++nodes > 4096 || depth > 12) return omit('snapshot_limit');
-      if (typeof value === 'bigint') return String(value);
+      if (typeof value === 'bigint') { modelLimitations.add('bigint_serialized'); return String(value); }
+      if (typeof value === 'number' && !Number.isFinite(value)) modelLimitations.add('non_finite_number_serialized');
       if (typeof value === 'string') {
         if (value.length > 50000 || chars + value.length > 200000) return omit('text_limit');
         chars += value.length; return value;
       }
-      if (typeof value === 'function' || typeof value === 'symbol' || value === undefined) return undefined;
+      if (typeof value === 'function' || typeof value === 'symbol' || value === undefined) {
+        modelLimitations.add('non_json_value_omitted'); return undefined;
+      }
       if (value === null || typeof value !== 'object') return value;
-      if (ancestors.has(value)) return '[Circular]';
+      if (ancestors.has(value)) { modelLimitations.add('circular_value'); return '[Circular]'; }
       ancestors.add(value);
       try {
-        if (Object.getPrototypeOf(value) === Date.prototype) return Date.prototype.toISOString.call(value);
+        if (Object.getPrototypeOf(value) === Date.prototype) { modelLimitations.add('date_serialized'); return Date.prototype.toISOString.call(value); }
         const length = Object.getOwnPropertyDescriptor(value, 'length');
         const isList = Array.isArray(value) || (!!Object.getOwnPropertyDescriptor(value, 'callee') && typeof length?.value === 'number');
         const result = isList ? [] : Object.create(null);
@@ -41,14 +46,19 @@
       } catch (_) { return omit('unreadable_object'); }
       finally { ancestors.delete(value); }
     };
-    return { item: copy(item), capture };
+    const result = copy(item);
+    return { item: result, capture, ...(modelLimitations.size ? { model_limitations: [...modelLimitations] } : {}) };
   }
 
-  function emit(queue, item, historical, prepared) {
+  function emit(queue, item, historical, prepared, queueRecord) {
     if (!state.enabled) return;
     try {
       const safe = prepared || snapshotItem(item);
-      const snapshot = JSON.stringify({ queue, ...safe, historical, href: location.href, title: document.title, ts: Date.now() });
+      const metadata = queueRecord ? { queue_instance_id: queueRecord.id, queue_sequence: ++queueRecord.sequence,
+        // An existing/reassigned array may have discarded older entries. No
+        // browser queue API can prove that its retained backlog is complete.
+        queue_history_complete: false, message_type: Array.isArray(item) ? 'array' : typeof item } : {};
+      const snapshot = JSON.stringify({ queue, ...safe, ...metadata, historical, href: location.href, title: document.title, ts: Date.now() });
       if (typeof window.__eventqa_emit === 'function') window.__eventqa_emit(snapshot);
     } catch (_) { /* Evidence capture must never break the site. */ }
   }
@@ -61,14 +71,14 @@
     const originalDescriptor = Object.getOwnPropertyDescriptor(array, 'push');
     if (typeof original !== 'function') return;
     const first = !record;
-    record = record || { depth: 0 };
+    record = record || { depth: 0, id: `${state.instance}:${++state.nextArray}`, sequence: 0 };
     const wrapper = function (...items) {
       // Vendors often wrap an earlier push. Every generation shares this guard,
       // so their call through an older collector wrapper cannot duplicate evidence.
       const outermost = record.depth === 0;
       record.depth++;
       try {
-        if (outermost) for (const item of items) emit(queue, item, false);
+        if (outermost) for (const item of items) emit(queue, item, false, undefined, record);
         return Reflect.apply(original, this, items);
       } finally { record.depth--; }
     };
@@ -78,7 +88,7 @@
       Object.assign(record, { wrapper, original, descriptor: originalDescriptor });
       state.arrays.set(array, record);
       state.ownedArrays.add(array);
-      if (first) for (const item of array) emit(queue, item, historical);
+      if (first) for (const item of array) emit(queue, item, historical, undefined, record);
     } catch (_) { /* Frozen/non-configurable queues cannot be instrumented safely. */ }
   }
 

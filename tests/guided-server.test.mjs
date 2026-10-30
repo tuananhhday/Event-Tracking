@@ -23,12 +23,22 @@ const proposal = { title: 'Kiểm tra Golf', steps: [
   { title: 'Tìm sân', instruction: 'Nhấn tìm kiếm sân golf.', expected_case_ids: ['G-GA4', 'G-INS'] },
   { title: 'Thanh toán lỗi', instruction: 'Kiểm tra nhánh thanh toán lỗi khi có kịch bản tương ứng.', expected_case_ids: ['G-FAIL'], optional: true, branch: 'failure' },
 ] };
-async function fixture(t, available = true) {
+async function fixture(t, available = true, initialCases = cases) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-guided-server-'));
+  const aiInputs = [];
   const ai = { modelSpec: 'auto', close() {}, diagnostics: () => ({ enabled: true, configured_key_count: 1 }),
-    async complete(_model, _system, _input, _schema, validate) { assert.equal(validate(proposal), null); return available ? { available: true, data: proposal, routing: { model: 'mock/free' } } : { available: false, reason: 'OPENROUTER_UNAVAILABLE' }; },
+    async complete(_model, _system, input, _schema, validate) {
+      aiInputs.push(input);
+      const ids = new Set(input.requirements.map(r => r.id));
+      const steps = proposal.steps.map(s => ({ ...s, expected_case_ids: s.expected_case_ids.filter(id => ids.has(id)) })).filter(s => s.expected_case_ids.length);
+      const planned = new Set(steps.flatMap(s => s.expected_case_ids));
+      for (const r of input.requirements.filter(r => !planned.has(r.id))) steps.push({ title: r.id, instruction: r.trigger || 'Thực hiện yêu cầu đã chọn.', expected_case_ids: [r.id] });
+      const selectedPlan = { ...proposal, steps };
+      assert.equal(validate(selectedPlan), null);
+      return available ? { available: true, data: selectedPlan, routing: { model: 'mock/free' } } : { available: false, reason: 'OPENROUTER_UNAVAILABLE' };
+    },
     async explain() { return { available: true, note: 'Điểm đến tracking khác lựa chọn trong bước.', routing: { model: 'mock/free' } }; } };
-  const app = await createApp({ mode: 'cdp-ai', port: 0, runsDir: dir, initialCases: structuredClone(cases), aiClient: ai });
+  const app = await createApp({ mode: 'cdp-ai', port: 0, runsDir: dir, initialCases: structuredClone(initialCases), aiClient: ai });
   const base = await app.listen();
   t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
   const post = async (route, data = {}, token = app.csrf) => {
@@ -38,13 +48,63 @@ async function fixture(t, available = true) {
   // Reuse an existing controlled capture, exactly as switching from diagnostics
   // into guided mode does. Tests emit synthetic observations, never visit UAT.
   app.manager.start({ target_url: target, capture_queues: true });
-  return { app, base, post };
+  return { app, base, post, aiInputs };
 }
+
+test('invalid or App selections fail before AI planning and never silently expand the chosen scope', async t => {
+  const flight = { ...cases[0], id: 'F-GA4', flow: 'Flight' };
+  const mobile = { ...cases[0], id: 'MOBILE', target_platform: 'APP' };
+  const { app, post, aiInputs } = await fixture(t, true, [...cases, flight, mobile]);
+  for (const ids of [undefined, [], ['unknown'], ['G-GA4', 'G-GA4'], ['F-GA4'], ['G-GA4', 'MOBILE']]) {
+    const response = await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: ids });
+    assert.equal(response.status, 400, JSON.stringify(ids));
+    assert.ok(response.data.error);
+  }
+  assert.equal(aiInputs.length, 0);
+  assert.equal(app.state().guided.plan, null);
+});
+
+test('selected-only API sends full requirements to AI and persists truthful unrun and excluded coverage', async t => {
+  const common = { ...cases[0], id: 'COMMON', flow: 'All luồng' };
+  const flight = { ...cases[0], id: 'FLIGHT', flow: 'Flight' };
+  const { app, base, post, aiInputs } = await fixture(t, true, [...cases, common, flight]);
+  const planned = await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: ['G-GA4', 'COMMON'] });
+  assert.equal(planned.status, 200);
+  const guide = planned.data.guided;
+  assert.deepEqual(guide.plan.case_ids, ['G-GA4', 'COMMON']);
+  assert.deepEqual(aiInputs[0].requirements.map(r => r.id), ['G-GA4', 'COMMON']);
+  assert.deepEqual(aiInputs[0].requirements[0].events[0].parameter_requirements, cases[0].rules[0].fields);
+  assert.deepEqual(guide.plan.selection.excluded_case_ids, ['G-INS', 'G-FAIL']);
+  assert.deepEqual(guide.plan.selection.out_of_scope_case_ids, ['FLIGHT']);
+  assert.equal(guide.completeness.selected, 2); assert.equal(guide.completeness.remaining, 2);
+  await post('guided/step/skip', { stepId: guide.plan.steps[0].id });
+  const finished = await post('guided/finish');
+  assert.equal(finished.status, 200);
+  assert.equal(finished.data.guided.completeness.skipped, 1);
+  assert.equal(finished.data.guided.completeness.remaining, 1);
+  assert.equal(finished.data.guided.completeness.complete, false);
+  const saved = loadRun(app.manager.runDir);
+  assert.deepEqual(saved.session.guided.selection.selected_case_ids, ['G-GA4', 'COMMON']);
+  assert.equal(saved.session.guided.completeness.executed, 0);
+  const report = await (await fetch(base + finished.data.exported.json)).json();
+  assert.equal(report.scope.completeness.selected, 2);
+  assert.equal(report.scope.completeness.skipped, 1);
+  assert.equal(report.scope.completeness.remaining, 1);
+});
+
+test('common requirements are not included unless selected explicitly', async t => {
+  const { post, aiInputs } = await fixture(t, true, [...cases, { ...cases[0], id: 'COMMON', flow: 'All luồng' }]);
+  const planned = await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: ['G-GA4'] });
+  assert.equal(planned.status, 200);
+  assert.deepEqual(aiInputs[0].requirements.map(r => r.id), ['G-GA4']);
+  assert.deepEqual(planned.data.guided.plan.case_ids, ['G-GA4']);
+  assert.ok(planned.data.guided.plan.selection.excluded_case_ids.includes('COMMON'));
+});
 
 test('guided API guides an action, checks exact sources, shows expected/actual and exports the same evidence', async t => {
   const { app, base, post } = await fixture(t);
-  assert.equal((await post('guided/plan', { url: target, flow: 'Golf' }, 'wrong')).status, 403);
-  const planned = await post('guided/plan', { url: target, flow: 'Golf' });
+  assert.equal((await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: cases.map(c => c.id) }, 'wrong')).status, 403);
+  const planned = await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: cases.map(c => c.id) });
   assert.equal(planned.status, 200);
   assert.equal(planned.data.guided.plan.guidance_source, 'ai');
   assert.equal(planned.data.guided.plan.steps.length, 2);
@@ -82,7 +142,7 @@ test('guided API guides an action, checks exact sources, shows expected/actual a
 
 test('unavailable AI is labeled as requirements guidance and does not fabricate an AI review', async t => {
   const { post } = await fixture(t, false);
-  const result = await post('guided/plan', { url: target, flow: 'Golf' });
+  const result = await post('guided/plan', { url: target, flow: 'Golf', selectedCaseIds: cases.map(c => c.id) });
   assert.equal(result.status, 200);
   assert.equal(result.data.guided.plan.guidance_source, 'requirements');
   assert.equal(result.data.guided.plan.ai.available, false);

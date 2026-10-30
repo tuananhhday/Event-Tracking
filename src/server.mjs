@@ -20,7 +20,7 @@ import { ProxyCollector, proxyCaSpki } from './collectors/proxy.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { saveAISettings } from './ai/settings.mjs';
 import { createGuideWithAI } from './ai/guide.mjs';
-import { buildGuidedPlan, assessGuidedStep, eligibleGuidedCases } from './core/guided.mjs';
+import { buildGuidedPlan, assessGuidedStep, eligibleGuidedCases, summarizeGuidedCompleteness } from './core/guided.mjs';
 import { exportGuidedReports } from './report/guided.mjs';
 import { loadDemoCases } from './demo.mjs';
 
@@ -100,6 +100,10 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   const emptyGuide = () => ({ plan: null, currentStep: null, results: [], status: 'SETUP' });
   let guided = emptyGuide(), guidedAIQueue = Promise.resolve();
   function persistGuide() {
+    if (guided.plan) {
+      guided.selection = guided.plan.selection;
+      guided.completeness = summarizeGuidedCompleteness(guided.plan, guided.results, manager.cases, { currentStep: guided.currentStep });
+    }
     if (manager.session && manager.store && !manager.store.closed) { manager.session.guided = redact(guided); manager.persist(); }
   }
   function assessScope(scope) {
@@ -371,9 +375,17 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           if (mode === 'proxy') throw new Error('Luồng hướng dẫn cần mở bằng CDP hoặc CDP có AI.');
           if (!manager.cases.length) throw new Error('Chọn file yêu cầu trước.');
           if (manager.currentStep || guided.plan && manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên hiện tại trước khi tạo hướng dẫn mới.');
-          const selected = eligibleGuidedCases(manager.cases, data.flow);
+          if (!Array.isArray(data.selectedCaseIds) || !data.selectedCaseIds.length) throw new Error('Chọn ít nhất một event hoặc yêu cầu muốn kiểm tra.');
+          let selected;
+          try { selected = eligibleGuidedCases(manager.cases, data.flow, { selectedCaseIds: data.selectedCaseIds }); }
+          catch (error) {
+            const messages = { GUIDED_SELECTION_INVALID: 'Danh sách yêu cầu đã chọn không hợp lệ.', GUIDED_SELECTION_EMPTY: 'Chọn ít nhất một yêu cầu.',
+              GUIDED_SELECTION_DUPLICATE: 'Một yêu cầu đang được chọn nhiều lần.', GUIDED_SELECTION_UNKNOWN_CASE: 'Yêu cầu đã chọn không còn trong file hiện tại; chọn lại.',
+              GUIDED_SELECTION_FLOW_MISMATCH: 'Yêu cầu đã chọn thuộc luồng khác. Chọn đúng luồng hoặc bỏ lựa chọn đó.' };
+            throw new Error(messages[error.message] || 'Không xác định được phạm vi yêu cầu đã chọn.');
+          }
           if (!data.flow || !selected.length) throw new Error('Chọn luồng có trong file yêu cầu.');
-          if (selected.every(c => c.target_platform === 'APP')) throw new Error('Sheet này là đặc tả App điện thoại. Chọn file/sheet yêu cầu Web để kiểm tra website; không dùng params riêng của App làm expected cho Web.');
+          if (selected.some(c => c.target_platform === 'APP')) throw new Error('Có yêu cầu App điện thoại trong lựa chọn. Bỏ các yêu cầu App và chọn yêu cầu Web để kiểm tra website; không dùng params riêng của App làm expected cho Web.');
           if (typeof data.url !== 'string' || !data.url.trim()) throw new Error('Nhập URL website UAT cần kiểm tra.');
           let target;
           try { target = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(String(data.url)) ? data.url : `https://${data.url}`); }
@@ -392,9 +404,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             if (!await startCapture({ ...data, url: target.toString(), endpointPatterns: patterns })) return send(res, 200, state());
           }
           const epoch = captureEpoch;
-          const proposal = await createGuideWithAI(ai, manager.cases, { flow: data.flow, url: target.toString() });
+          const proposal = await createGuideWithAI(ai, manager.cases, { flow: data.flow, url: target.toString(), selectedCaseIds: data.selectedCaseIds });
           if (closing || epoch !== captureEpoch || manager.session?.status !== 'RUNNING') return send(res, 200, state());
-          guided.plan = buildGuidedPlan(manager.cases, { flow: data.flow, url: target.toString(), aiPlan: proposal.available ? proposal.plan : undefined });
+          guided.plan = buildGuidedPlan(manager.cases, { flow: data.flow, url: target.toString(), selectedCaseIds: data.selectedCaseIds, aiPlan: proposal.available ? proposal.plan : undefined });
           guided.plan.ai = { available: proposal.available, reason: proposal.reason, model: proposal.routing?.model };
           guided.status = 'READY'; persistGuide();
           status(proposal.available ? 'AI đã tạo hướng dẫn từ các event trong file yêu cầu.' : 'AI chưa trả hướng dẫn; đang dùng mô tả trong file và đánh dấu rõ nguồn.');

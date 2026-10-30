@@ -28,10 +28,25 @@ const BUSINESS_NAMES = { add_to_cart: 'item_added_to_cart', remove_from_cart: 'i
 const SETUP = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$|UNPARSED$|tracking_request$|config$|consent$|js$|set$)/;
 const SDK_INTERNAL = /^(?:pageView$|(?:Ucd|Hit|NativeSdk|NativeOptIn|Submit):)/i;
 
-export function eligibleGuidedCases(cases = [], flow) {
+const sharedFlow = flow => /^(?:all|all luong|chung|common)$/.test(plain(flow));
+const flowMatches = (c, flow) => !flow || (flowId(flow) !== 'unknown' ? flowId(c.flow) === flowId(flow) : plain(c.flow) === plain(flow));
+export function eligibleGuidedCases(cases = [], flow, { selectedCaseIds } = {}) {
   if (!Array.isArray(cases)) return [];
-  const target = flowId(flow);
-  return cases.filter(c => Array.isArray(c.rules) && c.rules.length && (!flow || (target !== 'unknown' ? flowId(c.flow) === target : plain(c.flow) === plain(flow))));
+  const usable = cases.filter(c => Array.isArray(c.rules) && c.rules.length);
+  const matchesFlow = c => flowMatches(c, flow);
+  if (selectedCaseIds === undefined) return usable.filter(matchesFlow);
+  if (!Array.isArray(selectedCaseIds) || selectedCaseIds.some(id => typeof id !== 'string' || !id)) throw new Error('GUIDED_SELECTION_INVALID');
+  if (!selectedCaseIds.length) throw new Error('GUIDED_SELECTION_EMPTY');
+  if (new Set(selectedCaseIds).size !== selectedCaseIds.length) throw new Error('GUIDED_SELECTION_DUPLICATE');
+  if (new Set(cases.map(c => c.id)).size !== cases.length) throw new Error('GUIDED_INVALID_REQUIREMENTS');
+  const byId = new Map(usable.map(c => [c.id, c]));
+  for (const id of selectedCaseIds) {
+    const c = byId.get(id);
+    if (!c) throw new Error('GUIDED_SELECTION_UNKNOWN_CASE');
+    if (!matchesFlow(c) && !sharedFlow(c.flow)) throw new Error('GUIDED_SELECTION_FLOW_MISMATCH');
+  }
+  const selected = new Set(selectedCaseIds);
+  return usable.filter(c => selected.has(c.id));
 }
 
 /** AI may arrange existing requirements; it cannot supply or approve expectations. */
@@ -139,11 +154,18 @@ function fallbackProposal(cases, title) {
   return { title, steps: [...groups.values()] };
 }
 
-export function buildGuidedPlan(cases = [], { flow, url = '', aiPlan } = {}) {
-  const eligible = eligibleGuidedCases(cases, flow);
+export function buildGuidedPlan(cases = [], { flow, url = '', selectedCaseIds, aiPlan } = {}) {
+  const eligible = eligibleGuidedCases(cases, flow, { selectedCaseIds });
   if (!eligible.length) throw new Error('GUIDED_NO_CASES');
+  if (new Set(eligible.map(c => c.id)).size !== eligible.length) throw new Error('GUIDED_INVALID_REQUIREMENTS');
+  const candidates = selectedCaseIds === undefined ? eligibleGuidedCases(cases, flow)
+    : cases.filter(c => Array.isArray(c.rules) && c.rules.length && (flowMatches(c, flow) || sharedFlow(c.flow)));
+  const selectedIds = new Set(eligible.map(c => c.id)), candidateIds = new Set(candidates.map(c => c.id));
+  const selection = { selected_case_ids: [...selectedIds], excluded_case_ids: candidates.filter(c => !selectedIds.has(c.id)).map(c => c.id),
+    out_of_scope_case_ids: cases.filter(c => !candidateIds.has(c.id)).map(c => c.id), total_candidates: candidates.length, selected_count: eligible.length,
+    total_file_requirements: cases.length, total: candidates.length, selected: eligible.length, excluded: candidates.length - eligible.length };
   const selectedFlow = flowId(flow || eligible[0].flow);
-  const title = `Kiểm tra ${FLOWS[selectedFlow] || flow || 'tracking'}`;
+  const title = `Kiểm tra ${sharedFlow(flow) ? 'chung' : FLOWS[selectedFlow] || flow || 'tracking'}`;
   if (aiPlan && validateGuidedProposal(aiPlan, eligible)) throw new Error(validateGuidedProposal(aiPlan, eligible));
   const proposal = aiPlan || fallbackProposal(eligible, title);
   const byId = new Map(eligible.map(c => [c.id, c]));
@@ -156,20 +178,22 @@ export function buildGuidedPlan(cases = [], { flow, url = '', aiPlan } = {}) {
     const expected = selected.flatMap(c => c.rules.map(rule => ({ case_id: c.id, event_name: rule.event_name, source: rule.source || c.source,
       layer: rule.layer, description: c.description || '', provenance: c.provenance || null, needs_review: !!(c.needs_review || rule.needs_review) })));
     return { id: `${planId}-STEP-${index + 1}`, index: index + 1, title: item.title, instruction: item.instruction,
-      flow: selectedFlow, case_ids: ids, expected_case_ids: ids, expected, expected_events: expected,
+      flow: selectedFlow, case_ids: ids, expected_case_ids: ids, selected_case_ids: [...selectedIds], expected, expected_events: expected,
       optional: !!item.optional || failure || selected.some(editCase), ...(failure || item.branch ? { branch: failure ? 'failure' : item.branch } : {}),
       context_fields: context.fields, parameter_context: context.bindings, provenance: selected.map(c => c.provenance).filter(Boolean) };
   });
-  return redact({ id: planId, title: proposal.title || title, flow: selectedFlow, flow_label: FLOWS[selectedFlow] || flow || '', url,
+  return redact({ id: planId, title: proposal.title || title, flow: selectedFlow, flow_label: sharedFlow(flow) ? 'Chung' : FLOWS[selectedFlow] || flow || '', url,
     guidance_source: aiPlan ? 'ai' : 'requirements', steps,
     warnings: aiPlan ? [] : ['Hướng dẫn lấy từ mô tả trong file yêu cầu; thứ tự bước là gợi ý theo loại thao tác, chưa có hướng dẫn do model AI tạo.'],
-    case_ids: eligible.map(c => c.id), created_at: new Date().toISOString() });
+    case_ids: eligible.map(c => c.id), selection, created_at: new Date().toISOString() });
 }
 
 const canonicalName = (source, name) => upper(source) === 'INSIDER' ? BUSINESS_NAMES[name] || name : name;
 function sameName(c, rule, event) {
   const names = [rule.event_name, ...(rule.event_aliases || [])];
-  return names.includes(event.event_name) || c.payload_format === 'default_custom_parameters' && names.includes(activityEvent(event).display_name);
+  return names.includes(event.event_name)
+    || upper(rule.source || c.source) === 'INSIDER' && rule.layer === 'TRACKING_REQUEST' && names.some(name => canonicalName('INSIDER', name) === canonicalName('INSIDER', event.event_name))
+    || c.payload_format === 'default_custom_parameters' && names.includes(activityEvent(event).display_name);
 }
 function expectedChannel(c, rule) {
   if (rule.layer === 'TRACKING_REQUEST') return 'network';
@@ -179,6 +203,7 @@ function expectedChannel(c, rule) {
 }
 function specificationConflicts(c, rule) {
   const conflicts = Array.isArray(c.spec_conflicts) ? c.spec_conflicts.slice() : [];
+  if (c.target_platform === 'APP') conflicts.push({ code: 'PLATFORM_REQUIREMENT_MISMATCH', message: 'Yêu cầu dành cho App điện thoại, chưa phải hợp đồng Web.' });
   const command = { homepage_view: 'home', listing_page_view: 'category', product_detail_page_view: 'product', cart_page_view: 'cart', confirmation_page_view: 'purchase' }[rule.event_name];
   if (upper(rule.source || c.source) === 'INSIDER' && command && c.sample?.type && !['custom_event', command].includes(c.sample.type)) {
     conflicts.push({ code: 'SPEC_SAMPLE_TYPE_CONFLICT', message: `Event ${rule.event_name} dùng mẫu type=${c.sample.type}; cần duyệt lại mẫu thay vì kết luận lỗi website.` });
@@ -191,24 +216,39 @@ function observation(event) {
   return { evidence_id: event.evidence_id, event_name: event.event_name, source: event.source, layer: event.layer,
     observation: a.observation, channel: activityChannel(event), flow: a.flow_id, flow_conflict: a.flow_conflict,
     captured_at: event.captured_at, payload: event.payload, original_payload: event.original_payload,
-    parameters: a.json, parameter_origins: a.parameter_origins, network: event.network, incomplete: !!event.capture?.incomplete };
+    parameters: a.json, parameter_origins: a.parameter_origins, network: event.network,
+    ...(event.data_layer_model ? { data_layer_model: event.data_layer_model } : {}), incomplete: !!event.capture?.incomplete };
 }
-function leaves(value, path = '', out = [], depth = 0) {
-  if (depth > 10 || out.length >= 2000) return out;
+function leaves(value, path = '', out = [], depth = 0, limit) {
+  if (depth > 10 || out.length >= 2000) { if (limit) limit.incomplete = true; return out; }
   if (value && typeof value === 'object' && Object.keys(value).length) {
-    for (const [key, item] of Object.entries(value)) leaves(item, path ? `${path}.${key}` : key, out, depth + 1);
+    for (const [key, item] of Object.entries(value)) {
+      if (out.length >= 2000) { if (limit) limit.incomplete = true; break; }
+      leaves(item, path ? `${path}.${key}` : key, out, depth + 1, limit);
+    }
   } else if (path) out.push({ path, value });
   return out;
 }
-function expandedPaths(payload, path) {
+const templateOperator = op => ['type', 'exists', 'not_exists', 'ignore'].includes(op);
+function expandedPaths(payload, path, limit, expandArrays = true) {
   const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.');
   let prefixes = [''];
   for (const part of parts) {
-    prefixes = prefixes.flatMap(prefix => {
+    const next = [];
+    outer: for (const prefix of prefixes) {
       const parent = prefix ? getPath(payload, prefix) : payload;
-      if (part === '0' && Array.isArray(parent) && parent.length) return parent.slice(0, 500).map((_, index) => prefix ? `${prefix}.${index}` : String(index));
-      return [prefix ? `${prefix}.${part}` : part];
-    });
+      if (expandArrays && part === '0' && Array.isArray(parent) && parent.length) {
+        if (parent.length > 500 && limit) limit.incomplete = true;
+        for (let index = 0; index < Math.min(parent.length, 500); index++) {
+          if (next.length >= 2000) { if (limit) limit.incomplete = true; break outer; }
+          next.push(prefix ? `${prefix}.${index}` : String(index));
+        }
+      } else {
+        if (next.length >= 2000) { if (limit) limit.incomplete = true; break; }
+        next.push(prefix ? `${prefix}.${part}` : part);
+      }
+    }
+    prefixes = next;
   }
   return prefixes;
 }
@@ -263,8 +303,11 @@ export function assessGuidedStep({ step, cases = [], events = [], context = {}, 
       if (a.flow_id === 'unknown' && expectedFlow !== 'unknown') issues.push({ code: 'FLOW_UNVERIFIED', status: 'review', evidence_id: event.evidence_id });
       if (a.flow_conflict) issues.push({ code: 'FLOW_CONFLICT', status: 'review', evidence_id: event.evidence_id });
       if (event.capture?.incomplete) { issues.push({ code: 'INCOMPLETE_CAPTURE', status: 'review', evidence_id: event.evidence_id }); continue; }
+      const workLimit = { incomplete: false };
       for (const [path, field] of Object.entries(rule.fields || {})) {
-        for (const expanded of expandedPaths(payload, path)) {
+        if (parameters.length >= 10000) { workLimit.incomplete = true; break; }
+        for (const expanded of expandedPaths(payload, path, workLimit, templateOperator(field.op))) {
+          if (parameters.length >= 10000) { workLimit.incomplete = true; break; }
           const check = checkField(payload, expanded, field, context, event.evidence_id);
           const binding = (step.parameter_context || []).find(b => b.case_id === c.id && b.rule_index === ruleIndex && b.parameter_path === expanded);
           const supplied = binding ? getPath(context, binding.context_path) : undefined;
@@ -272,7 +315,7 @@ export function assessGuidedStep({ step, cases = [], events = [], context = {}, 
           const semantic = independent && ['type', 'exists'].includes(field.op) ? checkField(payload, expanded, { op: 'eq', value: supplied }, context, event.evidence_id) : null;
           const result = check.verdict === 'PASS' && semantic ? semantic : check;
           const unverified = result.verdict === 'PASS' && ['type', 'exists'].includes(field.op) && !independent;
-          parameters.push({ path: expanded, label: LABELS[leafName(expanded)] || expanded, op: field.op,
+          parameters.push({ path: expanded, requirement_path: path, label: LABELS[leafName(expanded)] || expanded, op: field.op,
             constraint: ['type', 'ref', 'exists', 'not_exists'].includes(field.op) ? { op: field.op, ...(field.value !== undefined ? { value: field.value } : {}) } : undefined,
             expected: independent ? supplied : result.expected ?? (field.op === 'exists' ? 'Phải có tham số' : null),
             actual: result.actual, status: conflicts.length || unverified ? 'review' : fieldStatus(result), code: conflicts.length ? 'SPEC_CONFLICT' : unverified ? 'VALUE_NOT_VERIFIED' : result.code || 'MATCH',
@@ -281,12 +324,13 @@ export function assessGuidedStep({ step, cases = [], events = [], context = {}, 
         }
       }
       const expectedPaths = Object.keys(rule.fields || {});
-      for (const leaf of leaves(payload)) {
+      for (const leaf of leaves(payload, '', [], 0, workLimit)) {
         const normalizedPath = leaf.path.replace(/\.\d+(?=\.|$)/g, '.0');
-        if (expectedPaths.some(path => path === leaf.path || path === normalizedPath || (leaf.path.startsWith(path + '.') && ['type', 'ignore'].includes(rule.fields[path]?.op) && !expectedPaths.some(other => other.startsWith(path + '.'))))) continue;
+        if (expectedPaths.some(path => path === leaf.path || path === normalizedPath && templateOperator(rule.fields[path]?.op) || (leaf.path.startsWith(path + '.') && ['type', 'ignore'].includes(rule.fields[path]?.op) && !expectedPaths.some(other => other.startsWith(path + '.'))))) continue;
         if (/(?:^|\.)(?:gtm\.|gtag\.|processed$|event$|event_name$)/.test(leaf.path)) continue;
         parameters.push({ path: leaf.path, actual: leaf.value, expected: null, status: conflicts.length ? 'review' : 'extra', code: conflicts.length ? 'SPEC_CONFLICT' : 'ADDITIONAL_PARAMETER', severity: 'info', evidence_id: event.evidence_id });
       }
+      if (workLimit.incomplete) issues.push({ code: 'PARAMETER_CHECK_LIMIT', status: 'review', evidence_id: event.evidence_id, message: 'Chưa kiểm hết tham số/phần tử vì đạt giới hạn xử lý; không kết luận đã đầy đủ.' });
       if (rule.layer === 'TRACKING_REQUEST' && event.network?.request_id) {
         const lifecycle = scoped.filter(other => upper(other.source) === source && other.network?.request_id === event.network.request_id && (other.page?.target_id ?? null) === (event.page?.target_id ?? null));
         for (const transport of lifecycle) {
@@ -307,17 +351,25 @@ export function assessGuidedStep({ step, cases = [], events = [], context = {}, 
     const missing = parameters.filter(p => p.status === 'missing'), wrong = parameters.filter(p => p.status === 'mismatch'), extra = parameters.filter(p => p.status === 'extra');
     let status = conflicts.length ? 'review' : issues.some(i => i.status === 'missing') ? 'missing' : issues.some(i => i.status === 'mismatch') || missing.length || wrong.length ? 'mismatch'
       : issues.some(i => i.status === 'review') ? 'review' : 'match';
-    const acceptance = draft || status === 'review' || parameters.some(p => p.status === 'review') ? 'review' : status === 'match' ? 'match' : 'mismatch';
-    comparisons.push({ case_id: c.id, event_name: rule.event_name, source, layer: rule.layer, channel, status,
+    const acceptance = draft || status === 'review' || issues.some(i => i.status === 'review') || parameters.some(p => p.status === 'review') ? 'review' : status === 'match' ? 'match' : 'mismatch';
+    comparisons.push({ case_id: c.id, rule_index: ruleIndex, event_name: rule.event_name, source, layer: rule.layer, channel, status,
       acceptance_status: acceptance, needs_review: draft, trigger_verification: complete ? 'operator_confirmed_window' : 'pending',
+      platform_verification: c.target_platform === 'WEB' ? 'web_requirement' : c.target_platform === 'APP' ? 'app_requirement' : 'not_declared',
+      origin_verification: expectedHost ? actual.length ? 'selected_website' : 'not_observed' : 'not_configured',
       actual_count: actual.length, expected_count: { min, max }, expected_payload_sample: c.sample || null, expected_payload: c.sample || null,
       expected_rules: rule.fields || {}, actual_events: actual.map(observation), actual_payload: actual[0]?.payload ?? null,
       parameters, missing_parameters: missing, wrong_parameters: wrong, extra_parameters: extra, issues,
       provenance: c.provenance || null, description: c.description || '', notes: c.notes || '', spec_conflicts: conflicts });
   }
   const vendors = new Set(required.map(r => r.source));
+  const planSelection = new Set(step.selected_case_ids || ids);
+  const matchesKnownCase = (event, c) => c.rules?.some(rule => upper(rule.source || c.source) === upper(event.source)
+    && rule.layer === event.layer && (!expectedChannel(c, rule) || expectedChannel(c, rule) === activityChannel(event)) && sameName(c, rule, event)
+    && (flowId(c.flow) === 'unknown' || activityEvent(event).flow_id === 'unknown' || flowId(c.flow) === activityEvent(event).flow_id));
+  const outOfSelection = event => !consumed.has(event) && !cases.some(c => planSelection.has(c.id) && matchesKnownCase(event, c))
+    && cases.some(c => !planSelection.has(c.id) && matchesKnownCase(event, c));
   const extraEvents = primary.filter(event => {
-    if (!selectedWebsite(event) || consumed.has(event) || event.diagnostic || SETUP.test(event.event_name) || SDK_INTERNAL.test(event.event_name)) return false;
+    if (!selectedWebsite(event) || consumed.has(event) || outOfSelection(event) || event.diagnostic || SETUP.test(event.event_name) || SDK_INTERNAL.test(event.event_name)) return false;
     if (upper(event.source) === 'GA4' && /^(?:page_view|session_start|first_visit|user_engagement|scroll)$/.test(event.event_name)) return false;
     const source = upper(event.source), channel = activityChannel(event);
     if (!vendors.has(source)) return false;
@@ -325,19 +377,85 @@ export function assessGuidedStep({ step, cases = [], events = [], context = {}, 
     // still in observations; they are not duplicate business events.
     return required.some(r => r.source === source && (!r.channel || r.channel === channel))
       && !required.some(r => r.source === source && r.event_name === canonicalName(source, event.event_name) && r.channel !== channel);
-  }).map(event => ({ ...observation(event), status: 'extra', code: activityEvent(event).flow_id !== 'unknown' && step.flow && activityEvent(event).flow_id !== flowId(step.flow) ? 'WRONG_FLOW' : 'UNEXPECTED_EVENT_FOR_STEP' }));
+  }).map(event => ({ ...observation(event), status: 'extra', severity: 'info', code: activityEvent(event).flow_id !== 'unknown' && flowId(step.flow) !== 'unknown' && activityEvent(event).flow_id !== flowId(step.flow) ? 'WRONG_FLOW' : 'UNEXPECTED_EVENT_FOR_STEP' }));
   const counts = { expected_events: comparisons.length, actual_events: consumed.size + extraEvents.length,
     missing: comparisons.filter(r => r.status === 'missing').length, mismatch: comparisons.filter(r => r.status === 'mismatch').length,
     extra: extraEvents.length, review: comparisons.filter(r => r.acceptance_status === 'review').length,
     missing_parameters: comparisons.reduce((n, r) => n + r.missing_parameters.length, 0), wrong_parameters: comparisons.reduce((n, r) => n + r.wrong_parameters.length, 0),
     extra_parameters: comparisons.reduce((n, r) => n + r.extra_parameters.length, 0), observations: scoped.length };
   const status = counts.missing ? 'missing' : counts.mismatch ? 'mismatch' : counts.extra ? 'extra' : comparisons.some(r => r.status === 'review') ? 'review' : 'match';
-  const acceptance = comparisons.some(r => r.acceptance_status === 'review') || !completeWindow(completedAt) ? 'review' : status === 'match' ? 'match' : 'mismatch';
+  const acceptance = comparisons.some(r => r.acceptance_status === 'review') || !completeWindow(completedAt) || status === 'extra' ? 'review' : status === 'match' ? 'match' : 'mismatch';
   return redact({ step_id: step.id, title: step.title || '', status, acceptance_status: acceptance,
     verdict: acceptance === 'review' ? 'REVIEW' : acceptance === 'match' ? 'PASS' : 'FAIL', counts,
     summary: `Mong đợi ${counts.expected_events} event; ghi nhận ${counts.actual_events}. Thiếu ${counts.missing}, sai ${counts.mismatch}, ngoài bước ${counts.extra}.`,
     expected: comparisons, comparisons, extra_events: extraEvents, unexpected_events: extraEvents,
-    observations: scoped.map(observation), started_at: startedAt || step.started_at, completed_at: completedAt || null,
+    observations: scoped.map(event => ({ ...observation(event), ...(outOfSelection(event) ? { scope_status: 'out_of_selection' } : {}) })), started_at: startedAt || step.started_at, completed_at: completedAt || null,
     context, warnings: counts.review ? ['Một số yêu cầu hoặc giá trị chưa đủ căn cứ nghiệm thu. Kết quả vẫn hiển thị cụ thể phần thiếu/sai đã quan sát.'] : [] });
 }
 const completeWindow = value => !!value;
+
+const canonicalParameter = path => String(path).replace(/\[(\d+)\]/g, '.$1');
+const normalizedParameter = path => canonicalParameter(path).replace(/\.\d+(?=\.|$)/g, '.0');
+const semanticParameter = p => p.expected_origin === 'operator_context' || ['eq', 'ref', 'regex', 'range', 'one_of', 'subset', 'not_exists'].includes(p.op);
+
+/** Coverage is scoped to the user's selection, with observed structure kept
+ * separate from values verified against independent requirements/context. */
+export function summarizeGuidedCompleteness(plan, results = [], cases = [], { currentStep } = {}) {
+  if (!plan) return { selected: 0, executed: 0, skipped: 0, remaining: 0, excluded: 0, verified: 0, unverified: 0, requirements: [] };
+  const ids = unique(plan.selection?.selected_case_ids || plan.case_ids || plan.steps.flatMap(s => s.case_ids || s.expected_case_ids || []));
+  const byId = new Map(cases.map(c => [c.id, c]));
+  const requirements = ids.map(id => {
+    const c = byId.get(id), step = plan.steps.find(s => (s.case_ids || s.expected_case_ids || []).includes(id));
+    const result = results.filter(r => (r.plan_step_id || r.step_id) === step?.id).at(-1);
+    const rows = (result?.comparisons || result?.expected || []).filter(row => row.case_id === id);
+    const fields = (c?.rules || []).flatMap((rule, index) => Object.entries(rule.fields || {}).map(([path, field]) => ({ index, path, canonical: canonicalParameter(path), normalized: normalizedParameter(path), template: templateOperator(field?.op) })));
+    const checks = rows.flatMap(row => (row.parameters || []).map(p => ({ ...p, rule_index: row.rule_index ?? (c?.rules || []).findIndex(r => r.event_name === row.event_name && r.layer === row.layer) })));
+    const counts = { total_parameters: fields.length, checked_parameters: 0, verified_parameters: 0, unverified_parameters: 0, missing_parameters: 0, wrong_parameters: 0,
+      parameter_checks: { total: checks.length, structural_matched: 0, structural_failed: 0, semantic_matched: 0, semantic_failed: 0, unverified: 0, extra: 0 } };
+    for (const p of checks) {
+      const structural = p.structural_status || p.status;
+      if (p.code === 'ADDITIONAL_PARAMETER' || p.status === 'extra') { counts.parameter_checks.extra++; continue; }
+      if (structural === 'match') counts.parameter_checks.structural_matched++;
+      else if (['missing', 'mismatch'].includes(structural)) counts.parameter_checks.structural_failed++;
+      if (p.status === 'match' && semanticParameter(p)) counts.parameter_checks.semantic_matched++;
+      else if (['missing', 'mismatch'].includes(p.status) && semanticParameter(p)) counts.parameter_checks.semantic_failed++;
+      else if (p.status === 'review' || p.status === 'match' && !semanticParameter(p)) counts.parameter_checks.unverified++;
+    }
+    for (const field of fields) {
+      const observed = checks.filter(p => p.rule_index === field.index && p.code !== 'ADDITIONAL_PARAMETER'
+        && (p.requirement_path !== undefined ? p.requirement_path === field.path : field.template ? normalizedParameter(p.path) === field.normalized : canonicalParameter(p.path) === field.canonical));
+      if (observed.length) counts.checked_parameters++;
+      if (observed.some(p => p.status === 'missing')) counts.missing_parameters++;
+      else if (observed.some(p => p.status === 'mismatch')) counts.wrong_parameters++;
+      else if (observed.length && observed.every(p => p.status === 'match' && semanticParameter(p))) counts.verified_parameters++;
+      else counts.unverified_parameters++;
+    }
+    const resultStatus = String(result?.status || result?.verdict || '').toLowerCase();
+    let status;
+    if (currentStep && (currentStep.plan_step_id || currentStep.id) === step?.id || resultStatus === 'running') status = 'in_progress';
+    else if (!result) status = 'not_run';
+    else if (['not_executed', 'skipped'].includes(resultStatus)) status = 'skipped';
+    else if (rows.some(row => row.status === 'missing')) status = 'missing';
+    else if (rows.some(row => row.status === 'mismatch')) status = 'mismatch';
+    else {
+      const expectedRuleCount = c?.rules?.length || 0;
+      const absenceOnly = expectedRuleCount > 0 && c.rules.every(r => r.count?.max === 0);
+      const unresolved = !expectedRuleCount || rows.length !== expectedRuleCount || rows.some(row => row.status !== 'match' || row.acceptance_status !== 'match' || row.needs_review
+        || row.platform_verification !== 'web_requirement' || row.origin_verification !== 'selected_website' && !(absenceOnly && row.origin_verification !== 'not_configured')
+        || row.issues?.some(issue => issue.status === 'review')) || counts.unverified_parameters > 0 || !fields.length && !absenceOnly;
+      status = unresolved ? 'checked_unverified' : 'verified';
+    }
+    const pending = ['not_run', 'skipped', 'in_progress'].includes(status);
+    return { case_id: id, step_id: step?.id, event_name: c?.rules?.[0]?.event_name || '', source: c?.source || '', flow: c?.flow || '', status,
+      needs_review: !!c?.needs_review || rows.some(row => row.needs_review), total_rules: c?.rules?.length || 0, checked_rules: pending ? 0 : rows.length,
+      ...counts, ...(pending ? { checked_parameters: 0, verified_parameters: 0, unverified_parameters: fields.length, missing_parameters: 0, wrong_parameters: 0,
+        parameter_checks: { total: 0, structural_matched: 0, structural_failed: 0, semantic_matched: 0, semantic_failed: 0, unverified: 0, extra: 0 } } : {}) };
+  });
+  const selected = requirements.length, skipped = requirements.filter(r => r.status === 'skipped').length;
+  const remaining = requirements.filter(r => ['not_run', 'in_progress'].includes(r.status)).length;
+  return { selected, executed: selected - skipped - remaining, skipped, remaining,
+    excluded: plan.selection?.excluded_case_ids?.length || 0, out_of_scope: plan.selection?.out_of_scope_case_ids?.length || 0,
+    verified: requirements.filter(r => r.status === 'verified').length, unverified: requirements.filter(r => r.status === 'checked_unverified').length,
+    missing: requirements.filter(r => r.status === 'missing').length, mismatch: requirements.filter(r => r.status === 'mismatch').length,
+    complete: selected > 0 && requirements.every(r => r.status === 'verified'), requirements };
+}

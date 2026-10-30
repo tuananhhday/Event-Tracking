@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
+import { DataLayerModel } from '../core/datalayer-model.mjs';
 
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
 
@@ -103,6 +104,7 @@ const INSIDER_OBJECT_PAGES = { home: 'homepage_view', main: 'homepage_view', lis
 /** One queue push becomes one event, except an Insider custom_event push, which can carry several. */
 export function queueEvents(record) {
   const base = { schema_version: '1.0', source: record.queue === 'dataLayer' ? 'GA4' : 'INSIDER', layer: 'JS_QUEUE', queue_name: record.queue,
+    ...(record.queue_instance_id ? { queue_instance_id: record.queue_instance_id, queue_sequence: record.queue_sequence } : {}),
     historical: Boolean(record.historical), ...(record.capture?.incomplete ? { capture: record.capture } : {}), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
   let payload = record.item;
   let eventName;
@@ -220,7 +222,7 @@ export class CDPCollector {
     const connection = new CDPConnection(target.webSocketDebuggerUrl);
     this.activeConnections.add(connection);
     connection.on('closed', () => this.activeConnections.delete(connection));
-    const state = { connection, target, requests: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
+    const state = { connection, target, requests: new Map(), contexts: new Map(), dataLayerModels: new Map(), scripts: new Map(), childSessions: new Set() };
     try {
       await connection.connect();
       if (!this.running || generation !== this.generation) { connection.close(); return; }
@@ -280,16 +282,32 @@ export class CDPCollector {
       }
     } else if (method === 'Runtime.executionContextDestroyed') {
       state.contexts.delete(`${sessionId || ''}:${params.executionContextId}`);
+      state.dataLayerModels.delete(`${sessionId || ''}:${params.executionContextId}`);
     } else if (method === 'Runtime.executionContextsCleared') {
-      for (const [key, context] of state.contexts) if (context.sessionId === sessionId) state.contexts.delete(key);
+      for (const [key, context] of state.contexts) if (context.sessionId === sessionId) { state.contexts.delete(key); state.dataLayerModels.delete(key); }
     } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_emit') {
       if (!this.captureQueues) return;
       let record;
       try { record = JSON.parse(params.payload); } catch { return; }
       if (!['dataLayer', 'InsiderQueue', 'InsiderDispatch', 'insider_object'].includes(record.queue)) return;
-      const frameId = state.contexts.get(`${sessionId || ''}:${params.executionContextId}`)?.frameId;
+      const contextKey = `${sessionId || ''}:${params.executionContextId}`;
+      const frameId = state.contexts.get(contextKey)?.frameId;
+      let model;
+      if (record.queue === 'dataLayer') {
+        let observed = state.dataLayerModels.get(contextKey);
+        if (!observed || observed.instanceId !== record.queue_instance_id) {
+          // One bounded diagnostic state per live frame. A replacement array
+          // starts fresh rather than inheriting another array's old values.
+          observed = { instanceId: record.queue_instance_id,
+            model: new DataLayerModel({ historyComplete: record.queue_history_complete === true && record.queue_sequence === 1 }) };
+          if (state.dataLayerModels.size >= 64 && !state.dataLayerModels.has(contextKey)) state.dataLayerModels.delete(state.dataLayerModels.keys().next().value);
+          state.dataLayerModels.set(contextKey, observed);
+        }
+        model = observed.model.apply(record);
+      }
       for (const event of queueEvents(record)) {
         event.page = { ...event.page, frame_id: frameId, target_id: state.target.id };
+        if (model) event.data_layer_model = model;
         await this.#emit(event, generation);
       }
     } else if (method === 'Page.frameNavigated' && !params.frame?.parentId && !sessionId) {
