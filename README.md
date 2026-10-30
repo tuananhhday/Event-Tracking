@@ -59,6 +59,23 @@ Không cần bật gì trên website: app tự đọc `window.dataLayer` và `wi
 
 **App OTA (iOS/Android, Insider Mobile SDK) chưa được hỗ trợ**: trình duyệt không thấy event của ứng dụng điện thoại.
 
+## Kiểm tra cách bắn event
+
+Tab **Kiểm tra cách bắn** và mục **Cách bắn** trong chi tiết từng event áp dụng các quy tắc rút từ *Insider user guide* và các sheet GA4 trong file Martech. Không cần file đặc tả:
+
+| Quy tắc | Mức | Ý nghĩa |
+|---|---|---|
+| Insider: dữ liệu trang có `init` theo sau | Lỗi | `home`, `category`, `product`, `cart`, `purchase`, `other` chỉ được Insider gửi thành page view sau `{type: 'init'}`. Push `init` nhiều lần trên một trang là cảnh báo. |
+| Đã gửi lên server | Cảnh báo | Event JS phải có request tương ứng trong 30 giây: GA4 `/g/collect` cùng tên event; Insider `unification…/api/event` (`add_to_cart` → `item_added_to_cart`, `remove_from_cart` → `item_removed_from_cart`); page data + `init` → `pageView` trên `hit.api` (body base64 được giải mã). |
+| Cấu trúc `custom_event` | Lỗi | `value` là mảng các `{event_name, event_parameters}`. |
+| Cặp ngày Insider | Lỗi | `checkin`/`checkin_str`, `departure_date`/`departure_date_str`…: ISO8601 + yyyy-MM-dd, cùng ngày; áp dụng cả tham số `c_` trong request Insider. GA4 không áp dụng vì đặc tả GA4 dùng ngày yyyy-MM-dd không có `_str`. |
+| `destination` + `destination_id` | Cảnh báo | Có tên địa điểm thì phải có ID. |
+| Không bắn trùng | Lỗi | Cùng event, cùng payload, cùng tab trong 1 giây. |
+| GA4 ecommerce | Cảnh báo / Lỗi | Có `{ecommerce: null}` ngay trước; `ecommerce.items` không rỗng, mỗi item có `item_id`, `item_name`. |
+| `coupon_interacted.action` | Lỗi | Thuộc `view_list / enter_code / apply_success / apply_failed / remove`. |
+
+Ngoài `dataLayer` và `InsiderQueue`, app còn ghi nhận event Insider bắn qua `Insider.eventManager.dispatch(name, data)` (ví dụ `other_page_view`) và qua đối tượng `window.insider_object` (`page.type` Listing/Product/…, `transaction` → `confirmation_page_view`). Hàm gốc của Insider vẫn chạy bình thường. Báo cáo Excel có sheet **Firing Checks** liệt kê mọi kết quả.
+
 ## Chạy thử với trang demo
 
 Bấm **Chưa có website? Chạy thử với trang demo** ở bước 1: app chọn trang demo nội bộ và nạp 3 case mẫu Hotel, Merchandise, Insider. Trên demo, tick **Bỏ destination_id** để có FAIL/MISSING_FIELD ở tầng queue; tick **Bỏ request** ở Insider để có FAIL ở tầng request.

@@ -130,6 +130,7 @@
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="ai">✦ Trợ lý AI</button>
@@ -163,6 +164,12 @@
         </div>
         <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
         <div id="spec-table"></div>
+      </div>
+      <div class="tabpanel hidden" data-panel="firing">
+        <p class="hint" style="margin-top:0">Quy tắc lấy từ Insider user guide và các sheet GA4 của Martech: dữ liệu trang Insider phải có <code>init</code> theo sau; event phải thực sự gửi lên GA4/Insider; ngày Insider có cặp <code>field</code> + <code>field_str</code>; có <code>destination_id</code> đi kèm <code>destination</code>; GA4 ecommerce có <code>{ecommerce: null}</code> trước và items đủ <code>item_id</code>/<code>item_name</code>; không bắn trùng.</p>
+        <div id="firing-summary"></div>
+        <div class="toolbar"><select id="firing-status" aria-label="Lọc theo mức"><option value="">Lỗi + cảnh báo</option><option value="FAIL">Chỉ lỗi</option><option value="WARN">Chỉ cảnh báo</option></select></div>
+        <div id="firing-table"></div>
       </div>
       <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>

@@ -9,6 +9,7 @@ import { redact } from './core/privacy.mjs';
 import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchEvent } from './core/catalog.mjs';
+import { firingChecks } from './core/firing.mjs';
 import { importSpec, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
@@ -69,6 +70,15 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   } else cases = await loadDemoCases();
   const manager = new SessionManager({ mode, runsDir, cases });
   let activePatterns = [...DEFAULT_ENDPOINT_PATTERNS], proxyCa = null, navigationError = null;
+  // Firing checks over all evidence; recomputed only when evidence grows.
+  let firingCache = { count: -1, result: null };
+  const firingResult = events => { if (firingCache.count !== events.length) firingCache = { count: events.length, result: firingChecks(events) }; return firingCache.result; };
+  const firingState = events => {
+    const { byEvent, summary } = firingResult(events);
+    const byId = new Map(events.map(event => [event.evidence_id, event]));
+    const problems = [...byEvent.entries()].flatMap(([id, checks]) => checks.filter(check => check.status !== 'PASS').map(check => ({ ...check, id, event_name: byId.get(id)?.event_name, source: byId.get(id)?.source, layer: byId.get(id)?.layer, at: byId.get(id)?.captured_at })));
+    return { summary, problems: problems.slice(-200).reverse(), problemCount: problems.length };
+  };
   // Event-to-specification matches, reset whenever the cases change.
   let coverageCases = null, coverageCache = new Map();
   const coverage = events => {
@@ -84,7 +94,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
-      eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
+      eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100), eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   async function bounded(promise, milliseconds) {
@@ -192,7 +202,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
         const testCase = match && manager.cases.find(c => c.id === match.case_id);
         const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '' } : null;
-        return send(res, 200, { event, spec });
+        const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
+        return send(res, 200, { event, spec, firing });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });

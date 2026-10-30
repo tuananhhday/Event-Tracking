@@ -44,6 +44,13 @@ function parsedBody(body, contentType) {
     try { const val = JSON.parse(raw); return { parts: Array.isArray(val) ? val : [val], status: 'DECODED' }; }
     catch { /* NDJSON handled below. */ }
   }
+  // Insider's hit endpoint sends a base64-encoded JSON object (pageView and session data).
+  if (/^[A-Za-z0-9+/_-]{16,}={0,2}$/.test(raw.trim()) && /^eyJ/.test(raw.trim())) {
+    try {
+      const val = JSON.parse(Buffer.from(raw.trim().replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+      if (val && typeof val === 'object' && !Array.isArray(val)) return { parts: [val], status: 'DECODED' };
+    } catch { /* not base64 JSON after all */ }
+  }
   const lines = raw.split(/\r?\n/).filter(Boolean);
   if (lines.length > 1) {
     try { return { parts: lines.flatMap(s => JSON.parse(s)), status: 'DECODED' }; }

@@ -327,7 +327,15 @@
     if (op) return '<span class="pill PASS">✓ Đúng</span>';
     return '<span class="hint">ngoài đặc tả</span>';
   }
-  function eventDetailHtml(e, spec) {
+  const FIRING_STATUS = { PASS: ['PASS', '✓'], WARN: ['REVIEW', '⚠'], FAIL: ['FAIL', '✗'] };
+  const RULE_TEXT = { INSIDER_INIT: 'Insider: init sau dữ liệu trang', DELIVERED: 'Đã gửi lên server', CUSTOM_EVENT_SHAPE: 'Cấu trúc custom_event', DATE_PAIR: 'Cặp ngày ISO + _str',
+    DESTINATION_PAIR: 'destination + destination_id', DUPLICATE: 'Không bắn trùng', ECOMMERCE_RESET: 'ecommerce: null trước event', ECOMMERCE_ITEMS: 'items đủ item_id/item_name', COUPON_ACTION: 'coupon action hợp lệ' };
+  function firingHtml(checks) {
+    if (!checks?.length) return '';
+    const ordered = [...checks].sort((a, b) => ['FAIL', 'WARN', 'PASS'].indexOf(a.status) - ['FAIL', 'WARN', 'PASS'].indexOf(b.status));
+    return `<div class="list-title"><b>Cách bắn</b></div><table class="params"><tbody>${ordered.map(check => { const [cls, icon] = FIRING_STATUS[check.status]; return `<tr><td><span class="pill ${cls}">${icon} ${esc(RULE_TEXT[check.rule] || check.rule)}</span></td><td>${esc(check.message)}${check.evidence_id ? ` <button type="button" class="evlink" data-evidence="${esc(check.evidence_id)}">xem</button>` : ''}</td></tr>`; }).join('')}</tbody></table>`;
+  }
+  function eventDetailHtml(e, spec, firing) {
     const { base, params } = eventParams(e);
     const rows = paramRows(params).filter(row => !/^gtm\./.test(row.path));
     const full = path => base ? `${base}.${path}` : path;
@@ -344,15 +352,20 @@
     const listHtml = lists.map(({ path, list }) => {
       const columns = [...new Set(list.slice(0, 20).flatMap(item => Object.keys(item)))].slice(0, 16);
       const header = columns.map(column => { const mark = spec ? spec.issues.find(i => i.path === full(`${path}.0.${column}`)) : null; return `<th${mark ? ' class="bad"' : ''}>${esc(column)}${mark ? ' ⚠' : ''}</th>`; }).join('');
-      const missing = spec ? Object.keys(spec.fields || {}).filter(p => p.startsWith(full(`${path}.0.`)) && !columns.includes(p.slice(full(`${path}.0.`).length)) && !p.slice(full(`${path}.0.`).length).includes('.')) : [];
-      return `<div class="list-title"><code>${esc(path)}</code> · ${list.length} mục${missing.length ? ` · <span class="pill FAIL">Thiếu ${missing.map(m => esc(m.split('.').at(-1))).join(', ')}</span>` : ''}</div>
+      // Judged on every key of the first item, not on the columns that fit in the table.
+      const firstKeys = new Set(Object.keys(list[0]));
+      const missing = spec ? Object.keys(spec.fields || {}).filter(p => p.startsWith(full(`${path}.0.`)) && !firstKeys.has(p.slice(full(`${path}.0.`).length)) && !p.slice(full(`${path}.0.`).length).includes('.')) : [];
+      const title = `<div class="list-title"><code>${esc(path)}</code> · ${list.length} mục${missing.length ? ` · <span class="pill FAIL">Thiếu ${missing.map(m => esc(m.split('.').at(-1))).join(', ')}</span>` : ''}</div>`;
+      // A few items (cart, checkout) read best one field per line; long lists stay a scrollable table.
+      if (list.length <= 3) return title + list.map((item, index) => `<table class="params"><thead><tr><th>Mục ${index + 1}</th><th>Giá trị</th>${spec ? `<th>${index === 0 ? 'So với đặc tả' : ''}</th>` : ''}</tr></thead><tbody>${paramRows(item).map(row => `<tr><td><code>${esc(row.path)}</code></td><td>${row.list ? `<code>${esc(short(row.list, 160))}</code>` : formatValue(row.value)}</td>${spec ? `<td>${index === 0 ? specMark(full(`${path}.0.${row.path}`), spec) : ''}</td>` : ''}</tr>`).join('')}</tbody></table>`).join('');
+      return `${title}
         <div class="table-scroll"><table class="params items"><thead><tr><th>#</th>${header}</tr></thead><tbody>${list.slice(0, 20).map((item, index) => `<tr><td>${index + 1}</td>${columns.map(column => `<td>${formatValue(item[column] && typeof item[column] === 'object' ? JSON.stringify(item[column]) : item[column])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${list.length > 20 ? `<p class="hint">+${list.length - 20} mục khác (xem JSON gốc)</p>` : ''}`;
     }).join('');
     // Fields the specification expects but the event does not carry at all.
     const absent = spec ? spec.issues.filter(i => i.code === 'MISSING_FIELD' && !rows.some(row => full(row.path) === i.path) && !/\.0\./.test(i.path)) : [];
     const absentHtml = absent.length ? `<div class="list-title"><span class="pill FAIL">Thiếu so với đặc tả</span> ${absent.map(i => `<code>${esc(base && i.path.startsWith(`${base}.`) ? i.path.slice(base.length + 1) : i.path)}</code>`).join(', ')}</div>` : '';
     const note = spec?.notes ? `<p class="hint">Ghi chú đặc tả: ${esc(spec.notes)}</p>` : '';
-    return `${head}${absentHtml}${scalarHtml}${listHtml}${note}
+    return `${head}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
       <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
       <details class="raw"><summary>JSON gốc (bằng chứng đầy đủ)</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
   }
@@ -369,7 +382,7 @@
   function detailContent(id) {
     const loaded = ui.details.get(id);
     if (!loaded) { loadDetail(id); return '<p class="hint">Đang tải chi tiết…</p>'; }
-    return eventDetailHtml(loaded.event, loaded.spec);
+    return eventDetailHtml(loaded.event, loaded.spec, loaded.firing);
   }
 
   // ---- live evidence ------------------------------------------------------
@@ -513,6 +526,19 @@
         <td><small>${esc(short(r.notes, 90))}</small></td></tr>`; }).join('')}
       ${unmatched.map(u => `<tr><td>—</td><td><span class="pill">${esc(u.source)}</span></td><td><b>${esc(u.event_name)}</b></td><td><span class="pill warn">Ngoài đặc tả</span></td><td><b>${u.count}</b></td><td><button type="button" class="evlink" data-evidence="${esc(u.last_evidence_id)}">Xem event</button></td><td><small class="hint">Event bắn ra nhưng file đặc tả không có</small></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty"><strong>Không có dòng khớp bộ lọc</strong></div>';
+  }
+
+  // ---- firing checks ----------------------------------------------------------
+  function renderFiring(s) {
+    const host = $('firing-table'); if (!host || !s.firing) return;
+    const status = $('firing-status')?.value || '';
+    const sig = JSON.stringify([s.firing.summary, s.firing.problemCount, status]); if (sig === ui.sig.firing) return; ui.sig.firing = sig;
+    const fails = s.firing.summary.reduce((n, r) => n + r.fail, 0), warns = s.firing.summary.reduce((n, r) => n + r.warn, 0);
+    setText('firing-count', String(fails + warns));
+    $('firing-summary').innerHTML = `<table class="params"><thead><tr><th>Quy tắc</th><th>Đạt</th><th>Cảnh báo</th><th>Lỗi</th></tr></thead><tbody>${s.firing.summary.map(r => `<tr><td>${esc(r.label)}</td><td>${r.pass ? `<span class="pill PASS">${r.pass}</span>` : '—'}</td><td>${r.warn ? `<span class="pill REVIEW">${r.warn}</span>` : '—'}</td><td>${r.fail ? `<span class="pill FAIL">${r.fail}</span>` : '—'}</td></tr>`).join('')}</tbody></table>`;
+    const problems = s.firing.problems.filter(p => !status || p.status === status);
+    host.innerHTML = problems.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Giờ</th><th>Event</th><th>Quy tắc</th><th>Chi tiết</th></tr></thead><tbody>${problems.map(p => { const [cls, icon] = FIRING_STATUS[p.status]; return `<tr><td><small>${esc(clock(p.at))}</small></td><td><b>${esc(p.event_name)}</b><br><small class="hint">${esc(p.source)} · ${esc(LAYER_TEXT[p.layer] || p.layer)}</small></td><td><span class="pill ${cls}">${icon} ${esc(RULE_TEXT[p.rule] || p.rule)}</span></td><td>${esc(p.message)}<br><button type="button" class="evlink" data-evidence="${esc(p.id)}">Xem event</button></td></tr>`; }).join('')}</tbody></table></div>${s.firing.problemCount > s.firing.problems.length ? `<p class="hint">Hiện 200 vấn đề gần nhất / ${s.firing.problemCount}. Đầy đủ trong sheet Firing Checks của báo cáo.</p>` : ''}`
+      : `<div class="empty"><strong>${s.eventCount ? 'Không có vấn đề về cách bắn' : 'Chưa có event'}</strong>${s.eventCount ? 'Mọi event đã thu đều đạt các quy tắc.' : 'Thao tác trên website để thu event.'}</div>`;
   }
 
   // ---- endpoints ----------------------------------------------------------
@@ -687,7 +713,7 @@
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
     if (Date.now() < ui.holdUntil) { clearTimeout(ui.holdTimer); ui.holdTimer = setTimeout(render, ui.holdUntil - Date.now() + 50); }
-    else { renderResults(s); renderEvents(s); renderSpec(s); renderEndpoints(s); }
+    else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderEndpoints(s); }
     renderLog(s); renderReports(s);
     ui.hooks.render?.(s, phase, ui);
   }
@@ -814,6 +840,7 @@
     $('rule-reset')?.addEventListener('click', () => loadRuleEditor(caseById(ui.selectedCase)));
     for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system']) $(id)?.addEventListener('input', () => { if (id !== 'ev-marked' && id !== 'ev-system') ui.groupFilter = null; ui.sig.events = null; render(); });
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
+    $('firing-status')?.addEventListener('input', () => { ui.sig.firing = null; render(); });
     $('events')?.addEventListener('toggle', event => {
       const id = event.target.dataset?.ev; if (!id) return;
       if (event.target.open) { ui.openEvents.add(id); const host = event.target.querySelector(`[data-detail="${CSS.escape(id)}"]`); if (host && !host.innerHTML.trim()) host.innerHTML = detailContent(id); }

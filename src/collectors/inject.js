@@ -70,14 +70,48 @@
       } catch (_) { /* A polling fallback covers host properties. */ }
     }
   }
+  // Insider also takes events through Insider.eventManager.dispatch(name, data) and reads the
+  // legacy window.insider_object; neither goes through InsiderQueue.
+  let dispatchEmits = 0;
+  function hookDispatch() {
+    try {
+      const manager = window.Insider && window.Insider.eventManager;
+      if (!manager || typeof manager.dispatch !== 'function' || manager.dispatch === state.dispatchWrapper) return;
+      const original = manager.dispatch;
+      const wrapper = function (...args) {
+        if (!state.dispatching && typeof args[0] === 'string' && dispatchEmits < 300) {
+          state.dispatching = true; dispatchEmits++;
+          try { emit('InsiderDispatch', { name: args[0], data: args[1] }, false); } finally { state.dispatching = false; }
+        }
+        return Reflect.apply(original, this, args);
+      };
+      manager.dispatch = wrapper;
+      Object.assign(state, { dispatchWrapper: wrapper, dispatchOriginal: original, dispatchManager: manager });
+    } catch (_) { /* Insider not ready or frozen. */ }
+  }
+  let lastInsiderObject;
+  function watchInsiderObject() {
+    try {
+      const value = window.insider_object;
+      if (!value || typeof value !== 'object') return;
+      const snapshot = JSON.stringify(value);
+      if (snapshot === lastInsiderObject || snapshot.length > 200000) return;
+      lastInsiderObject = snapshot;
+      emit('insider_object', value, false);
+    } catch (_) { /* Unserializable object. */ }
+  }
+  let ticks = 0;
   state.timer = setInterval(() => {
     for (const name of ['dataLayer', 'InsiderQueue']) {
       try { hook(name, window[name], true); } catch (_) { /* Isolate hostile getters. */ }
     }
+    hookDispatch();
+    if (++ticks % 5 === 0) watchInsiderObject();
   }, 100);
   state.stop = () => {
     state.enabled = false;
     clearInterval(state.timer);
+    try { if (state.dispatchManager && state.dispatchManager.dispatch === state.dispatchWrapper) state.dispatchManager.dispatch = state.dispatchOriginal; } catch (_) {}
     for (const array of state.ownedArrays) {
       const record = state.arrays.get(array);
       if (array.push === record.wrapper) {

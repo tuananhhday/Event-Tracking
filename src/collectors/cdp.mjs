@@ -97,12 +97,23 @@ export class CDPConnection extends EventEmitter {
 // InsiderQueue page types carry Insider's event names, as used in tracking specifications.
 export const INSIDER_PAGE_EVENTS = { home: 'homepage_view', category: 'listing_page_view', product: 'product_detail_page_view', cart: 'cart_page_view', purchase: 'confirmation_page_view', other: 'other_page_view', add_to_cart: 'add_to_cart', remove_from_cart: 'remove_from_cart' };
 
+// insider_object.page.type values (legacy Insider page object) and the matching page events.
+const INSIDER_OBJECT_PAGES = { home: 'homepage_view', main: 'homepage_view', listing: 'listing_page_view', category: 'listing_page_view', product: 'product_detail_page_view', basket: 'cart_page_view', cart: 'cart_page_view', confirmation: 'confirmation_page_view', purchase: 'confirmation_page_view' };
+
 /** One queue push becomes one event, except an Insider custom_event push, which can carry several. */
 export function queueEvents(record) {
-  const base = { schema_version: '1.0', source: record.queue === 'InsiderQueue' ? 'INSIDER' : 'GA4', layer: 'JS_QUEUE', queue_name: record.queue,
+  const base = { schema_version: '1.0', source: record.queue === 'dataLayer' ? 'GA4' : 'INSIDER', layer: 'JS_QUEUE', queue_name: record.queue,
     historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
   let payload = record.item;
   let eventName;
+  if (record.queue === 'InsiderDispatch') {
+    return [{ ...base, event_name: String(payload?.name || 'insider_dispatch'), queue_type: 'dispatch', payload: payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null } }];
+  }
+  if (record.queue === 'insider_object') {
+    const pageType = String(payload?.page?.type ?? '').toLowerCase();
+    const name = payload?.transaction ? 'confirmation_page_view' : INSIDER_OBJECT_PAGES[pageType] || (pageType ? 'other_page_view' : 'insider_object');
+    return [{ ...base, event_name: name, queue_type: 'insider_object', payload }];
+  }
   if (record.queue === 'InsiderQueue' && payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.type === 'string') {
     if (payload.type === 'custom_event' && Array.isArray(payload.value) && payload.value.length) {
       return payload.value.map(item => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event', payload: { ...payload, value: [item] } }));
@@ -241,7 +252,7 @@ export class CDPCollector {
     } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_emit') {
       let record;
       try { record = JSON.parse(params.payload); } catch { return; }
-      if (!['dataLayer', 'InsiderQueue'].includes(record.queue)) return;
+      if (!['dataLayer', 'InsiderQueue', 'InsiderDispatch', 'insider_object'].includes(record.queue)) return;
       const frameId = state.contexts.get(`${sessionId || ''}:${params.executionContextId}`)?.frameId;
       for (const event of queueEvents(record)) {
         event.page = { ...event.page, frame_id: frameId, target_id: state.target.id };

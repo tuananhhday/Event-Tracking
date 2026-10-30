@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { redact } from '../core/privacy.mjs';
 import { sanitizeCases, sensitivePath } from '../spec/sanitize.mjs';
 import { specCoverage } from '../core/catalog.mjs';
+import { firingChecks, FIRING_RULES } from '../core/firing.mjs';
 
 const json = value => value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value);
 const safe = value => {
@@ -77,6 +78,7 @@ function addSheet(workbook, name, headers, rows, widths = []) {
 export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [] }, outputDir) {
   // Matched on the unsanitized spec so sample values can still identify each flow.
   const coverage = cases.length ? specCoverage(cases, events) : null;
+  const firing = firingChecks(events);
   ({ session, cases, events, steps, results } = sanitizeSnapshot({ session, cases, events, steps, results }));
   const directory = path.resolve(outputDir);
   await fs.mkdir(directory, { recursive: true });
@@ -96,6 +98,10 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
     ...coverage.unmatched.map(item => ['', item.source, '', item.event_name, 'Event bắn ra nhưng đặc tả không có', 'Ngoài đặc tả', item.count, '', '', '', item.last_evidence_id, '', '', '']),
   ] : [];
   addSheet(workbook, 'Spec Coverage', ['STT', 'Nền tảng', 'Luồng', 'Event Name', 'Mô tả', 'Trạng thái', 'Số lần bắn', 'Khớp', 'Lệch', 'Trường lệch', 'Evidence ID', 'Ghi chú đặc tả', 'Sheet', 'Dòng'], coverageRows, [7, 11, 18, 26, 40, 14, 11, 8, 8, 60, 42, 40, 22, 8]);
+  const byId = new Map(events.map(event => [event.evidence_id, event]));
+  const firingRows = [...firing.byEvent.entries()].flatMap(([id, checks]) => checks.map(check => [byId.get(id)?.captured_at, byId.get(id)?.source, byId.get(id)?.layer, byId.get(id)?.event_name, FIRING_RULES[check.rule], check.status === 'PASS' ? 'PASS' : check.status === 'FAIL' ? 'FAIL' : 'REVIEW', check.message, id, check.evidence_id ?? '']))
+    .sort((a, b) => ({ FAIL: 0, REVIEW: 1, PASS: 2 })[a[5]] - ({ FAIL: 0, REVIEW: 1, PASS: 2 })[b[5]] || String(a[0]).localeCompare(String(b[0])));
+  addSheet(workbook, 'Firing Checks', ['Thời điểm', 'Nền tảng', 'Tầng', 'Event', 'Quy tắc', 'Kết quả', 'Chi tiết', 'Evidence ID', 'Evidence liên quan'], firingRows, [24, 10, 16, 26, 44, 10, 70, 42, 42]);
   addSheet(workbook, 'Test Cases', ['ID', 'Name', 'Source', 'Flow', 'Description', 'Needs review', 'File', 'Sheet', 'Row'], cases.map(testCase => [testCase.id, testCase.name, testCase.source, testCase.flow, testCase.description, Boolean(testCase.needs_review), testCase.provenance?.file, testCase.provenance?.sheet, testCase.provenance?.row]), [35, 40, 16, 22, 65, 16, 55, 30, 10]);
   addSheet(workbook, 'Expected Events', ['Test case', 'Event', 'Layer', 'Source', 'Count', 'Timing ms', 'After', 'Field rules', 'Needs review'], cases.flatMap(testCase => testCase.rules.map(rule => [testCase.id, rule.event_name, rule.layer, rule.source ?? testCase.source, rule.count, rule.within_ms, rule.after, rule.fields, Boolean(rule.needs_review)])), [35, 30, 24, 16, 24, 16, 28, 95, 16]);
   addSheet(workbook, 'Actual Events', ['Evidence ID', 'Captured at', 'Test case', 'Step', 'Event', 'Layer', 'Source', 'Page', 'Payload', 'Network'], events.map(event => [event.evidence_id, event.captured_at, event.test_case_id, event.step_id, event.event_name, event.layer, event.source, event.page?.url, event.payload, event.network]), [30, 30, 35, 30, 30, 24, 16, 60, 100, 80]);

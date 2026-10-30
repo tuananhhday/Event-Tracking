@@ -52,7 +52,7 @@ test('report has the spec coverage and six styled sheets, escaped HTML and safe 
   const paths = await exportReports({ session: { id: 'S', mode: 'cdp' }, cases: [caseData], results: [{ test_case_id: caseData.id, step_id: 'STEP', verdict: 'FAIL', results: [{ event_name: '<script>x</script>', layer: 'JS_QUEUE', source: 'GA4', verdict: 'FAIL', checks: [{ path: 'id', expected: 'exists', actual: null, verdict: 'FAIL', code: 'MISSING_FIELD', evidence_id: 'EV-1' }], issues: [{ path: 'id', expected: 'exists', actual: null, code: 'MISSING_FIELD', evidence_id: 'EV-1' }] }] }] }, directory);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(paths.xlsx);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Run Summary', 'Spec Coverage', 'Test Cases', 'Expected Events', 'Actual Events', 'Comparison', 'Bug Reports']);
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Run Summary', 'Spec Coverage', 'Firing Checks', 'Test Cases', 'Expected Events', 'Actual Events', 'Comparison', 'Bug Reports']);
   assert.equal(workbook.getWorksheet('Test Cases').getCell('A2').value, `'${caseData.id}`);
   const html = await fs.readFile(paths.html, 'utf8');
   assert.ok(!html.includes('<script>'));

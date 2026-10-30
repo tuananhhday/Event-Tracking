@@ -265,6 +265,7 @@ table.params th, table.params td { text-align: left; padding: 6px 10px; border-t
 table.params th { font-size: 11px; color: var(--muted); font-weight: 600; background: var(--surface-2); border-top: 0; }
 table.params td:first-child { width: 34%; }
 table.params.items td:first-child { width: 32px; color: var(--muted); }
+table.params.items th, table.params.items td { white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 table.params th.bad { color: var(--fail); }
 .list-title { margin: 6px 0; font-size: 12px; }
 details.raw > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 8px 0; }
