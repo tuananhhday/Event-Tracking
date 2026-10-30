@@ -2,6 +2,8 @@
 
 Ngày rà soát: 30/10/2026. Phạm vi: source hiện tại, tài liệu dự án và workbook `Martech_AppOTA_Insider_20260801.xlsx` người dùng cung cấp. Những phần ghi “cần làm” chưa phải chức năng đã bàn giao.
 
+**Luồng hiện hành:** giao diện đã chuyển sang nhập file, chọn website/luồng, hướng dẫn từng thao tác và bảng event/params mong muốn so với thực tế. Xem [hướng dẫn sử dụng hiện tại](GUIDED_WORKFLOW.md). Nội dung rà soát dưới đây được giữ làm lịch sử; các giới hạn về context độc lập, vendor ingestion và native App vẫn áp dụng.
+
 **Cập nhật sau rà soát:** người dùng đã bổ sung file WebOTA và yêu cầu gói Windows chạy trên máy cá nhân. Bản đóng gói kế tiếp bổ sung lưu key qua giao diện, AI dùng yêu cầu từng event trong file Web, model free trước/rẻ nhất sau và tách nguồn/luồng. Auto coverage đã được sửa để rule nháp và field động thiếu context giữ REVIEW. Xem [đánh giá file Web](WEB_SPEC_REVIEW.md); các nhận xét bên dưới về lỗi trước sửa được giữ làm lịch sử rà soát, không thay thế kiểm chứng bản phát hành.
 
 **Phạm vi người dùng đã chốt:** làm tốt bản Web trước. QC tự thao tác, hệ thống tự thu thập, kiểm tra và báo lỗi. Native App và tự động thực hiện thao tác không nằm trong điều kiện nghiệm thu bản Web đầu tiên.

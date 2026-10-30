@@ -28,6 +28,23 @@ export class SessionManager {
     const step = { id, evidence_id: id, test_case_id: testCaseId, started_at: new Date().toISOString(), context: redact(context), status: 'RUNNING', observed_layers: this.mode === 'proxy' || this.session.capture_queues === false ? ['TRACKING_REQUEST'] : ['JS_QUEUE', 'TRACKING_REQUEST'] };
     this.steps.push(step); this.currentStep = step; this.store.appendStep(step); this.persist(); return step;
   }
+  startGuidedStep(planStep, context = {}) {
+    if (this.session?.status !== 'RUNNING') throw new Error('Hãy mở website kiểm tra trước.');
+    if (this.currentStep) throw new Error('Hoàn tất bước đang ghi trước.');
+    const caseIds = planStep.case_ids ?? planStep.expected_case_ids ?? [];
+    if (!caseIds.length || caseIds.some(id => !this.cases.some(c => c.id === id))) throw new Error('Yêu cầu của bước không còn hợp lệ; tạo hướng dẫn lại.');
+    const id = `STEP-${randomUUID()}`;
+    const step = { id, evidence_id: id, guided: true, plan_step_id: planStep.id, test_case_id: null, case_ids: [...caseIds],
+      started_at: new Date().toISOString(), context: redact(context), status: 'RUNNING',
+      observed_layers: this.mode === 'proxy' || this.session.capture_queues === false ? ['TRACKING_REQUEST'] : ['JS_QUEUE', 'TRACKING_REQUEST'] };
+    this.steps.push(step); this.currentStep = step; this.store.appendStep(step); this.persist(); return step;
+  }
+  completeGuidedStep() {
+    const step = this.currentStep;
+    if (!step?.guided) throw new Error('Chưa bắt đầu bước hướng dẫn.');
+    step.completed_at = new Date().toISOString(); step.status = 'COMPLETED'; this.currentStep = null;
+    this.store.appendStep(step); this.persist(); return step;
+  }
   emit(partial) {
     if (this.session?.status !== 'RUNNING') return null;
     const capturedAt = partial.captured_at || new Date().toISOString();
@@ -41,7 +58,7 @@ export class SessionManager {
       test_case_id: scope?.test_case_id || null, step_id: scope?.id || null, captured_at: capturedAt,
       correlation: scope ? { action_at: scope.started_at, delta_ms: Date.parse(capturedAt) - Date.parse(scope.started_at) } : {}, privacy: { redacted: true }
     });
-    if (scope?.status === 'COMPLETED' && ['response', 'failed'].includes(partial.network?.phase)) {
+    if (!scope?.guided && scope?.status === 'COMPLETED' && ['response', 'failed'].includes(partial.network?.phase)) {
       const index = this.results.findIndex(result => result.step_id === scope.id);
       const fresh = validateCase(this.cases.find(testCase => testCase.id === scope.test_case_id), this.store.events(), scope);
       if (index < 0) this.results.push(fresh); else this.results[index] = { ...this.results[index], ...fresh };

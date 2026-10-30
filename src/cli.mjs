@@ -9,6 +9,7 @@ import { importSpec } from './spec/import.mjs';
 import { loadRun } from './core/session.mjs';
 import { exportReports } from './report/export.mjs';
 import { validateCase } from './core/rules.mjs';
+import { exportGuidedReports } from './report/guided.mjs';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   mode: { type: 'string', default: 'cdp' }, port: { type: 'string' }, 'runs-dir': { type: 'string', default: 'runs' },
@@ -26,7 +27,7 @@ async function main() {
   if (command === 'hub') {
     const app = await createHub({ port: Number(values.port || 4172), runsDir: values['runs-dir'] });
     const address = await app.listen();
-    console.log(`EventQA · Chọn 3 chế độ\n${address}\nDừng ứng dụng: Ctrl+C`);
+    console.log(`EventQA · Nhập yêu cầu và kiểm tra theo hướng dẫn\n${address}\nDừng ứng dụng: Ctrl+C`);
     if (values.open) openInBrowser(address);
     const stop = async () => { await app.close(); process.exit(0); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -49,6 +50,7 @@ async function main() {
   } else if (command === 'report') {
     if (!values.run) throw new Error('Cần --run.');
     const snapshot = loadRun(values.run); if (values.spec) snapshot.cases = (await importSpec(values.spec)).cases;
+    if (snapshot.session.guided?.plan) { console.log(JSON.stringify(await exportGuidedReports(snapshot, values.out || values.run), null, 2)); return; }
     if (!snapshot.cases.length) throw new Error('Phiên cũ chưa có expected.json; hãy cung cấp --spec.');
     for (const step of snapshot.steps) if (!snapshot.cases.some(c => c.id === step.test_case_id)) throw new Error(`Specification không có case ${step.test_case_id} của phiên này.`);
     snapshot.results = snapshot.steps.map(s => validateCase(snapshot.cases.find(c => c.id === s.test_case_id), snapshot.events, s));

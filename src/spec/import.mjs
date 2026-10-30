@@ -118,6 +118,7 @@ function sampleFor(eventName, samples) {
 }
 // Insider request bodies ({partner, events: [{event_name, event_params}]}) as the decoder flattens them.
 function requestShape(sample) {
+  if (typeof sample?.event_name === 'string' && sample.event_params && typeof sample.event_params === 'object' && !Array.isArray(sample.event_params)) return sample;
   if (!Array.isArray(sample?.events) || !sample.events[0]?.event_params) return null;
   const { events, ...rest } = sample;
   return { ...rest, ...events[0] };
@@ -236,6 +237,10 @@ export async function importSpec(filePath, { sheet } = {}) {
       const provenance = { file: absolute, sheet: worksheet.name, row: rowNumber };
       const caseId = `TC-${normalized(worksheet.name).slice(0, 30)}-${get('id').replace(/[^a-zA-Z0-9_-]/g, '') || rowNumber}-${rowNumber}`;
       const testCase = { id: caseId, name: [get('flow'), eventName].filter(Boolean).join(' / '), source, flow: get('flow'), stt: get('id'), description: get('description'), notes: get('note'), provenance, needs_review: true, rules: [] };
+      const sampleHeader = columns.sample ? normalized(text(worksheet.getRow(header).getCell(columns.sample))) : '';
+      const triggerHeader = columns.description ? normalized(text(worksheet.getRow(header).getCell(columns.description))) : '';
+      if (sampleHeader === 'samplepayloadapp' || triggerHeader === 'triggerpointtrenapp') testCase.target_platform = 'APP';
+      else if (sampleHeader === 'datalayersample' || sampleHeader === 'insiderqueuesample') testCase.target_platform = 'WEB';
       testCase.parameter_notes = get('parameter_notes'); testCase.sdk_notes = get('sdk_notes');
       if (get('rules')) {
         try {
@@ -255,9 +260,17 @@ export async function importSpec(filePath, { sheet } = {}) {
         else if (get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
       }
       const request = requestShape(payload);
+      const queueNames = { home: 'homepage_view', category: 'listing_page_view', product: 'product_detail_page_view', cart: 'cart_page_view', purchase: 'confirmation_page_view', add_to_cart: 'add_to_cart', remove_from_cart: 'remove_from_cart' };
+      const sampleEventName = source === 'INSIDER' ? queueNames[payload?.type] : null;
+      if (sampleEventName && sampleEventName !== eventName && eventName.replaceAll(' ', '_') !== sampleEventName) {
+        testCase.sample_conflict = true;
+        testCase.spec_conflicts = [{ code: 'SAMPLE_EVENT_CONFLICT', message: `Event Name là ${eventName} nhưng sample type=${payload.type} mô tả ${sampleEventName}.`, sheet: worksheet.name, row: rowNumber }];
+        warnings.push(`${worksheet.name}!${rowNumber}: sample type=${payload.type} không khớp Event Name ${eventName}; cần kiểm tra yêu cầu trước khi kết luận website.`);
+      }
       // AppOTA exports use display names and default/custom parameters. Preserve that
       // contract verbatim; it is not an InsiderQueue payload or a GA4 event literal.
       const parameterExport = payload.default_parameters && payload.custom_parameters && typeof payload.event === 'string';
+      if (/^AppOTA$/i.test(String(payload.custom_parameters?.platform || payload.default_parameters?.platform || ''))) testCase.target_platform = 'APP';
       const inferred = inferredFields(request ?? payload);
       if (parameterExport) {
         // These identify the platform/product family, unlike device, price or date examples.

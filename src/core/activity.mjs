@@ -12,8 +12,14 @@ export function activityEvent(event) {
   let defaults = Object.create(null), custom = Object.create(null), mapping = 'payload_fields';
   const origins = Object.create(null);
   const origin = (group, key, path) => {
-    origins[`${group}.${key}`] = event.queue_type === 'sdk_before_send'
-      ? path.replace(/^payload\./, `original_payload.events[${event.original_event_index}].`) : path;
+    let original = path;
+    const decoded = event.decoded_parameter_origins?.[path.replace(/^payload\./, '')];
+    if (decoded) original = decoded;
+    else if (event.original_payload && Number.isInteger(event.original_event_index)) {
+      if (event.queue_type === 'custom_event') original = path.replace(/^payload\.value\[0\]/, `original_payload.value[${event.original_event_index}]`);
+      else original = path.replace(/^payload\./, `original_payload.events[${event.original_event_index}].`);
+    }
+    origins[`${group}.${key}`] = original;
   };
   if (object(p.default_parameters) || object(p.custom_parameters)) {
     defaults = p.default_parameters || {}; custom = p.custom_parameters || {}; mapping = 'explicit_parameter_groups';

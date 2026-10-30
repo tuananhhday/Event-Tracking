@@ -19,13 +19,16 @@ import { launchBrowser, closeOwnedBrowser } from './browser/launcher.mjs';
 import { ProxyCollector, proxyCaSpki } from './collectors/proxy.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { saveAISettings } from './ai/settings.mjs';
+import { createGuideWithAI } from './ai/guide.mjs';
+import { buildGuidedPlan, assessGuidedStep, eligibleGuidedCases } from './core/guided.mjs';
+import { exportGuidedReports } from './report/guided.mjs';
 import { loadDemoCases } from './demo.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), 'utf8');
 // Each mode has its own screen; styling and client logic are shared assets.
 const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html', proxy: 'proxy.html' };
-const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'] };
+const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'], '/assets/guided.css': ['shared/guided.css', 'text/css; charset=utf-8'], '/assets/guided.js': ['shared/guided.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Smoke tests only: run the test browser without a window.
@@ -59,7 +62,7 @@ function summarize(events) {
   return [...groups.values()].filter(group => group.count).sort((a, b) => b.last_at.localeCompare(a.last_at));
 }
 
-export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, aiConfigPath = path.join(rootDir, '.env'), initialCases = 'demo' } = {}) {
+export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, aiConfigPath = path.join(rootDir, '.env'), initialCases = 'demo', lookup = dns.lookup } = {}) {
   if (!['cdp', 'cdp-ai', 'proxy'].includes(mode)) throw new Error('Mode must be cdp, cdp-ai or proxy.');
   const csrf = randomBytes(24).toString('hex');
   const bundledProxy = path.join(rootDir, '.venv-proxy', process.platform === 'win32' ? 'Scripts/mitmdump.exe' : 'bin/mitmdump');
@@ -94,10 +97,43 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let aiSettings = {};
   let ai = aiClient ?? new OpenRouterClient(aiSettings);
+  const emptyGuide = () => ({ plan: null, currentStep: null, results: [], status: 'SETUP' });
+  let guided = emptyGuide(), guidedAIQueue = Promise.resolve();
+  function persistGuide() {
+    if (manager.session && manager.store && !manager.store.closed) { manager.session.guided = redact(guided); manager.persist(); }
+  }
+  function assessScope(scope) {
+    const step = guided.plan?.steps.find(s => s.id === scope.plan_step_id);
+    if (!step) return null;
+    const result = assessGuidedStep({ step, cases: manager.cases, events: manager.snapshot().events.filter(e => e.step_id === scope.id),
+      context: scope.context, startedAt: scope.started_at, completedAt: scope.completed_at, expectedUrl: guided.plan.url, observedLayers: scope.observed_layers });
+    return { ...result, scope_id: scope.id, started_at: scope.started_at, completed_at: scope.completed_at, context: scope.context };
+  }
+  function putGuidedResult(result) {
+    const index = guided.results.findIndex(r => r.step_id === result.step_id);
+    if (index < 0) guided.results.push(result);
+    else {
+      const previous = guided.results[index];
+      const advisory = previous.scope_id && previous.scope_id === result.scope_id
+        ? Object.fromEntries(['ai_note', 'ai_routing', 'ai_note_pending', 'ai_reason'].filter(key => Object.hasOwn(previous, key)).map(key => [key, previous[key]])) : {};
+      guided.results[index] = { ...advisory, ...result };
+    }
+    persistGuide();
+  }
+  function emitCaptured(event) {
+    const record = manager.emit(event);
+    if (record && ['response', 'failed'].includes(record.network?.phase)) {
+      const scope = manager.steps.find(s => s.id === record.step_id && s.guided && s.status === 'COMPLETED');
+      if (scope && guided.results.some(r => r.scope_id === scope.id)) {
+        const result = assessScope(scope); if (result) putGuidedResult(result);
+      }
+    }
+    return record;
+  }
   const state = ({ compact = false } = {}) => {
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
-      specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, flows: FLOWS, sessionFlow: inferEventFlow({ page: { url: manager.session?.target_url } }, {}).flow_id, specFlows: [...new Set(manager.cases.map(c => flowId(c.flow)).filter(f => f !== 'unknown'))], discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
+      specSource, guided, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, flows: FLOWS, sessionFlow: inferEventFlow({ page: { url: manager.session?.target_url } }, {}).flow_id, specFlows: [...new Set(manager.cases.map(c => flowId(c.flow)).filter(f => f !== 'unknown'))], discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
       eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
@@ -140,9 +176,72 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     try { await bounded(closeOwnedBrowser(current), 2000); }
     catch { status('Đã ngừng thu thập; có thể đóng cửa sổ trình duyệt test còn lại.'); }
   }
+  async function startCapture(data) {
+    if (manager.session?.status === 'RUNNING') throw new Error('Đã có phiên đang chạy.');
+    const rawUrl = String(data.url || `http://127.0.0.1:${port}/demo`).trim();
+    let targetUrl;
+    try { targetUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`); }
+    catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
+    if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new Error('URL cần dùng http hoặc https.');
+    const browser = data.browser === 'edge' ? 'edge' : 'chrome';
+    const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223, proxy: 9224 }[mode]));
+    const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(p => typeof p === 'string' && p.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
+    if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
+    activePatterns = endpointPatterns;
+    const epoch = ++captureEpoch;
+    // A failed lookup is a warning only: the test browser may still reach it through a system proxy.
+    navigationError = null;
+    if (!['127.0.0.1', 'localhost'].includes(targetUrl.hostname)) {
+      try { await lookup(targetUrl.hostname); }
+      catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
+    }
+    if (closing || epoch !== captureEpoch) return false;
+    const captureQueues = mode !== 'proxy' && data.captureQueues !== false;
+    manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues }); exported = null;
+    const emit = event => epoch === captureEpoch ? emitCaptured(event) : null;
+    try {
+      if (mode === 'proxy') {
+        collector = new ProxyCollector({ onEvent: emit, onStatus: status, port: Number(data.proxyPort || 8080), runDir: manager.runDir,
+          endpointPatterns, command: data.proxyCommand || defaultProxyCommand, confDir: proxyConfDir });
+        await collector.start({ ...manager.session, runDir: manager.runDir });
+        const trustCa = data.trustProxyCa !== false;
+        const ca = await proxyCaSpki(proxyConfDir);
+        proxyCa = { cert_path: ca.file.replace(/.pem$/, '.cer'), trusted_in_test_browser: trustCa };
+        if (closing || epoch !== captureEpoch) return false;
+        const opened = await openTestBrowser({ browser, port: debugPort, headless, url: targetUrl.toString(), profileDir: path.join(rootDir, 'profiles', `proxy-${browser}`), proxyServer: `http://127.0.0.1:${Number(data.proxyPort || 8080)}`, trustSpki: trustCa ? ca.spki : undefined });
+        if (opened.reused) {
+          const [page] = await listTargets(debugPort);
+          const connection = new CDPConnection(page.webSocketDebuggerUrl);
+          try { await connection.connect(); const navigation = await connection.send('Page.navigate', { url: targetUrl.toString() }); if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText); }
+          finally { connection.close(); }
+        }
+        status(trustCa ? 'Proxy sẵn sàng. Trình duyệt test chỉ tin CA proxy cục bộ này; HTTPS dùng được.' : 'Proxy sẵn sàng. Chưa tin CA proxy: website HTTPS sẽ báo lỗi chứng chỉ.');
+        if (navigationError) status(navigationError);
+      } else {
+        if (!data.attach) await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) });
+        if (closing || epoch !== captureEpoch) { await releaseBrowser(); return false; }
+        collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
+        await collector.start(manager.session);
+        if (!data.attach) {
+          const first = [...collector.connections.values()][0];
+          const navigation = await first.connection.send('Page.navigate', { url: targetUrl.toString() });
+          if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
+        }
+        status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
+        if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
+      }
+      if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); }
+    } catch (error) { await stopCapture(); manager.abort(); throw error; }
+    return true;
+  }
   async function stopSession() {
     if (stoppingSession) return stoppingSession;
-    if (!manager.session || manager.session.status !== 'RUNNING') return { snapshot: manager.snapshot(), files: exported, interrupted: manager.session?.status === 'INTERRUPTED' };
+    if (!manager.session || manager.session.status !== 'RUNNING') {
+      captureEpoch++; ai.close?.();
+      if (!closing && !aiClient) ai = new OpenRouterClient(aiSettings);
+      if (guided.status === 'PLANNING') guided = emptyGuide();
+      return { snapshot: manager.snapshot(), files: exported, interrupted: manager.session?.status === 'INTERRUPTED' };
+    }
     const pending = (async () => {
       // Cancel remote work immediately; shutdown never waits for AI routing/retries.
       captureEpoch++;
@@ -150,9 +249,16 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (!closing && !aiClient) ai = new OpenRouterClient(aiSettings);
       await stopCapture();
       const interrupted = Boolean(manager.currentStep);
+      if (guided.plan) {
+        if (guided.currentStep) putGuidedResult({ step_id: guided.currentStep.id, scope_id: guided.currentStep.scope_id, title: guided.plan.steps.find(s => s.id === guided.currentStep.id)?.title,
+          status: 'review', verdict: 'REVIEW', acceptance_status: 'review', comparisons: [], summary: 'Bước đã dừng trước khi hoàn tất thao tác; chưa kết luận.' });
+        guided.currentStep = null; guided.status = interrupted ? 'INTERRUPTED' : 'COMPLETED';
+        for (const result of guided.results) if (result.ai_note_pending) { result.ai_note_pending = false; result.ai_reason = 'AI_CANCELLED'; }
+        persistGuide();
+      }
       if (interrupted) manager.abort(); else manager.finish();
       const snapshot = manager.snapshot();
-      try { exported = await exportReports(snapshot, manager.runDir); }
+      try { exported = await (guided.plan ? exportGuidedReports : exportReports)(snapshot, manager.runDir); }
       catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
       await releaseBrowser();
       status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : 'Đã kết thúc và lưu báo cáo.');
@@ -191,6 +297,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const addresses = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
       if (!addresses.has(req.headers.host)) return send(res, 403, { error: 'Localhost Host header required.' });
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
+      if (req.method === 'GET' && url.pathname === '/guided') return send(res, 200, (await readWeb('guided.html')).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
+      if (req.method === 'GET' && url.pathname === '/advanced') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
       if (req.method === 'GET' && url.pathname === '/') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
       if (req.method === 'GET' && ASSETS[url.pathname]) return send(res, 200, await readWeb(ASSETS[url.pathname][0]), ASSETS[url.pathname][1]);
       if (req.method === 'GET' && url.pathname === '/demo') return send(res, 200, await readWeb('demo.html'), 'text/html; charset=utf-8');
@@ -259,7 +367,81 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       mutating = true;
       try {
         const data = await body(req);
-        if (url.pathname === '/api/ai-settings') {
+        if (url.pathname === '/api/guided/plan') {
+          if (mode === 'proxy') throw new Error('Luồng hướng dẫn cần mở bằng CDP hoặc CDP có AI.');
+          if (!manager.cases.length) throw new Error('Chọn file yêu cầu trước.');
+          if (manager.currentStep || guided.plan && manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên hiện tại trước khi tạo hướng dẫn mới.');
+          const selected = eligibleGuidedCases(manager.cases, data.flow);
+          if (!data.flow || !selected.length) throw new Error('Chọn luồng có trong file yêu cầu.');
+          if (selected.every(c => c.target_platform === 'APP')) throw new Error('Sheet này là đặc tả App điện thoại. Chọn file/sheet yêu cầu Web để kiểm tra website; không dùng params riêng của App làm expected cho Web.');
+          if (typeof data.url !== 'string' || !data.url.trim()) throw new Error('Nhập URL website UAT cần kiểm tra.');
+          let target;
+          try { target = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(String(data.url)) ? data.url : `https://${data.url}`); }
+          catch { throw new Error('Nhập URL website UAT cần kiểm tra.'); }
+          if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('URL website phải là http/https, không chứa thông tin đăng nhập.');
+          guided = { ...emptyGuide(), status: 'PLANNING' };
+          if (manager.session?.status === 'RUNNING') {
+            if (manager.session.target_url !== target.toString()) throw new Error('Website khác phiên hiện tại; kết thúc phiên trước.');
+          } else {
+            const sources = new Set(selected.flatMap(c => c.rules.map(r => String(r.source || c.source).toUpperCase())));
+            const patterns = [...new Set([
+              ...(sources.has('GA4') ? [...VENDOR_ENDPOINTS.ga4.patterns, ...VENDOR_ENDPOINTS.ga4_server.patterns] : []),
+              ...(sources.has('INSIDER') ? VENDOR_ENDPOINTS.insider.patterns : []),
+              ...(Array.isArray(data.endpointPatterns) ? data.endpointPatterns : []),
+            ])];
+            if (!await startCapture({ ...data, url: target.toString(), endpointPatterns: patterns })) return send(res, 200, state());
+          }
+          const epoch = captureEpoch;
+          const proposal = await createGuideWithAI(ai, manager.cases, { flow: data.flow, url: target.toString() });
+          if (closing || epoch !== captureEpoch || manager.session?.status !== 'RUNNING') return send(res, 200, state());
+          guided.plan = buildGuidedPlan(manager.cases, { flow: data.flow, url: target.toString(), aiPlan: proposal.available ? proposal.plan : undefined });
+          guided.plan.ai = { available: proposal.available, reason: proposal.reason, model: proposal.routing?.model };
+          guided.status = 'READY'; persistGuide();
+          status(proposal.available ? 'AI đã tạo hướng dẫn từ các event trong file yêu cầu.' : 'AI chưa trả hướng dẫn; đang dùng mô tả trong file và đánh dấu rõ nguồn.');
+        } else if (url.pathname === '/api/guided/step/start') {
+          if (!guided.plan || manager.session?.status !== 'RUNNING') throw new Error('Tạo hướng dẫn và mở website trước.');
+          const step = guided.plan.steps.find(s => s.id === data.stepId);
+          if (!step) throw new Error('Bước không thuộc hướng dẫn hiện tại.');
+          const context = data.context ?? {};
+          if (!context || typeof context !== 'object' || Array.isArray(context)) throw new Error('Dữ liệu kiểm tra không hợp lệ.');
+          const scope = manager.startGuidedStep(step, context);
+          guided.currentStep = { id: step.id, plan_step_id: step.id, scope_id: scope.id, started_at: scope.started_at, context: scope.context };
+          guided.status = 'RUNNING'; persistGuide();
+        } else if (url.pathname === '/api/guided/step/complete') {
+          if (!guided.currentStep || !manager.currentStep?.guided) throw new Error('Bấm Bắt đầu bước trước khi thao tác.');
+          const epoch = captureEpoch, scopeId = manager.currentStep.id;
+          await sleep(1200);
+          if (closing || epoch !== captureEpoch || manager.currentStep?.id !== scopeId) return send(res, 200, state());
+          const scope = manager.completeGuidedStep();
+          const result = assessScope(scope);
+          guided.currentStep = null; guided.status = 'READY';
+          result.ai_note_pending = !!guided.plan.ai?.available && typeof ai.explain === 'function';
+          putGuidedResult(result);
+          if (result.ai_note_pending && typeof ai.explain === 'function') {
+            const client = ai;
+            guidedAIQueue = guidedAIQueue.then(async () => {
+              if (closing || epoch !== captureEpoch) return;
+              const note = await client.explain({ verdict: result.verdict, step_id: result.step_id,
+                results: result.comparisons || result.expected, issues: result.issues });
+              if (closing || epoch !== captureEpoch) return;
+              const latest = guided.results.find(r => r.scope_id === scope.id);
+              if (!latest) return;
+              latest.ai_note_pending = false;
+              if (note.available) { latest.ai_note = note.note; latest.ai_routing = note.routing; }
+              else latest.ai_reason = note.reason;
+              persistGuide();
+            }).catch(() => { if (closing || epoch !== captureEpoch) return; const latest = guided.results.find(r => r.scope_id === scope.id); if (latest) { latest.ai_note_pending = false; latest.ai_reason = 'AI_UNAVAILABLE'; persistGuide(); } });
+          }
+        } else if (url.pathname === '/api/guided/step/skip') {
+          if (!guided.plan || manager.session?.status !== 'RUNNING') throw new Error('Chưa có phiên hướng dẫn.');
+          if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi bỏ qua bước khác.');
+          const step = guided.plan.steps.find(s => s.id === data.stepId);
+          if (!step) throw new Error('Bước không thuộc hướng dẫn hiện tại.');
+          putGuidedResult({ step_id: step.id, title: step.title, status: 'not_executed', verdict: 'NOT_EXECUTED', acceptance_status: 'not_executed',
+            comparisons: [], expected: [], summary: 'Người kiểm tra bỏ qua bước này trong lần chạy; chưa nghiệm thu các event của bước.' });
+        } else if (url.pathname === '/api/guided/finish') {
+          await stopSession();
+        } else if (url.pathname === '/api/ai-settings') {
           if (mode !== 'cdp-ai') throw new Error('Chọn chế độ CDP có AI để lưu key.');
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi đổi key.');
           aiSettings = await saveAISettings(aiConfigPath, data);
@@ -289,6 +471,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           const imported = await importSpec(path.resolve(String(data.path)), { sheet: data.sheet || undefined });
           if (!imported.cases.length) throw new Error('Không tìm thấy test case hợp lệ.');
           manager.cases = imported.cases; specSource = 'file';
+          guided = emptyGuide();
           if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
           status(`Đã nhập ${imported.cases.length} test case. ${imported.warnings.join(' ')}`);
           return send(res, 200, { ...state(), importWarnings: imported.warnings });
@@ -296,6 +479,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           if (manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên trước khi đổi specification.');
           manager.cases = await loadDemoCases(); specSource = 'demo'; status('Đã nạp 3 test case demo.');
         } else if (url.pathname === '/api/save-case') {
+          if (guided.plan && manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên hướng dẫn trước khi sửa yêu cầu.');
           // Rules may be written from evidence while the logged-in session keeps running.
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi sửa rule.');
           const testCase = validateTestCase(data.case);
@@ -306,6 +490,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           if (manager.session?.status === 'RUNNING') { manager.store.saveExpected(sanitizeCases(manager.cases)); status(`Đã lưu ${testCase.id} giữa phiên; expected.json của phiên được cập nhật.`); }
           else status('Đã lưu specification vào imports/reviewed-cases.json.');
         } else if (url.pathname === '/api/delete-case') {
+          if (guided.plan && manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên hướng dẫn trước khi xóa yêu cầu.');
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi xoá case.');
           const id = String(data.id);
           if (manager.steps.some(step => step.test_case_id === id)) throw new Error('Case đã có bước trong phiên này nên không xoá được; xoá sau khi kết thúc phiên.');
@@ -323,59 +508,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           status(`Allowlist: ${patterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
         } else if (url.pathname === '/api/start') {
           if (manager.session?.status === 'RUNNING') throw new Error('Đã có phiên đang chạy.');
-          const rawUrl = String(data.url || `http://127.0.0.1:${port}/demo`).trim();
-          let targetUrl;
-          try { targetUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`); }
-          catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
-          if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new Error('URL cần dùng http hoặc https.');
-          const browser = data.browser === 'edge' ? 'edge' : 'chrome';
-          const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223, proxy: 9224 }[mode]));
-          const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(p => typeof p === 'string' && p.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
-          if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
-          activePatterns = endpointPatterns;
-          // A failed lookup is a warning only: the test browser may still reach it through a system proxy.
-          navigationError = null;
-          if (!['127.0.0.1', 'localhost'].includes(targetUrl.hostname)) {
-            try { await dns.lookup(targetUrl.hostname); }
-            catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
-          }
-          const captureQueues = mode !== 'proxy' && data.captureQueues !== false;
-          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues }); exported = null;
-          const epoch = ++captureEpoch;
-          const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
-          try {
-            if (mode === 'proxy') {
-              collector = new ProxyCollector({ onEvent: emit, onStatus: status, port: Number(data.proxyPort || 8080), runDir: manager.runDir,
-                endpointPatterns, command: data.proxyCommand || defaultProxyCommand, confDir: proxyConfDir });
-              await collector.start({ ...manager.session, runDir: manager.runDir });
-              const trustCa = data.trustProxyCa !== false;
-              const ca = await proxyCaSpki(proxyConfDir);
-              proxyCa = { cert_path: ca.file.replace(/.pem$/, '.cer'), trusted_in_test_browser: trustCa };
-              if (closing || epoch !== captureEpoch) return send(res, 200, state());
-              const opened = await openTestBrowser({ browser, port: debugPort, headless, url: targetUrl.toString(), profileDir: path.join(rootDir, 'profiles', `proxy-${browser}`), proxyServer: `http://127.0.0.1:${Number(data.proxyPort || 8080)}`, trustSpki: trustCa ? ca.spki : undefined });
-              if (opened.reused) {
-                const [page] = await listTargets(debugPort);
-                const connection = new CDPConnection(page.webSocketDebuggerUrl);
-                try { await connection.connect(); const navigation = await connection.send('Page.navigate', { url: targetUrl.toString() }); if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText); }
-                finally { connection.close(); }
-              }
-              status(trustCa ? 'Proxy sẵn sàng. Trình duyệt test chỉ tin CA proxy cục bộ này; HTTPS dùng được.' : 'Proxy sẵn sàng. Chưa tin CA proxy: website HTTPS sẽ báo lỗi chứng chỉ.');
-              if (navigationError) status(navigationError);
-            } else {
-              if (!data.attach) await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) });
-              if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
-              collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
-              await collector.start(manager.session);
-              if (!data.attach) {
-                const first = [...collector.connections.values()][0];
-                const navigation = await first.connection.send('Page.navigate', { url: targetUrl.toString() });
-                if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
-              }
-              status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
-              if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
-            }
-            if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); }
-          } catch (error) { await stopCapture(); manager.abort(); throw error; }
+          guided = emptyGuide();
+          await startCapture(data);
         } else if (url.pathname === '/api/step/start') {
           manager.startStep(String(data.testCaseId), data.context || {}); status('Đang ghi nhận bước. Hãy thao tác trên trình duyệt test.');
         } else if (url.pathname === '/api/step/complete') {
@@ -397,7 +531,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           await stopSession(); status(`Đã xuất report tại ${manager.runDir}`);
         } else if (url.pathname === '/api/export') {
           if (!manager.session) throw new Error('Chưa có phiên.');
-          exported = await exportReports(manager.snapshot(), manager.runDir); status('Đã xuất report hiện tại.');
+          exported = await (guided.plan ? exportGuidedReports : exportReports)(manager.snapshot(), manager.runDir); status('Đã xuất report hiện tại.');
         } else if (url.pathname === '/api/ai-draft') {
           if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong phương án 2.');
           if (!data.input || typeof data.input !== 'object' || Array.isArray(data.input)) throw new Error('AI input cần là JSON object chứa đặc tả.');

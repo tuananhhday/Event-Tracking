@@ -16,7 +16,7 @@ export function redactUrl(value) {
     if (url.username) url.username = MASK;
     if (url.password) url.password = MASK;
     for (const [key, val] of [...url.searchParams]) {
-      const bare = key.replace(/^(epn?|upn?)\./i, '');
+      const bare = key.replace(/^(epn?|upn?)\./i, '').replace(/^c_/i, '');
       url.searchParams.set(key, sensitive.test(bare) ? MASK : /^https?:\/\//i.test(val) ? redactUrl(val) : cleanText(val));
     }
     url.hash = url.hash ? cleanText(url.hash).replace(/((?:token|key|password)=)[^&]+/gi, `$1${MASK}`) : '';
@@ -34,11 +34,11 @@ export function redact(value, seen = new WeakSet()) {
   if (!value || typeof value !== 'object') return value;
   if (seen.has(value)) return '[CIRCULAR]';
   seen.add(value);
-  const sensitiveIssue = typeof value.path === 'string' && sensitive.test(value.path.split('.').at(-1));
+  const sensitiveIssue = typeof value.path === 'string' && sensitive.test(value.path.split('.').at(-1).replace(/^c_/i, ''));
   const result = Array.isArray(value) ? value.map(v => redact(v, seen)) : Object.fromEntries(
     Object.entries(value).map(([key, val]) => {
       if (sensitiveIssue && ['actual', 'expected'].includes(key)) return [key, MASK];
-      if (sensitive.test(key.replace(/^(epn?|upn?)\./i, ''))) {
+      if (sensitive.test(key.replace(/^(epn?|upn?)\./i, '').replace(/^c_/i, ''))) {
         // Preserve expected-rule structure; redact sensitive exact examples only.
         if (val && typeof val === 'object' && typeof val.op === 'string') {
           const safeRule = redact(val, seen);

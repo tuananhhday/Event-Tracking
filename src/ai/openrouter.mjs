@@ -290,16 +290,17 @@ export class OpenRouterClient {
     return { available: true, candidates };
   }
 
-  async complete(model, system, input, schema, validateOutput) {
+  async complete(model, system, input, schema, validateOutput, options = {}) {
     const reason = this.unavailable();
     if (reason) return { available: false, reason };
     const sanitized = redact(structuredClone(input));
     if (JSON.stringify(sanitized).length > 150000) return { available: false, reason: 'AI_INPUT_TOO_LARGE' };
-    const key = fingerprint({ model, system, sanitized, schema });
+    const outputTokens = Math.floor(numberOption(options.maxOutputTokens, this.maxOutputTokens, 100, 10000));
+    const key = fingerprint({ model, system, sanitized, schema, outputTokens });
     if (this.cache.has(key)) return structuredClone(this.cache.get(key));
     // UTF-8 bytes + protocol allowance is a conservative token upper bound.
     const inputTokens = Buffer.byteLength(JSON.stringify({ system, sanitized, schema }), 'utf8') + Buffer.byteLength(JSON.stringify(schema), 'utf8') + 1024;
-    const selection = await this.listRoutingCandidates({ model, inputTokens, outputTokens: this.maxOutputTokens });
+    const selection = await this.listRoutingCandidates({ model, inputTokens, outputTokens });
     if (!selection.available) return { available: false, reason: selection.reason };
     this.lastTrace = []; this.lastResult = null;
     let attempts = 0, freeAttempts = 0, reserved = 0, completionRequests = 0, lastReason = 'NO_SUITABLE_MODELS';
@@ -326,7 +327,7 @@ export class OpenRouterClient {
           const jsonMode = candidate.json_mode;
           const response = await this.request('/chat/completions', {
             method: 'POST', body: JSON.stringify({
-              model: candidate.id, temperature: 0.1, max_tokens: this.maxOutputTokens,
+              model: candidate.id, temperature: 0.1, max_tokens: outputTokens,
               messages: [{ role: 'system', content: `${system}\nOutput JSON must satisfy this schema: ${JSON.stringify(schema)}` }, { role: 'user', content: JSON.stringify(sanitized) }],
               response_format: jsonMode === 'json_schema' ? { type: 'json_schema', json_schema: { name: 'eventqa_output', strict: false, schema } } : { type: 'json_object' },
               ...(candidate.reasoning_control.request ? { reasoning: candidate.reasoning_control.request } : {}),

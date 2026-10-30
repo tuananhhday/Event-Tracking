@@ -24,7 +24,7 @@ prefix = "EventQA-Windows-x64/"
 launcher = '''@echo off
 setlocal
 cd /d "%~dp0"
-title EventQA Portable - Choose mode
+title EventQA Portable - Guided tracking check
 if not exist "runtime\\node.exe" (
   echo Missing runtime\\node.exe. Extract the entire ZIP first.
   pause
@@ -50,9 +50,12 @@ readme = '''EventQA portable - Windows 64-bit
 
 1. Extract the ENTIRE ZIP to a writable folder (for example Documents\\EventQA).
 2. Open START_PORTABLE.cmd. Do not run it from inside the ZIP viewer.
-3. Keep the command window open. A web page opens with three mode choices.
-4. Select Chrome or Edge already installed on your computer.
-5. End/export the session before closing. Use STOP_PORTABLE.cmd to stop safely.
+3. Keep the command window open. The guided tracking page opens directly.
+4. Upload requirements, enter the Web/UAT URL and choose one business flow.
+5. Follow each instruction: Start step, perform the action, then Check.
+6. See expected/actual events and params; export a report if needed.
+7. End/export before closing. Use STOP_PORTABLE.cmd to stop safely.
+Vietnamese quick guide: HUONG_DAN.txt.
 
 No Node installation, npm command, admin rights or package download is needed.
 Includes official Node.js 24.19.0 Windows x64 and locked JavaScript dependencies.
@@ -61,28 +64,29 @@ Company application-control and browser debugging policies still apply. If
 execution is blocked, ask IT to approve it; this package does not bypass policy.
 External websites still need normal company network access.
 
-CDP runs immediately. AI features need your own OpenRouter credentials.
-Choose CDP + AI, open the AI tab, paste your key and click Save key locally.
+The default guided flow uses CDP. AI needs your own OpenRouter credentials.
+Open AI settings, paste your key and click Save key locally.
 The key is kept in .env on YOUR computer, works immediately and after restart.
 It is never bundled in this public ZIP. No configuration file editing is needed.
 AI tries all eligible free models first, then the cheapest eligible paid model
 if enabled. Total estimated cost is capped at USD 0.01 per task.
-Proxy needs Python/mitmproxy separately; neither is bundled. The mode selector
-explains these requirements. Session data and reports stay in runs/ locally.
-Choose your XLSX file in step 2. For WebOTA, select Tong hop Event tracking
+Advanced diagnostic screens remain separate. Proxy needs Python/mitmproxy
+separately; neither is bundled. Session data and reports stay in runs/ locally.
+Choose your XLSX file first. For WebOTA, select Tong hop Event tracking
 (the Vietnamese sheet name is selected automatically). AppOTA R1511 is a
 separate mobile reference; do not apply its device fields to Web by default.
 The specification tab shows exact event names, descriptions and payload samples
 beside real evidence. AppOTA sample shapes may differ from website events.
-The AI tab can load a selected event's requirements from your imported workbook.
+AI arranges the selected requirements into manual test steps. It cannot invent
+expected events or params. If AI is unavailable, file-derived guidance is labeled.
 Unreviewed requirements and dynamic values without context remain REVIEW.
 
-The default Events view is Activity / JSON: one row per observed event.
-Choose Golf, Flight, Hotel or another flow. Outgoing requests, JS queues and
-SDK observations are separate selections. SDK lifecycle chatter is hidden.
-Open a row to see, copy or download event/default_parameters/custom_parameters.
-The Raw Payload tab retains original captured field names. Missing mobile app
-attributes are never filled from the workbook. Sensitive fields are masked.
+Each action shows expected versus actual events and parameter differences.
+Choose Golf, Flight, Hotel or another flow. Queue requirements compare against
+the actual queue; SDK and request evidence are supplementary observations.
+Lifecycle chatter does not become business events. Expand evidence to see raw
+payloads and field origins. Missing values are never filled from samples.
+Optional failure branches can be skipped and remain not executed.
 For a website that cannot be operated with queue capture, end the session,
 enable request-only capture in CDP, then open a new session. This does not
 inject JavaScript queue hooks; queue checks are REVIEW, not a false missing event.
@@ -92,6 +96,25 @@ Built on Linux; Windows execution has not been validated on a Windows machine.
 The application CDP smoke test and report exports were validated on Linux.
 Node's runtime license is in runtime/LICENSE.txt. Dependency licenses remain
 in node_modules. Source files are included for inspection.
+'''
+vietnamese = '''EventQA - Hướng dẫn nhanh
+
+1. Giải nén toàn bộ ZIP và mở START_PORTABLE.cmd.
+2. Ở Thiết lập AI, dán key và lưu một lần trên máy này.
+3. Chọn file yêu cầu WebOTA. App tự đọc sheet Tổng hợp Event tracking.
+4. Nhập URL website/UAT và chọn Golf, Flight hoặc luồng cần kiểm.
+5. Bấm AI hướng dẫn kiểm tra, đọc từng bước và điền dữ liệu bạn sẽ chọn.
+6. Bấm Bắt đầu bước -> thao tác trên website -> Tôi đã thao tác xong · Kiểm tra.
+7. Xem tên event và tham số mong muốn/thực tế, phần thiếu/thừa/sai.
+8. Có thể bỏ qua nhánh tùy chọn; bước bỏ qua chưa được nghiệm thu.
+9. Bấm Kết thúc & xuất báo cáo nếu cần Excel, HTML, JSON hoặc danh sách lỗi.
+10. Chạy STOP_PORTABLE.cmd để dừng ứng dụng.
+
+Không cần cài Node hoặc chạy npm. Cần Chrome/Edge đã có trên máy.
+Key lưu riêng trong .env, không chia sẻ file đó. ZIP này không chứa key.
+AI chưa kết nối thì hướng dẫn từ file được ghi rõ nguồn.
+Mẫu chưa rõ hoặc giá trị chưa xác minh không tự thành kết quả Đạt.
+UAT là môi trường theo URL; bản này kiểm Web trên PC, không thu native App.
 '''
 output.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as target:
@@ -109,7 +132,7 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
             target.writestr(prefix + "runtime/" + dest,
                             runtime.read(f"node-v{version}-win-x64/{source}"))
     for name, content in [("START_PORTABLE.cmd", launcher), ("STOP_PORTABLE.cmd", stopper),
-                          ("READ_ME_FIRST.txt", readme)]:
+                          ("READ_ME_FIRST.txt", readme), ("HUONG_DAN.txt", vietnamese)]:
         target.writestr(prefix + name, content.replace("\n", "\r\n"))
     target.writestr(prefix + "runtime/SHASUMS256.txt", checksums.read_bytes())
 with zipfile.ZipFile(output) as built:

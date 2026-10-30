@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EventQA · Kiểm tra tracking từng bước</title>
+  <link rel="stylesheet" href="/assets/guided.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/guided" aria-label="EventQA"><span class="brand-mark">e<span>✓</span></span><span>EventQA<small>Kiểm tra tracking từng bước</small></span></a>
+    <div class="header-actions"><span id="connection" class="connection">Đang kết nối</span><button class="quiet" id="toggle-ai" type="button">Thiết lập AI</button><a class="quiet advanced-link" href="/advanced">Nâng cao</a></div>
+  </header>
+
+  <main>
+    <section class="intro"><span class="eyebrow">BẠN THAO TÁC · TRỢ LÝ HƯỚNG DẪN VÀ ĐỐI CHIẾU</span><h1>Kiểm tra đúng event,<br class="desktop-break"> đúng từng thao tác.</h1><p>Nhập yêu cầu, chọn website, rồi thực hiện từng bước. Kết quả đặt tracking mong muốn và thực tế cạnh nhau.</p></section>
+    <nav class="progress" aria-label="Tiến độ kiểm tra"><span data-phase="file"><b>1</b> Nhập yêu cầu</span><i></i><span data-phase="website"><b>2</b> Chọn website</span><i></i><span data-phase="steps"><b>3</b> Thao tác</span><i></i><span data-phase="results"><b>4</b> Xem kết quả</span></nav>
+    <div id="error" class="notice error hidden" role="alert"></div><div id="notice" class="notice info hidden" role="status"></div>
+
+    <details id="ai-settings" class="card settings">
+      <summary><span><strong>Thiết lập AI</strong><small id="ai-status">Chưa kiểm tra cấu hình</small></span><span class="chevron">⌄</span></summary>
+      <div class="settings-body"><p class="muted">Lưu key một lần trên máy này. Trợ lý ưu tiên model miễn phí, sau đó mới dùng model trả phí rẻ nhất nếu bạn cho phép.</p><label for="api-key">OpenRouter API key</label><input type="password" id="api-key" autocomplete="off" placeholder="Dán API key của bạn" spellcheck="false"><label class="check"><input type="checkbox" id="allow-paid" checked> Cho phép model trả phí khi hết model free phù hợp, tối đa 0,01 USD/tác vụ</label><div class="actions"><button class="button" type="button" id="save-key">Lưu key trên máy này</button><span class="help">Key không xuất hiện trong báo cáo.</span></div></div>
+    </details>
+
+    <div id="setup">
+      <section class="card" id="file-card"><div class="card-heading"><span class="number">01</span><div><h2>Nhập file yêu cầu</h2><p>Chọn file Excel hoặc JSON có tên event, trigger và tham số cần kiểm tra.</p></div></div>
+        <label class="file-drop" id="file-drop" for="requirement-file"><span class="file-symbol">↥</span><span><strong id="file-label">Chọn file yêu cầu từ máy</strong><small id="file-help">Excel .xlsx hoặc JSON · tối đa 3 MB</small></span><span class="browse">Chọn file</span><input type="file" id="requirement-file" accept=".xlsx,.json"></label>
+        <div id="sheet-row" class="sheet-row hidden"><label for="requirement-sheet">Sheet yêu cầu</label><select id="requirement-sheet"></select><button class="quiet" type="button" id="read-sheet">Đọc sheet này</button></div>
+        <div id="file-summary" class="file-summary hidden"></div>
+      </section>
+
+      <section class="card" id="website-card"><div class="card-heading"><span class="number">02</span><div><h2>Chọn website và luồng cần kiểm tra</h2><p>Nhập đúng URL của môi trường cần kiểm, ví dụ Web UAT.</p></div></div>
+        <div class="form-grid"><div class="url-field"><label for="website-url">Website cần kiểm tra</label><input id="website-url" type="text" inputmode="url" autocomplete="url" placeholder="https://website-uat-cua-ban.vn"></div><div><label for="business-flow">Luồng nghiệp vụ</label><select id="business-flow"><option value="">Nhập file yêu cầu trước</option></select></div></div>
+        <details class="minor-details"><summary>Chọn trình duyệt</summary><label for="browser">Trình duyệt đã cài trên máy</label><select id="browser"><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option></select></details>
+        <div class="actions plan-actions"><button class="button primary" id="make-plan" type="button" disabled><span>AI hướng dẫn kiểm tra</span><span aria-hidden="true">→</span></button><span class="help" id="plan-help">Nhập file để bắt đầu.</span></div>
+      </section>
+    </div>
+
+    <section id="guide" class="hidden" aria-live="polite">
+      <div class="guide-heading"><div><span class="eyebrow">KỊCH BẢN CỦA BẠN</span><h2 id="plan-title">Hướng dẫn kiểm tra</h2><p id="plan-meta" class="muted"></p></div><button type="button" class="quiet" id="change-setup">Đổi yêu cầu / website</button></div>
+      <div id="plan-notes"></div>
+      <div class="guide-layout"><section class="card instruction-card" id="current-instruction"></section><aside class="card outline"><h3>Các bước kiểm tra</h3><ol id="step-outline"></ol><p class="help">Bắt đầu ghi nhận trước khi thao tác. Chỉ hoàn tất khi website đã xử lý xong.</p></aside></div>
+      <section class="card completion hidden" id="completion"><span class="completion-mark">✓</span><div><h2>Đã đi qua các bước</h2><p>Kết quả phía dưới cho biết event và tham số nào khớp, thiếu, thừa hoặc sai. Các bước bỏ qua được ghi riêng.</p></div></section>
+    </section>
+
+    <section class="results-section hidden" id="results-section"><div class="section-heading"><div><span class="eyebrow">MONG MUỐN ↔ THỰC TẾ</span><h2>Kết quả đối chiếu</h2></div><button class="button" id="finish" type="button">Kết thúc & xuất báo cáo</button></div><div id="result-summary" class="result-summary"></div><div id="results"></div><div id="downloads" class="downloads"></div></section>
+
+    <footer><p id="footer-note">Bản này kiểm tra Web trên Chrome/Edge của máy tính. UAT là môi trường theo URL bạn nhập; đặc tả App điện thoại được dùng riêng.</p><button class="quiet danger hidden" id="stop" type="button">Dừng phiên đang chạy</button></footer>
+  </main>
+  <div class="toast hidden" id="toast" role="status"></div>
+  <script>const token='__CSRF__';</script>
+  <script src="/assets/guided.js"></script>
+</body>
+</html>

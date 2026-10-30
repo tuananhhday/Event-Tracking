@@ -101,7 +101,7 @@ test('browser upload lists sheets, imports R1511 and exposes missing fields and 
   assert.ok(detail.spec.issues.some(i => i.path === 'custom_parameters.platform'));
 });
 
-test('mode selector starts three distinct apps and closes only its owned servers', async t => {
+test('launcher opens the simple guided workflow and retains three diagnostic apps under advanced', async t => {
   const { dir } = await workbook(t);
   const hub = await createHub({ port: 0, modePorts: [0, 0, 0], runsDir: dir });
   const base = await hub.listen();
@@ -109,8 +109,12 @@ test('mode selector starts three distinct apps and closes only its owned servers
   const response = await fetch(base);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.ok(!html.includes('__MODE_'));
-  assert.equal(html.match(/const token='([a-f0-9]{48})'/)?.[1], hub.csrf);
+  assert.equal(response.redirected, true);
+  assert.ok(response.url.endsWith('/guided'));
+  assert.ok(html.includes('id="requirement-file"'));
+  const advanced = await (await fetch(base + '/advanced')).text();
+  assert.ok(!advanced.includes('__MODE_'));
+  assert.equal(advanced.match(/const token='([a-f0-9]{48})'/)?.[1], hub.csrf);
   const { modes } = await (await fetch(base + '/api/state')).json();
   assert.deepEqual(modes.map(m => m.mode), ['cdp', 'cdp-ai', 'proxy']);
   for (const mode of modes) {

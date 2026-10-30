@@ -35,7 +35,10 @@ export async function createHub({ port = 4172, modePorts = [4173, 4174, 4175], r
       res.once('finish', () => { setImmediate(() => void close()); });
       return send(200, { stopping: true });
     }
-    if (req.method !== 'GET' || req.url !== '/') return send(404, { error: 'Not found' });
+    if (req.method === 'GET' && req.url === '/') {
+      res.writeHead(303, { Location: `${apps[1].url}/guided`, 'Cache-Control': 'no-store' }); return res.end();
+    }
+    if (req.method !== 'GET' || req.url !== '/advanced') return send(404, { error: 'Not found' });
     try {
       let html = await fs.readFile(new URL('./web/home.html', import.meta.url), 'utf8');
       for (let i = 0; i < modes.length; i++) html = html.replaceAll(`__MODE_${i + 1}__`, apps[i].url);

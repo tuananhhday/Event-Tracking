@@ -71,7 +71,7 @@ function ga4Payload(input) {
   }
   return result;
 }
-export function decodeRequest({ url, body = '', contentType = '', method = 'POST', requestId, status, source, capturedAt, pageUrl }) {
+export function decodeRequest({ url, body = '', bodyUnavailable = false, contentType = '', method = 'POST', requestId, status, source, capturedAt, pageUrl }) {
   let query = {}, host = '', pathname = '';
   try { const u = new URL(url); query = flatQuery(u.search); host = u.hostname; pathname = u.pathname; } catch { /* unsupported URL kept as redacted evidence */ }
   const decoded = parsedBody(body, contentType);
@@ -83,20 +83,33 @@ export function decodeRequest({ url, body = '', contentType = '', method = 'POST
   const records = [];
   for (const part of decoded.parts) {
     const merged = { ...query, ...(part && typeof part === 'object' ? part : { value: part }) };
-    let items;
-    if (Array.isArray(merged.events)) items = merged.events.map(event => ({ ...merged, events: undefined, ...event }));
-    else items = [merged];
-    for (let payload of items) {
+    const batch = Array.isArray(merged.events);
+    const items = batch ? merged.events.map(event => ({ ...merged, events: undefined, ...event })) : [merged];
+    for (const [itemIndex, item] of items.entries()) {
+      let payload = item;
+      let decodedOrigins;
       if (vendor === 'CUSTOM' && ['d', 'data', 'payload'].some(key => typeof payload[key] === 'string' && payload[key].length > 32)) {
         payload = { decode_status: 'UNPARSED', raw_hash: sha(JSON.stringify(payload)), content_type: contentType, reason: 'opaque_vendor_payload' };
       }
-      if (vendor === 'GA4' || payload.en) payload = ga4Payload(payload);
+      if (vendor === 'GA4' || payload.en) {
+        decodedOrigins = Object.fromEntries(Object.keys(payload).map(key => {
+          const name = key.startsWith('epn.') ? key.slice(4) : key.startsWith('ep.') ? key.slice(3) : key === 'en' ? 'event' : key;
+          const fromItem = batch && merged.events[itemIndex] && Object.hasOwn(merged.events[itemIndex], key);
+          const base = fromItem ? `original_payload.events[${itemIndex}]` : 'original_payload';
+          return [name, `${base}[${JSON.stringify(key)}]`];
+        }));
+        payload = ga4Payload(payload);
+      }
       // `ev` is the Meta Pixel event parameter.
       const eventName = payload.event || payload.event_name || payload.name || payload.type || payload.ev || (payload.decode_status === 'UNPARSED' ? 'UNPARSED' : 'tracking_request');
       records.push(redact({ schema_version: '1.0', source: vendor, layer: 'TRACKING_REQUEST',
         captured_at: capturedAt || new Date().toISOString(), event_name: typeof eventName === 'string' ? eventName : 'tracking_request',
         page: { url: redactUrl(pageUrl || payload.dl || payload.page_location || url) }, payload,
-        network: { request_id: requestId, url: redactUrl(url), method, status, phase: 'request', decode_status: payload.decode_status || decoded.status },
+        ...(batch || decodedOrigins ? { original_payload: merged } : {}),
+        ...(batch ? { original_event_index: itemIndex } : {}),
+        ...(decodedOrigins ? { decoded_parameter_origins: decodedOrigins } : {}),
+        ...(bodyUnavailable ? { capture: { incomplete: true, reasons: ['request_body_unavailable'] } } : {}),
+        network: { request_id: requestId, url: redactUrl(url), method, status, phase: 'request', decode_status: bodyUnavailable ? 'UNAVAILABLE' : payload.decode_status || decoded.status },
         privacy: { redacted: true }
       }));
     }

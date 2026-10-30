@@ -110,10 +110,10 @@ export function queueEvents(record) {
     const name = String(payload?.name || 'insider_dispatch');
     const data = payload?.data;
     if (/^ucd:event:beforeSend$/i.test(name) && Array.isArray(data?.events)) {
-      return data.events.filter(item => typeof item?.event_name === 'string').map((item, index) => ({
+      return data.events.flatMap((item, index) => typeof item?.event_name === 'string' ? [{
         ...base, event_name: item.event_name, queue_type: 'sdk_before_send', sdk_event: name,
         payload: item, original_payload: data, original_event_index: index,
-      }));
+      }] : []);
     }
     return [{ ...base, event_name: name, queue_type: 'dispatch', ...( name.includes(':') ? { diagnostic: true } : {}), payload: payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null } }];
   }
@@ -124,7 +124,8 @@ export function queueEvents(record) {
   }
   if (record.queue === 'InsiderQueue' && payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.type === 'string') {
     if (payload.type === 'custom_event' && Array.isArray(payload.value) && payload.value.length) {
-      return payload.value.map(item => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event', payload: { ...payload, value: [item] } }));
+      return payload.value.map((item, index) => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event',
+        payload: { ...payload, value: [item] }, original_payload: payload, original_event_index: index }));
     }
     // init/user/currency/... configure the SDK; they are kept as evidence under a distinct name.
     return [{ ...base, event_name: INSIDER_PAGE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }];
@@ -305,12 +306,14 @@ export class CDPCollector {
       state.requests.set(key, pending);
       pending.ready = (async () => {
         let body = request.postData || '';
+        let bodyUnavailable = false;
         if (!body && request.hasPostData) {
-          try { body = (await send('Network.getRequestPostData', { requestId: params.requestId })).postData || ''; }
-          catch { this.#status('A tracking request body was unavailable; evidence is retained with the URL.'); }
+          try { body = (await send('Network.getRequestPostData', { requestId: params.requestId })).postData || ''; bodyUnavailable = !body; }
+          catch { bodyUnavailable = true; }
+          if (bodyUnavailable) this.#status('A tracking request body was unavailable; evidence is retained with the URL and marked incomplete.');
         }
         const contentType = Object.entries(request.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '';
-        pending.events = decodeRequest({ url: request.url, body, contentType, method: request.method, requestId: params.requestId });
+        pending.events = decodeRequest({ url: request.url, body, bodyUnavailable, contentType, method: request.method, requestId: params.requestId });
         for (const event of pending.events) await this.#emit({ ...event, captured_at: capturedAt, page: pending.page,
           network: { ...event.network, request_id: params.requestId, url: request.url, method: request.method, phase: 'request' } }, generation);
       })();

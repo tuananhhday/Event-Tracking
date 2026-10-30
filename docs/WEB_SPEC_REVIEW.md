@@ -10,6 +10,8 @@ Importer đọc được 165 sample. Ba sample cần kiểm tra thủ công tạ
 
 ## Cách app sử dụng
 
+Giao diện mặc định hiện là [luồng kiểm tra từng bước](GUIDED_WORKFLOW.md). Upload tự nhập sheet ưu tiên; AI có thể nhóm event cùng trigger thành một bước, và kết quả hiển thị mong muốn/thực tế ngay trên màn hình. Các thao tác ở tab AI/đối chiếu cũ dưới đây vẫn có trong Nâng cao.
+
 1. Chọn file trên máy, sheet tổng hợp được chọn tự động; bấm Nhập file. App giữ vendor, luồng, Event Name, mô tả trigger, sample, notes và sheet/dòng.
 2. Chọn riêng luồng và nguồn cần kiểm: dataLayer/InsiderQueue, SDK hoặc request. Tên giống nhau giữa Golf/Flight không đủ để match chéo.
 3. Trong tab AI, chọn event từ danh sách rồi dùng yêu cầu đã nhập để tạo nháp. Đây là dùng requirements làm ngữ cảnh cho tác vụ, không phải huấn luyện model mới hoặc tự gửi toàn bộ workbook ra ngoài.
