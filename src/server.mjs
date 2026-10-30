@@ -8,7 +8,7 @@ import { SessionManager } from './core/session.mjs';
 import { redact } from './core/privacy.mjs';
 import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
-import { specCoverage } from './core/catalog.mjs';
+import { specCoverage, matchEvent } from './core/catalog.mjs';
 import { importSpec, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
@@ -187,7 +187,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (req.method === 'GET' && url.pathname === '/api/event') {
         const id = url.searchParams.get('id');
         const event = manager.snapshot().events.find(candidate => candidate.evidence_id === id);
-        return event ? send(res, 200, { event }) : send(res, 404, { error: 'Không có event này trong phiên.' });
+        if (!event) return send(res, 404, { error: 'Không có event này trong phiên.' });
+        // The specification row this event was matched to, with its field-by-field outcome.
+        const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
+        const testCase = match && manager.cases.find(c => c.id === match.case_id);
+        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '' } : null;
+        return send(res, 200, { event, spec });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });

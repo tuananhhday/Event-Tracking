@@ -207,18 +207,27 @@ export class CDPCollector {
     state.scripts.set(sessionId || '', script.identifier);
     // This is also needed when attaching after the document has already loaded.
     await send('Runtime.evaluate', { expression: INJECT_JS });
-    await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }).catch(error => this.#status(`Child targets: ${error.message}`));
+    // Child frames/workers are never paused: a paused frame can stall the page under test while
+    // instrumentation commands wait on it. Pushes made before the hook lands are still captured
+    // from the existing queue as historical evidence.
+    await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(error => this.#status(`Child targets: ${error.message}`));
   }
   async #event(state, { method, params = {}, sessionId }, generation) {
+    // A target that is somehow waiting must be released even after this run stopped.
+    if (method === 'Target.attachedToTarget' && params.waitingForDebugger && (!this.running || generation !== this.generation)) {
+      await state.connection.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId).catch(() => {});
+      return;
+    }
     if (!this.running || generation !== this.generation) return;
     const send = (name, values) => state.connection.send(name, values, sessionId);
     if (method === 'Target.attachedToTarget') {
       const childId = params.sessionId;
+      // Release first, then instrument: the frame never waits on EventQA.
+      if (params.waitingForDebugger) await state.connection.send('Runtime.runIfWaitingForDebugger', {}, childId).catch(() => {});
       if (params.targetInfo?.type === 'iframe') {
         state.childSessions.add(childId);
-        try { await this.#instrument(state, childId, generation); }
-        finally { await state.connection.send('Runtime.runIfWaitingForDebugger', {}, childId).catch(() => {}); }
-      } else await state.connection.send('Runtime.runIfWaitingForDebugger', {}, childId).catch(() => {});
+        await this.#instrument(state, childId, generation);
+      }
     } else if (method === 'Runtime.executionContextCreated') {
       const context = params.context;
       if (context?.auxData?.isDefault) {

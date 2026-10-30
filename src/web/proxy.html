@@ -147,7 +147,10 @@
           <button type="button" class="btn small" data-action="set-marker">⚑ Đặt mốc</button>
           <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
           <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
+          <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện event hệ thống <span class="hint">(gtm.*, ecommerce_reset, insider_init…)</span></label>
         </div>
+        <div id="ev-filterbar" class="filterbar hidden"></div>
+        <button type="button" id="ev-pending" class="pending hidden"></button>
         <div id="event-groups"></div>
         <div id="events" class="hidden"></div>
       </div>

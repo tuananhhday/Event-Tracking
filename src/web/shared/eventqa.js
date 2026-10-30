@@ -36,7 +36,7 @@
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
-    sig: {}, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'groups', marker: null,
+    sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'groups', marker: null,
     hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null };
   const siteKey = () => `eventqa:${ui.mode}:site`;
 
@@ -291,9 +291,94 @@
     }).join('') + notRun;
   }
 
+  // ---- event detail ---------------------------------------------------------
+  // Where an event's business parameters live, per vendor and layer. The base is the path
+  // prefix the specification uses for the same fields.
+  function eventParams(e) {
+    const p = e.payload && typeof e.payload === 'object' ? e.payload : {};
+    if (e.source === 'INSIDER' && e.layer === 'JS_QUEUE') {
+      if (p.type === 'custom_event') return { base: 'value.0.event_parameters', params: p.value?.[0]?.event_parameters ?? {} };
+      return { base: 'value', params: p.value && typeof p.value === 'object' && !Array.isArray(p.value) ? p.value : p.value !== undefined ? { value: p.value } : {} };
+    }
+    if (e.source === 'INSIDER' && e.layer === 'TRACKING_REQUEST' && p.event_params) return { base: 'event_params', params: p.event_params };
+    const { event: _event, ...rest } = p;
+    return { base: '', params: rest };
+  }
+  const isObjectList = value => Array.isArray(value) && value.length > 0 && value.every(item => item && typeof item === 'object' && !Array.isArray(item));
+  // Flattens parameters to dotted paths; lists of objects (items, products) are kept whole for a table.
+  function paramRows(params, prefix = '', out = [], depth = 0) {
+    for (const [key, value] of Object.entries(params)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (isObjectList(value)) out.push({ path, list: value });
+      else if (value && typeof value === 'object' && !Array.isArray(value) && depth < 4 && Object.keys(value).length) paramRows(value, path, out, depth + 1);
+      else out.push({ path, value });
+    }
+    return out;
+  }
+  const formatValue = value => value === null ? '<span class="hint">null</span>' : value === undefined ? '<span class="hint">—</span>'
+    : typeof value === 'string' ? (value === '' ? '<span class="hint">(rỗng)</span>' : esc(short(value, 160)))
+    : Array.isArray(value) ? `<code>${esc(short(value, 160))}</code>` : `<code>${esc(String(value))}</code>`;
+  function specMark(specPath, spec) {
+    if (!spec) return '';
+    const issue = spec.issues.find(i => i.path === specPath);
+    if (issue) return `<span class="pill ${issue.verdict === 'FAIL' ? 'FAIL' : 'REVIEW'}">${esc(ISSUE_TEXT[issue.code] || issue.code)}</span>${issue.expected !== undefined && issue.code !== 'MISSING_FIELD' ? `<br><small class="hint">Mong đợi: ${esc(short(issue.expected, 60))}</small>` : ''}`;
+    const op = spec.fields?.[specPath];
+    if (op === 'ignore') return '<span class="hint">bỏ qua</span>';
+    if (op) return '<span class="pill PASS">✓ Đúng</span>';
+    return '<span class="hint">ngoài đặc tả</span>';
+  }
+  function eventDetailHtml(e, spec) {
+    const { base, params } = eventParams(e);
+    const rows = paramRows(params).filter(row => !/^gtm\./.test(row.path));
+    const full = path => base ? `${base}.${path}` : path;
+    const pageUrl = (() => { try { const u = new URL(e.page?.url); return u.host + u.pathname; } catch { return e.page?.url || ''; } })();
+    const head = `<div class="ev-head"><div><span class="ev-title">${esc(e.event_name)}</span>
+        <span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span> <span class="pill">${esc(e.source)}</span>
+        <div class="hint">${esc(clock(e.captured_at))} · ${esc(pageUrl)}${e.network?.status ? ` · HTTP ${esc(e.network.status)}` : ''}</div></div>
+      ${spec ? `<div class="ev-spec"><span class="pill ${spec.verdict}">${spec.verdict === 'PASS' ? 'Khớp đặc tả' : spec.verdict === 'FAIL' ? 'Lệch đặc tả' : 'Cần xem'}</span><div class="hint">Đặc tả #${esc(spec.stt)} · ${esc(spec.flow)}</div></div>`
+        : (ui.state?.cases.length ? '<div class="ev-spec"><span class="pill warn">Ngoài đặc tả</span></div>' : '')}</div>`;
+    const scalar = rows.filter(row => !row.list);
+    const lists = rows.filter(row => row.list);
+    const scalarHtml = scalar.length ? `<table class="params"><thead><tr><th>Tham số</th><th>Giá trị</th>${spec ? '<th>So với đặc tả</th>' : ''}</tr></thead><tbody>${scalar.map(row => `<tr><td><code>${esc(row.path)}</code></td><td>${formatValue(row.value)}</td>${spec ? `<td>${specMark(full(row.path), spec)}</td>` : ''}</tr>`).join('')}</tbody></table>`
+      : '<p class="hint">Event không có tham số.</p>';
+    const listHtml = lists.map(({ path, list }) => {
+      const columns = [...new Set(list.slice(0, 20).flatMap(item => Object.keys(item)))].slice(0, 16);
+      const header = columns.map(column => { const mark = spec ? spec.issues.find(i => i.path === full(`${path}.0.${column}`)) : null; return `<th${mark ? ' class="bad"' : ''}>${esc(column)}${mark ? ' ⚠' : ''}</th>`; }).join('');
+      const missing = spec ? Object.keys(spec.fields || {}).filter(p => p.startsWith(full(`${path}.0.`)) && !columns.includes(p.slice(full(`${path}.0.`).length)) && !p.slice(full(`${path}.0.`).length).includes('.')) : [];
+      return `<div class="list-title"><code>${esc(path)}</code> · ${list.length} mục${missing.length ? ` · <span class="pill FAIL">Thiếu ${missing.map(m => esc(m.split('.').at(-1))).join(', ')}</span>` : ''}</div>
+        <div class="table-scroll"><table class="params items"><thead><tr><th>#</th>${header}</tr></thead><tbody>${list.slice(0, 20).map((item, index) => `<tr><td>${index + 1}</td>${columns.map(column => `<td>${formatValue(item[column] && typeof item[column] === 'object' ? JSON.stringify(item[column]) : item[column])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${list.length > 20 ? `<p class="hint">+${list.length - 20} mục khác (xem JSON gốc)</p>` : ''}`;
+    }).join('');
+    // Fields the specification expects but the event does not carry at all.
+    const absent = spec ? spec.issues.filter(i => i.code === 'MISSING_FIELD' && !rows.some(row => full(row.path) === i.path) && !/\.0\./.test(i.path)) : [];
+    const absentHtml = absent.length ? `<div class="list-title"><span class="pill FAIL">Thiếu so với đặc tả</span> ${absent.map(i => `<code>${esc(base && i.path.startsWith(`${base}.`) ? i.path.slice(base.length + 1) : i.path)}</code>`).join(', ')}</div>` : '';
+    const note = spec?.notes ? `<p class="hint">Ghi chú đặc tả: ${esc(spec.notes)}</p>` : '';
+    return `${head}${absentHtml}${scalarHtml}${listHtml}${note}
+      <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
+      <details class="raw"><summary>JSON gốc (bằng chứng đầy đủ)</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
+  }
+  async function loadDetail(id) {
+    if (!id || ui.details.has(id) || ui.loadingDetails.has(id)) return;
+    ui.loadingDetails.add(id);
+    try {
+      const response = await fetch(`/api/event?id=${encodeURIComponent(id)}`);
+      if (response.ok) ui.details.set(id, await response.json());
+    } finally { ui.loadingDetails.delete(id); }
+    if (ui.details.size > 300) ui.details.delete(ui.details.keys().next().value);
+    for (const host of $$(`[data-detail="${CSS.escape(id)}"]`)) host.innerHTML = detailContent(id);
+  }
+  function detailContent(id) {
+    const loaded = ui.details.get(id);
+    if (!loaded) { loadDetail(id); return '<p class="hint">Đang tải chi tiết…</p>'; }
+    return eventDetailHtml(loaded.event, loaded.spec);
+  }
+
   // ---- live evidence ------------------------------------------------------
+  // SDK setup and GTM lifecycle pushes; hidden unless asked for, they are not user actions.
+  const SYSTEM_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$)/;
+  const isSystem = e => e.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(e.event_name);
   function eventFilters() {
-    return { layer: $('ev-layer')?.value || '', source: $('ev-source')?.value || '', query: ($('ev-search')?.value || '').trim().toLowerCase(), marked: !!$('ev-marked')?.checked };
+    return { layer: $('ev-layer')?.value || '', source: $('ev-source')?.value || '', query: ($('ev-search')?.value || '').trim().toLowerCase(),
+      marked: !!$('ev-marked')?.checked, system: !!$('ev-system')?.checked, group: ui.groupFilter };
   }
   function renderSourceFilter(s) {
     const select = $('ev-source'); if (!select) return;
@@ -303,54 +388,92 @@
     select.innerHTML = '<option value="">Mọi nguồn</option>' + sources.map(src => `<option value="${esc(src)}">${esc(src)}</option>`).join('');
     select.value = sources.includes(current) ? current : '';
   }
+  function renderFilterBar(f) {
+    const bar = $('ev-filterbar'); if (!bar) return;
+    const parts = [];
+    if (f.group) parts.push(`<b>${esc(f.group.name)}</b> · ${esc(LAYER_TEXT[f.group.layer] || f.group.layer)} · ${esc(f.group.source)}`);
+    else {
+      if (f.layer) parts.push(esc(LAYER_TEXT[f.layer] || f.layer));
+      if (f.source) parts.push(esc(f.source));
+      if (f.query) parts.push(`“${esc(f.query)}”`);
+    }
+    if (f.marked && ui.marker) parts.push(`sau mốc ${esc(clock(new Date(ui.marker).toISOString()))}`);
+    const active = parts.length > 0;
+    bar.classList.toggle('hidden', !active && ui.view === 'groups');
+    bar.innerHTML = `${ui.view === 'stream' ? '<button type="button" class="btn small" data-action="events-back">← Về danh sách event</button>' : ''}
+      <span>${active ? `Đang xem: ${parts.join(' · ')}` : 'Tất cả event'}</span>
+      ${active ? '<button type="button" class="btn ghost small" data-action="events-clear">✕ Bỏ lọc</button>' : ''}`;
+  }
   function renderEvents(s) {
     renderSourceFilter(s);
     const f = eventFilters();
-    const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, f, ui.view, ui.marker, s.cases.length]); if (sig === ui.sig.events) return; ui.sig.events = sig;
-    setText('events-count', String(s.eventSummary?.length ?? 0));
+    const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup]);
+    const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, view, s.cases.length]); if (sig === ui.sig.events) return;
+    // Keep an expanded event steady while new evidence arrives; offer to refresh instead.
+    const reading = ui.view === 'stream' && $$('#events details[open]').length > 0 && ui.sig.eventsView === view;
+    if (reading) { const note = $('ev-pending'); if (note) { note.classList.remove('hidden'); note.textContent = 'Có event mới · bấm để cập nhật danh sách'; } return; }
+    $('ev-pending')?.classList.add('hidden');
+    ui.sig.events = sig; ui.sig.eventsView = view;
+    setText('events-count', String((s.eventSummary || []).filter(g => f.system || !(g.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(g.event_name))).length));
     for (const b of $$('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === ui.view));
+    renderFilterBar(f);
     $('event-groups')?.classList.toggle('hidden', ui.view !== 'groups');
     $('events')?.classList.toggle('hidden', ui.view !== 'stream');
     const emptyHtml = !s.session
       ? '<div class="empty"><strong>Chưa có phiên</strong>Nhập URL website thật ở bước 1 và mở trình duyệt test. Event tracking của website sẽ hiện tại đây theo thời gian thực.</div>'
-      : s.eventCount ? '<div class="empty"><strong>Không có event khớp bộ lọc</strong>Bỏ bớt bộ lọc hoặc bỏ tick “Chỉ sau mốc”.</div>'
+      : s.eventCount ? '<div class="empty"><strong>Không có event khớp bộ lọc</strong>Bấm “Bỏ lọc”, bỏ tick “Chỉ sau mốc” hoặc tick “Hiện event hệ thống”.</div>'
       : '<div class="empty"><strong>Chưa nhận được event</strong>Thao tác trên trình duyệt test. Không thấy request? Xem tab <b>Endpoint</b> để thêm endpoint tracking của website.</div>';
     if (ui.view === 'groups') {
       const markerSince = ui.marker && f.marked;
       // Counts after a marker come from the buffered recent events; totals come from the server summary.
       const recentCounts = new Map();
       if (markerSince) for (const e of s.events) if (afterMarker(e) && (!e.network?.phase || e.network.phase === 'request')) { const key = [e.layer, e.source, e.event_name].join('|'); recentCounts.set(key, (recentCounts.get(key) || 0) + 1); }
-      const groups = (s.eventSummary || []).filter(g => (!f.layer || g.layer === f.layer) && (!f.source || g.source === f.source) && (!f.query || `${g.event_name} ${g.source} ${g.pages.join(' ')}`.toLowerCase().includes(f.query)) && (!markerSince || recentCounts.has(g.key)));
-      $('event-groups').innerHTML = groups.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Event</th><th>Tầng · nguồn</th><th>${markerSince ? 'Sau mốc / tổng' : 'Số lần'}</th><th>Lần cuối · trang</th><th></th></tr></thead><tbody>${groups.map(g => `<tr>
-        <td><b>${esc(g.event_name)}</b>${g.failed ? ` <span class="pill FAIL">${g.failed} lỗi</span>` : ''}</td>
+      const groups = (s.eventSummary || []).filter(g => (f.system || !(g.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(g.event_name))) && (!f.layer || g.layer === f.layer) && (!f.source || g.source === f.source) && (!f.query || `${g.event_name} ${g.source} ${g.pages.join(' ')}`.toLowerCase().includes(f.query)) && (!markerSince || recentCounts.has(g.key)));
+      $('event-groups').innerHTML = groups.length ? `<div class="table-scroll"><table class="checks groups"><thead><tr><th>Event</th><th>Tầng · nguồn</th><th>${markerSince ? 'Sau mốc / tổng' : 'Số lần'}</th><th>Lần cuối · trang</th><th></th></tr></thead><tbody>${groups.map(g => `<tr>
+        <td><button type="button" class="ev-toggle" data-expand="${esc(g.key)}" aria-expanded="${ui.expandedGroup === g.key}">${ui.expandedGroup === g.key ? '▾' : '▸'} <b>${esc(g.event_name)}</b></button>${g.failed ? ` <span class="pill FAIL">${g.failed} lỗi</span>` : ''}</td>
         <td><span class="pill layer">${esc(LAYER_TEXT[g.layer] || g.layer)}</span> <span class="pill">${esc(g.source)}</span></td>
         <td><b>${markerSince ? `${recentCounts.get(g.key)} / ` : ''}${g.count}</b>${g.bound ? `<br><small class="hint">${g.bound} trong bước</small>` : ''}</td>
         <td><small>${esc(clock(g.last_at))}</small><br><small class="hint">${esc(short(g.pages.join(', '), 60))}</small></td>
-        <td class="row-actions"><button type="button" class="btn small" data-group-view="${esc(g.key)}">Xem</button> <button type="button" class="btn small primary" data-build="${esc(g.last_evidence_id)}">Tạo rule</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+        <td class="row-actions"><button type="button" class="btn small" data-group-view="${esc(g.key)}">Tất cả ${g.count} lần</button> <button type="button" class="btn small primary" data-build="${esc(g.last_evidence_id)}">Tạo rule</button></td></tr>
+        ${ui.expandedGroup === g.key ? `<tr class="detail-row"><td colspan="5"><div class="ev-detail" data-detail="${esc(g.last_evidence_id)}">${detailContent(g.last_evidence_id)}</div></td></tr>` : ''}`).join('')}</tbody></table></div>` : emptyHtml;
     } else {
-      const list = s.events.slice().reverse().filter(e => (!f.layer || e.layer === f.layer) && (!f.source || e.source === f.source) && (!f.marked || afterMarker(e)) && (!f.query || JSON.stringify(e).toLowerCase().includes(f.query)));
+      const list = s.events.slice().reverse().filter(e => (f.system || f.group || !isSystem(e))
+        && (!f.group || (e.layer === f.group.layer && e.source === f.group.source && e.event_name === f.group.name))
+        && (f.group || ((!f.layer || e.layer === f.layer) && (!f.source || e.source === f.source)))
+        && (!f.marked || afterMarker(e)) && (!f.query || JSON.stringify(e).toLowerCase().includes(f.query)));
+      // Identical consecutive pushes (a site re-firing, or repeated clicks) collapse into one row.
+      const rows = [];
+      for (const e of list) {
+        const key = JSON.stringify([e.layer, e.source, e.event_name, e.network?.phase, e.payload]);
+        const last = rows.at(-1);
+        if (last && last.key === key) { last.count++; last.oldest = e; } else rows.push({ key, event: e, count: 1, oldest: e });
+      }
       const firstRender = ui.seenEvents.size === 0;
-      $('events').innerHTML = list.map(e => {
+      $('events').innerHTML = rows.map(({ event: e, count, oldest }) => {
         const fresh = !firstRender && !ui.seenEvents.has(e.evidence_id);
         const phase = e.network?.phase ? `${e.network.method || ''} ${e.network.phase}${e.network.status ? ` ${e.network.status}` : ''}${e.network.error ? ` ${e.network.error}` : ''}` : e.queue_name || '';
-        const lifecycle = e.network?.phase && e.network.phase !== 'request';
         return `<details class="event${fresh ? ' flash' : ''}" data-ev="${esc(e.evidence_id)}" ${ui.openEvents.has(e.evidence_id) ? 'open' : ''}><summary>
-          <time>${esc(clock(e.captured_at))}</time><span class="ev-name">${esc(e.event_name)}</span><span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span><span class="pill">${esc(e.source)}</span>
+          <time>${esc(clock(e.captured_at))}</time><span class="ev-name">${esc(e.event_name)}</span>${count > 1 ? `<span class="pill warn" title="Từ ${esc(clock(oldest.captured_at))}">×${count} giống hệt nhau</span>` : ''}<span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span><span class="pill">${esc(e.source)}</span>
           <span class="ev-meta">${esc(phase)} · ${e.step_id ? esc(e.test_case_id) : 'chưa gắn bước'}</span></summary>
-          ${lifecycle ? '' : `<div class="row" style="margin:0 0 8px"><button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button></div>`}
-          <pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
+          ${count > 1 ? `<p class="hint" style="margin:0 0 8px">Bắn ${count} lần với payload giống hệt nhau từ ${esc(clock(oldest.captured_at))} đến ${esc(clock(e.captured_at))}: website phát lặp, hoặc thao tác được bấm nhiều lần.</p>` : ''}
+          <div class="ev-detail" data-detail="${esc(e.evidence_id)}">${ui.openEvents.has(e.evidence_id) ? detailContent(e.evidence_id) : ''}</div></details>`;
       }).join('') || emptyHtml;
       for (const e of s.events) ui.seenEvents.add(e.evidence_id);
-      if (!s.eventCount && $('event-groups')) $('event-groups').innerHTML = '';
     }
   }
   function showGroup(key) {
     const [layer, source, ...name] = key.split('|');
-    ui.view = 'stream'; if ($('ev-layer')) $('ev-layer').value = layer; if ($('ev-source')) $('ev-source').value = source; if ($('ev-search')) $('ev-search').value = name.join('|');
+    ui.groupFilter = { layer, source, name: name.join('|') }; ui.view = 'stream';
+    ui.sig.events = null; render();
+  }
+  function clearEventFilters() {
+    ui.groupFilter = null;
+    for (const id of ['ev-layer', 'ev-source', 'ev-search']) if ($(id)) $(id).value = '';
+    if ($('ev-marked')) $('ev-marked').checked = false;
     ui.sig.events = null; render();
   }
   function jumpToEvidence(id) {
-    selectTab('events'); ui.view = 'stream';
+    selectTab('events'); ui.view = 'stream'; ui.groupFilter = null;
     for (const [elId, value] of [['ev-layer', ''], ['ev-source', '']]) if ($(elId)) $(elId).value = value;
     if ($('ev-marked')) $('ev-marked').checked = false;
     if ($('ev-search')) $('ev-search').value = id; ui.openEvents.add(id); ui.sig.events = null; render();
@@ -560,8 +683,12 @@
   function render() {
     const s = ui.state; if (!s || ui.stopped) return;
     const phase = phaseOf(s);
+    const casesKey = JSON.stringify([s.specSource, s.cases.length, s.cases.at(-1)?.id]);
+    if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
-    renderResults(s); renderEvents(s); renderSpec(s); renderEndpoints(s); renderLog(s); renderReports(s);
+    if (Date.now() < ui.holdUntil) { clearTimeout(ui.holdTimer); ui.holdTimer = setTimeout(render, ui.holdUntil - Date.now() + 50); }
+    else { renderResults(s); renderEvents(s); renderSpec(s); renderEndpoints(s); }
+    renderLog(s); renderReports(s);
     ui.hooks.render?.(s, phase, ui);
   }
 
@@ -644,6 +771,9 @@
       $('builder').close(); window.EventQA.loadIntoRuleEditor(testCase);
     },
     'builder-close': () => $('builder').close(),
+    'events-back': () => { ui.view = 'groups'; clearEventFilters(); },
+    'events-clear': () => clearEventFilters(),
+    'events-refresh': () => { ui.openEvents.clear(); ui.sig.events = null; render(); },
     shutdown: async () => {
       if (!confirm(ui.state?.running ? 'Phiên đang chạy sẽ được lưu rồi tắt ứng dụng. Tiếp tục?' : 'Tắt ứng dụng?')) return;
       const result = await api('shutdown', {}, 'shutdown'); ui.stopped = true;
@@ -652,8 +782,10 @@
   };
 
   function bindCommon() {
+    document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
+    $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand]');
       if (!target || target.disabled) return;
       const d = target.dataset;
       if (d.action && actions[d.action]) return run(actions[d.action])();
@@ -662,6 +794,7 @@
       if (d.evidence) return jumpToEvidence(d.evidence);
       if (d.build) return run(() => openBuilder(d.build))();
       if (d.groupView) return showGroup(d.groupView);
+      if (d.expand) { ui.expandedGroup = ui.expandedGroup === d.expand ? null : d.expand; ui.sig.events = null; return render(); }
       if (d.addEndpoint) return run(() => addEndpoint(d.addEndpoint))();
       if (d.view) { ui.view = d.view; ui.sig.events = null; return render(); }
       if (d.url) { $('url').value = d.url; ui.hooks.urlChanged?.(); return; }
@@ -679,9 +812,13 @@
     $('context-format')?.addEventListener('click', () => { const parsed = validateContext(); if (parsed.ok) { $('context').value = JSON.stringify(parsed.value, null, 2); ui.contexts.set(ui.selectedCase, $('context').value); } });
     $('context-reset')?.addEventListener('click', () => { ui.contexts.delete(ui.selectedCase); selectCase(ui.selectedCase, { force: true }); });
     $('rule-reset')?.addEventListener('click', () => loadRuleEditor(caseById(ui.selectedCase)));
-    for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked']) $(id)?.addEventListener('input', () => { ui.sig.events = null; render(); });
+    for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system']) $(id)?.addEventListener('input', () => { if (id !== 'ev-marked' && id !== 'ev-system') ui.groupFilter = null; ui.sig.events = null; render(); });
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
-    $('events')?.addEventListener('toggle', event => { const id = event.target.dataset?.ev; if (id) event.target.open ? ui.openEvents.add(id) : ui.openEvents.delete(id); }, true);
+    $('events')?.addEventListener('toggle', event => {
+      const id = event.target.dataset?.ev; if (!id) return;
+      if (event.target.open) { ui.openEvents.add(id); const host = event.target.querySelector(`[data-detail="${CSS.escape(id)}"]`); if (host && !host.innerHTML.trim()) host.innerHTML = detailContent(id); }
+      else ui.openEvents.delete(id);
+    }, true);
     $('spec-path')?.addEventListener('keydown', event => { if (event.key === 'Enter') run(actions.import)(); });
     $('url')?.addEventListener('keydown', event => { if (event.key === 'Enter' && !ui.state?.running) run(actions.start)(); });
     $('url')?.addEventListener('input', () => ui.hooks.urlChanged?.());

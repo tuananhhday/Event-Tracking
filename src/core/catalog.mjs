@@ -56,7 +56,9 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
   }
   if (!best) return null;
   const issues = best.checks.filter(check => check.verdict !== 'PASS').map(({ path, op, code, expected, actual, verdict }) => ({ path, op, code, expected, actual, verdict }));
-  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, ambiguous: candidates.length > 1 && best.score <= 0 };
+  // Field paths the specification expects, so a viewer can mark every parameter of the event.
+  const fields = Object.fromEntries(Object.entries(best.rule.fields ?? {}).map(([path, field]) => [path, field?.op]));
+  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
 }
 
 export function indexCases(cases) {

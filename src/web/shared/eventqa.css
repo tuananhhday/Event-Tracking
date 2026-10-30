@@ -250,6 +250,25 @@ pre { font-size: 11px; line-height: 1.6; max-height: 340px; overflow: auto; whit
 .toolbar .segmented { flex: none; }
 .toolbar .segmented button { padding: 5px 10px; font-size: 12px; white-space: nowrap; }
 .row-actions { white-space: nowrap; text-align: right; }
+.filterbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 10px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
+.filterbar span { flex: 1; min-width: 160px; }
+/* Event detail: name, parameters and items, marked against the specification */
+.ev-toggle { border: 0; background: none; padding: 0; color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.ev-toggle:hover b { color: var(--accent); text-decoration: underline; }
+.detail-row > td { background: var(--surface-2); padding: 12px !important; }
+.ev-detail { padding: 4px 2px 8px; }
+.ev-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 10px; }
+.ev-title { font-size: 16px; font-weight: 700; margin-right: 6px; }
+.ev-spec { text-align: right; }
+table.params { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table.params th, table.params td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+table.params th { font-size: 11px; color: var(--muted); font-weight: 600; background: var(--surface-2); border-top: 0; }
+table.params td:first-child { width: 34%; }
+table.params.items td:first-child { width: 32px; color: var(--muted); }
+table.params th.bad { color: var(--fail); }
+.list-title { margin: 6px 0; font-size: 12px; }
+details.raw > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 8px 0; }
+.pending { display: block; width: 100%; margin-bottom: 8px; padding: 8px; border: 1px dashed var(--accent); border-radius: 8px; background: var(--surface); color: var(--accent); font-weight: 600; cursor: pointer; }
 
 /* Rule builder dialog */
 dialog.builder { width: min(980px, calc(100vw - 24px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 24px 64px rgb(0 0 0 / 30%); }
