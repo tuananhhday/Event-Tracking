@@ -8,7 +8,7 @@ Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Down
 
 Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không cần cài Node hay gõ lệnh npm. Máy cần có Chrome hoặc Edge. AI cần key riêng; Proxy cần mitmproxy riêng.
 
-Gói kèm danh mục tham khảo 75 dòng đặc tả Insider, nạp sẵn dưới dạng draft; JSON và Excel nằm trong `event-catalogue/`. Mẫu App SDK cần xác nhận mapping sang Web trước khi dùng để kết luận website đúng/sai.
+Gói có thể kèm danh mục tham khảo khi build với đối số `CATALOGUE_DIR`, nạp sẵn dưới dạng draft; JSON và Excel nằm trong `event-catalogue/`. Mẫu App SDK cần xác nhận mapping sang Web trước khi dùng để kết luận website đúng/sai. Bản portable lưu trong Git không kèm dữ liệu workbook của người dùng; nhập JSON/XLSX riêng ở bước Đặc tả tracking khi cần.
 
 Đã kiểm checksum runtime chính thức, tính toàn vẹn ZIP và ứng dụng với Chromium trên Linux. Chưa chạy launcher trực tiếp trên Windows. Không đóng kèm khóa API, profile đăng nhập hoặc CA proxy.
 
