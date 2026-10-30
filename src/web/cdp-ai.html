@@ -129,7 +129,7 @@
     <div class="panel">
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
-        <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="spec">Danh mục &amp; đối chiếu <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
@@ -147,7 +147,7 @@
           <button type="button" class="btn small" data-action="set-marker">⚑ Đặt mốc</button>
           <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
           <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
-          <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện event hệ thống <span class="hint">(gtm.*, ecommerce_reset, insider_init…)</span></label>
+          <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện tín hiệu hệ thống / quan sát SDK</label>
         </div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
@@ -155,6 +155,7 @@
         <div id="events" class="hidden"></div>
       </div>
       <div class="tabpanel hidden" data-panel="spec">
+        <div class="toolbar"><p class="hint">Bấm tên event để mở cấu trúc đầy đủ, kể cả event chưa phát.</p><a class="btn small" href="/api/spec/export" download="event-catalogue.json">Tải danh mục JSON</a></div>
         <div id="spec-totals" class="kv"></div>
         <div class="toolbar" style="margin-top:12px">
           <select id="spec-flow" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
@@ -162,7 +163,7 @@
           <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
-        <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
+        <p class="hint" style="margin:0 0 8px">Mỗi dòng giữ nguồn sheet, luồng và cấu trúc event mong đợi. Dữ liệu đã thu được đối chiếu khi có mapping phù hợp; các mẫu App SDK cần xác nhận mapping sang Web.</p>
         <div id="spec-table"></div>
       </div>
       <div class="tabpanel hidden" data-panel="firing">

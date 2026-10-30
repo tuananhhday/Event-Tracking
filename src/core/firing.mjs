@@ -2,6 +2,7 @@
 // GA4 event sheets). They judge how an event was fired, independently of any specification row:
 // Insider page data must be followed by `init`, events must reach the vendor, dates come in
 // ISO + _str pairs, ecommerce data is reset first, and nothing is fired twice.
+import { eventKind } from './event-kind.mjs';
 
 const INSIDER_PAGE_TYPES = new Set(['home', 'category', 'product', 'cart', 'purchase', 'other']);
 // Queue pushes and the event name Insider sends to its servers for them.
@@ -92,6 +93,8 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
   };
 
   for (const [index, event] of queue.entries()) {
+    // A malformed explicit custom_event is still a shape defect worth showing.
+    if (eventKind(event) === 'observation' && !(event.queue_name === 'InsiderQueue' && event.queue_type === 'custom_event')) continue;
     const payload = event.payload ?? {};
     if (SYSTEM.test(event.event_name) && event.source === 'GA4') continue;
 

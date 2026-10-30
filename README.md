@@ -16,6 +16,8 @@ Mở [START_EVENT_QA.cmd](START_EVENT_QA.cmd) để chọn phương án (hoặc 
 
 Mã giao diện: [src/web/cdp.html](src/web/cdp.html), [src/web/cdp-ai.html](src/web/cdp-ai.html), [src/web/proxy.html](src/web/proxy.html); CSS và JS dùng chung trong [src/web/shared/](src/web/shared/).
 
+**Event đầy đủ:** mở event để xem và sao chép nguyên JSON payload thực tế. Tín hiệu SDK và snapshot trạng thái được tách khỏi event nghiệp vụ. Trong tab **Đối chiếu đặc tả**, bấm tên event để xem toàn bộ mẫu (kể cả chưa thu được event), nguồn sheet/dòng, nhóm default/custom và các phần cần xác nhận. Importer hỗ trợ mẫu JSON, Swift/Java SDK và text Insider; mẫu App luôn cần xác nhận mapping sang Web. Xem [chi tiết cấu trúc event](docs/EVENT_STRUCTURES.md).
+
 Hoặc chạy tại thư mục dự án:
 
 ```powershell

@@ -10,6 +10,7 @@ import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs'
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchEvent } from './core/catalog.mjs';
 import { firingChecks } from './core/firing.mjs';
+import { eventKind } from './core/event-kind.mjs';
 import { importSpec, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
@@ -45,7 +46,7 @@ function summarize(events) {
     const phase = event.network?.phase;
     const key = [event.layer, event.source, event.event_name].join('|');
     let group = groups.get(key);
-    if (!group) groups.set(key, group = { key, event_name: event.event_name, layer: event.layer, source: event.source, count: 0, bound: 0, failed: 0, first_at: event.captured_at, last_at: event.captured_at, last_evidence_id: null, pages: [] });
+    if (!group) groups.set(key, group = { key, event_kind: eventKind(event), event_name: event.event_name, layer: event.layer, source: event.source, count: 0, bound: 0, failed: 0, first_at: event.captured_at, last_at: event.captured_at, last_evidence_id: null, pages: [] });
     if (phase === 'failed' || (phase === 'response' && Number(event.network?.status) >= 400)) group.failed++;
     if (phase && phase !== 'request') continue;
     group.count++; if (event.step_id) group.bound++;
@@ -95,7 +96,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
       eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
-      events: snapshot.events.slice(-100), eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
+      events: snapshot.events.slice(-100).map(event => ({ ...event, event_kind: eventKind(event) })), eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   async function bounded(promise, milliseconds) {
     let timer;
@@ -194,6 +195,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         await bodyForDiscard(req); res.writeHead(204); return res.end();
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state());
+      if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
       if (req.method === 'GET' && url.pathname === '/api/event') {
         const id = url.searchParams.get('id');
         const event = manager.snapshot().events.find(candidate => candidate.evidence_id === id);
@@ -201,9 +203,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         // The specification row this event was matched to, with its field-by-field outcome.
         const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
         const testCase = match && manager.cases.find(c => c.id === match.case_id);
-        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '' } : null;
+        const spec = match ? { ...match, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', sample: sanitizeCases([testCase ?? { rules: [] }])[0].sample } : null;
         const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
-        return send(res, 200, { event, spec, firing });
+        return send(res, 200, { event: { ...event, event_kind: eventKind(event) }, spec, firing });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });

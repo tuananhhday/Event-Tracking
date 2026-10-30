@@ -284,3 +284,11 @@ dialog.builder::backdrop { background: rgb(8 16 26 / 55%); }
 .builder-table select, .builder-table input:not([type="checkbox"]) { padding: 4px 6px; font-size: 12px; min-width: 110px; }
 .builder-table input:disabled { opacity: .4; }
 .builder-table td:first-child { width: 28px; }
+
+/* Complete business events and specification payloads */
+.full-event { border: 1px solid var(--line-strong); border-radius: 10px; padding: 12px; margin-bottom: 12px; background: var(--surface); }
+.full-event .list-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.full-event pre, .spec-detail pre { font-size: 12px; max-height: 520px; }
+.spec-detail { max-width: 100%; min-width: 0; }
+.spec-detail p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.import-warnings { color: var(--muted); font-size: 12px; padding-left: 20px; white-space: pre-wrap; }

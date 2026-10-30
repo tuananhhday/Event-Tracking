@@ -72,15 +72,17 @@
   }
   // Insider also takes events through Insider.eventManager.dispatch(name, data) and reads the
   // legacy window.insider_object; neither goes through InsiderQueue.
-  let dispatchEmits = 0;
   function hookDispatch() {
     try {
       const manager = window.Insider && window.Insider.eventManager;
       if (!manager || typeof manager.dispatch !== 'function' || manager.dispatch === state.dispatchWrapper) return;
       const original = manager.dispatch;
       const wrapper = function (...args) {
-        if (!state.dispatching && typeof args[0] === 'string' && dispatchEmits < 300) {
-          state.dispatching = true; dispatchEmits++;
+        // Internal SDK notifications share this dispatcher with business events.
+        // A cumulative cap lets those notifications silently exhaust capture
+        // before the user performs the action under test.
+        if (!state.dispatching && typeof args[0] === 'string') {
+          state.dispatching = true;
           try { emit('InsiderDispatch', { name: args[0], data: args[1] }, false); } finally { state.dispatching = false; }
         }
         return Reflect.apply(original, this, args);

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { redact, redactUrl } from './privacy.mjs';
+import { eventKind } from './event-kind.mjs';
 
 export const DEFAULT_ENDPOINT_PATTERNS = ['(?:^|\\.)google-analytics\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)analytics\\.google\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)useinsider\\.com/'];
 // Optional vendor allowlists offered by the UI. Each entry matches hostname + path.
@@ -81,24 +82,35 @@ export function decodeRequest({ url, body = '', contentType = '', method = 'POST
     : /(?:^|\.)facebook\.com$/i.test(host) && /^\/tr\/?$/i.test(pathname) ? 'META'
     : /(?:^|\.)tiktok\.com$/i.test(host) && /pixel/i.test(pathname) ? 'TIKTOK' : 'CUSTOM')).toUpperCase();
   const records = [];
-  for (const part of decoded.parts) {
-    const merged = { ...query, ...(part && typeof part === 'object' ? part : { value: part }) };
+  const requestParts = decoded.parts.map(part => ({ ...query, ...(part && typeof part === 'object' ? part : { value: part }) }));
+  const opaque = payload => vendor === 'CUSTOM' && ['d', 'data', 'payload'].some(key => typeof payload?.[key] === 'string' && payload[key].length > 32);
+  const opaqueSummary = payload => ({ decode_status: 'UNPARSED', raw_hash: sha(JSON.stringify(payload)), content_type: contentType, reason: 'opaque_vendor_payload' });
+  const safeRequestParts = requestParts.map(part => opaque(part) ? opaqueSummary(part) : Array.isArray(part.events)
+    ? { ...part, events: part.events.map(event => opaque(event) ? opaqueSummary(event) : event) } : part);
+  const requestPayload = safeRequestParts.length === 1 ? safeRequestParts[0] : safeRequestParts;
+  const batchSize = requestParts.reduce((size, part) => size + (Array.isArray(part.events) ? part.events.length : 1), 0);
+  let batchIndex = 0;
+  for (const merged of requestParts) {
     let items;
     if (Array.isArray(merged.events)) items = merged.events.map(event => ({ ...merged, events: undefined, ...event }));
     else items = [merged];
     for (let payload of items) {
-      if (vendor === 'CUSTOM' && ['d', 'data', 'payload'].some(key => typeof payload[key] === 'string' && payload[key].length > 32)) {
-        payload = { decode_status: 'UNPARSED', raw_hash: sha(JSON.stringify(payload)), content_type: contentType, reason: 'opaque_vendor_payload' };
-      }
+      if (opaque(payload)) payload = opaqueSummary(payload);
       if (vendor === 'GA4' || payload.en) payload = ga4Payload(payload);
       // `ev` is the Meta Pixel event parameter.
       const eventName = payload.event || payload.event_name || payload.name || payload.type || payload.ev || (payload.decode_status === 'UNPARSED' ? 'UNPARSED' : 'tracking_request');
-      records.push(redact({ schema_version: '1.0', source: vendor, layer: 'TRACKING_REQUEST',
+      const record = { schema_version: '1.0', source: vendor, layer: 'TRACKING_REQUEST',
         captured_at: capturedAt || new Date().toISOString(), event_name: typeof eventName === 'string' ? eventName : 'tracking_request',
         page: { url: redactUrl(pageUrl || payload.dl || payload.page_location || url) }, payload,
-        network: { request_id: requestId, url: redactUrl(url), method, status, phase: 'request', decode_status: payload.decode_status || decoded.status },
+        // Opaque bodies keep their hash/reason only, as before. Do not reintroduce
+        // the discarded raw content via the complete-request evidence field.
+        request_payload: payload.decode_status === 'UNPARSED' ? payload : requestPayload,
+        network: { request_id: requestId, url: redactUrl(url), method, status, phase: 'request', decode_status: payload.decode_status || decoded.status,
+          batch_index: batchIndex++, batch_size: batchSize },
         privacy: { redacted: true }
-      }));
+      };
+      record.event_kind = eventKind(record);
+      records.push(redact(record));
     }
   }
   return records;

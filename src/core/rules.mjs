@@ -106,6 +106,13 @@ export function validateCase(testCase, events = [], step) {
   });
   for (const rule of testCase.rules ?? []) {
     const source = rule.source ?? testCase.source;
+    // Native SDK examples are reference contracts. A reviewer must supply Web
+    // field paths and remove this marker before evaluating them as browser rules.
+    if (rule.capture_platform === 'APP_SDK' || ['partial', 'unparsed'].includes(rule.sample_status)) {
+      const issue = { code: rule.capture_platform === 'APP_SDK' ? 'SPEC_PLATFORM_MISMATCH' : 'SPEC_INCOMPLETE', expected: 'Reviewed Web mapping', actual: rule.capture_platform ?? rule.sample_status, evidence_id: stepEvidence, verdict: 'REVIEW' };
+      base.results.push({ event_name: rule.event_name, layer: rule.layer, source, verdict: 'REVIEW', evidence_ids: [], checks: [issue], issues: [issue] });
+      continue;
+    }
     if (Array.isArray(step.observed_layers) && !step.observed_layers.includes(rule.layer)) {
       const issue = { code: 'LAYER_UNAVAILABLE', expected: rule.layer, actual: step.observed_layers, evidence_id: stepEvidence, verdict: 'REVIEW' };
       base.results.push({ event_name: rule.event_name, layer: rule.layer, source, verdict: 'REVIEW', evidence_ids: [], checks: [issue], issues: [issue] });

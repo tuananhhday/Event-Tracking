@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import JSON5 from 'json5';
 import Ajv from 'ajv';
 import JSZip from 'jszip';
+import { parseInsiderSample } from './insider-sample.mjs';
 
 const fieldSchema = {
   type: 'object', required: ['op'], additionalProperties: true,
@@ -51,7 +52,9 @@ const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u030
 const aliases = {
   id: ['stt', 'id', 'testcaseid'], source: ['nentang', 'platform', 'source'], flow: ['luong', 'flow'],
   event: ['eventname', 'tenevent', 'event'], description: ['eventdescription', 'description', 'mota'],
-  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample'], note: ['note', 'notes', 'ghichu'],
+  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'samplepayloadapp', 'chitietevent'], note: ['note', 'notes', 'ghichu'],
+  trigger: ['trigger', 'triggercondition', 'dieukienkichhoat', 'thoidiemban', 'thoidiembanevent', 'triggerpointtrenapp'],
+  sdk: ['sdk', 'sdkmethod', 'insidersdk', 'sdkmethodapp', 'cachfireinsidermobilesdk'], parameter_notes: ['giaithichthamso', 'chitietthamso', 'parameterdescription', 'diengiaiparam'],
   rules: ['rules', 'expectedrules', 'rulejson'],
 };
 
@@ -160,7 +163,7 @@ function inferredFields(payload) {
 
 // ExcelJS rejects some Excel Tables (filter buttons on unnamed columns). Table
 // definitions only carry formatting/filters, so retry without them.
-async function readWorkbook(file) {
+export async function readWorkbook(file) {
   const workbook = new ExcelJS.Workbook();
   try { await workbook.xlsx.readFile(file); return workbook; }
   catch (error) {
@@ -216,7 +219,12 @@ export async function importSpec(filePath, { sheet } = {}) {
       });
       if (mapping.event) { header = index; columns = mapping; break; }
     }
-    if (!header) { warnings.push(`${worksheet.name}: no Event Name header found.`); continue; }
+    if (!header) { warnings.push(`${worksheet.name}: no Event Name header found; skipped.`); continue; }
+    // Execution logs/profile attributes and other vendors are not an event contract.
+    // An explicitly selected sheet still has to carry a sample or explicit rules.
+    if ((!columns.sample && !columns.rules) || (!sheet && /(?:^|[\s_-])(?:test|uat|failed|adjust)(?:[\s_-]|$)/i.test(worksheet.name))) {
+      warnings.push(`${worksheet.name}: not a source event specification; skipped.`); continue;
+    }
     for (let rowNumber = header + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
       const row = worksheet.getRow(rowNumber);
       const get = key => columns[key] ? text(row.getCell(columns[key])).trim() : '';
@@ -228,6 +236,9 @@ export async function importSpec(filePath, { sheet } = {}) {
       const provenance = { file: absolute, sheet: worksheet.name, row: rowNumber };
       const caseId = `TC-${normalized(worksheet.name).slice(0, 30)}-${get('id').replace(/[^a-zA-Z0-9_-]/g, '') || rowNumber}-${rowNumber}`;
       const testCase = { id: caseId, name: [get('flow'), eventName].filter(Boolean).join(' / '), source, flow: get('flow'), stt: get('id'), description: get('description'), notes: get('note'), provenance, needs_review: true, rules: [] };
+      testCase.trigger = get('trigger');
+      testCase.sdk_method = get('sdk');
+      testCase.parameter_notes = get('parameter_notes');
       if (get('rules')) {
         try {
           const rules = JSON5.parse(get('rules'));
@@ -238,23 +249,39 @@ export async function importSpec(filePath, { sheet } = {}) {
           continue;
         } catch (error) { warnings.push(`${worksheet.name}!${rowNumber}: invalid explicit rules (${error.message}); imported as draft.`); }
       }
-      let payload = {};
-      try { payload = parseSample(get('sample')); }
-      catch (error) {
-        const samples = extractSamples(get('sample'));
-        if (samples.length) payload = sampleFor(eventName, samples);
-        else if (get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
+      const sampleSource = get('sample');
+      const appContract = source === 'INSIDER' && (/samplepayloadapp|chitietevent/.test(normalized(text(worksheet.getRow(header).getCell(columns.sample || 1)))) || /(?:tagEvent|visitProductDetailPage|default_parameters|custom_parameters)/.test(sampleSource));
+      let payload = {}, sampleImport;
+      if (appContract) {
+        sampleImport = parseInsiderSample(sampleSource, eventName);
+        payload = sampleImport.payload ?? {};
+        testCase.capture_platform = 'APP_SDK';
+        testCase.sample_source = sampleSource;
+        testCase.event_label = payload.event ?? eventName;
+      } else {
+        try { payload = parseSample(get('sample')); }
+        catch (error) {
+          const samples = extractSamples(get('sample'));
+          if (samples.length) payload = sampleFor(eventName, samples);
+          else if (get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
+        }
+        sampleImport = { format: 'json', status: Object.keys(payload).length ? 'complete' : 'unparsed', warnings: Object.keys(payload).length ? [] : ['No structured payload was extracted.'] };
       }
+      const { payload: _parsedPayload, records, ...sampleMetadata } = sampleImport;
+      testCase.sample_import = sampleMetadata;
+      if (records?.length) testCase.sample_variants = records;
+      if (!testCase.sdk_method && sampleImport.sdk_method) testCase.sdk_method = sampleImport.sdk_method;
       const request = requestShape(payload);
       const inferred = inferredFields(request ?? payload);
       if (!Object.hasOwn(inferred.fields, 'event') && source === 'GA4') inferred.fields.event = { op: 'eq', value: eventName };
       // The Event Name column is authoritative when a pasted sample belongs to another event.
-      for (const key of ['event', 'event_name', 'value.0.event_name']) {
+      for (const key of appContract ? [] : ['event', 'event_name', 'value.0.event_name']) {
         const field = inferred.fields[key];
         if (field?.op === 'eq' && field.value !== eventName) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
       }
-      testCase.rules = [{ event_name: eventName, source, layer: request ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true }];
-      testCase.sample = payload;
+      testCase.rules = [{ event_name: eventName, source, layer: request ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
+        ...(appContract ? { capture_platform: 'APP_SDK' } : {}), sample_status: sampleImport.status }];
+      testCase.sample = appContract && !sampleImport.payload ? null : payload;
       validateTestCase(testCase);
       cases.push(testCase);
       warnings.push(`${worksheet.name}!${rowNumber}: draft rule; confirm trigger, dynamic context and network mapping before acceptance.`);

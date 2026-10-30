@@ -87,6 +87,23 @@ test('frozen queues and read-only window properties do not break page execution'
   assert.equal(f.run('Array.isArray(dataLayer)'), true);
 });
 
+test('SDK dispatch notifications cannot exhaust later business event capture or change dispatch semantics', () => {
+  const f = fixture('dispatchCalls=0; dispatchReceiver=null; Insider={eventManager:{dispatch:function(name,data){dispatchCalls++;dispatchReceiver=this;if(name==="broken")throw new Error("original dispatch error");return data;}}};originalDispatch=Insider.eventManager.dispatch;');
+  [...f.timers.values()].forEach(fn => fn());
+  f.run('for(let i=0;i<350;i++)Insider.eventManager.dispatch("sdk:ready",{index:i})');
+  assert.equal(f.run('Insider.eventManager.dispatch("other_page_view",{taxonomy:"News"}).taxonomy'), 'News');
+  assert.equal(f.events.length, 351);
+  assert.equal(f.events.at(-1).queue, 'InsiderDispatch');
+  assert.equal(f.events.at(-1).item.name, 'other_page_view');
+  assert.deepEqual(f.events.at(-1).item.data, { taxonomy: 'News' });
+  assert.equal(f.run('dispatchReceiver===Insider.eventManager'), true);
+  assert.equal(f.run('dispatchCalls'), 351);
+  assert.throws(() => f.run('Insider.eventManager.dispatch("broken",{})'), /original dispatch error/);
+  assert.equal(f.run('dispatchCalls'), 352);
+  f.run("window[Symbol.for('eventqa.collector.v1')].stop()");
+  assert.equal(f.run('Insider.eventManager.dispatch===originalDispatch'), true);
+});
+
 test('browser launcher rejects unsafe inputs without starting any browser', async () => {
   await assert.rejects(launchBrowser({ port: 2 }), /port/);
   await assert.rejects(launchBrowser({ url: 'javascript:alert(1)' }), /HTTP/);

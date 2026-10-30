@@ -95,7 +95,7 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   ], [28, 86]);
   const coverageRows = coverage ? [
     ...coverage.rows.map(row => [row.stt, row.source, row.flow, row.event_name, row.description, COVERAGE_LABEL[row.status], row.seen, row.pass, row.fail, row.issues.map(issueLine).join('\n'), row.last_fail_evidence_id || row.last_evidence_id || '', row.notes, row.sheet, row.row]),
-    ...coverage.unmatched.map(item => ['', item.source, '', item.event_name, 'Event bắn ra nhưng đặc tả không có', 'Ngoài đặc tả', item.count, '', '', '', item.last_evidence_id, '', '', '']),
+    ...coverage.unmatched.map(item => ['', item.source, '', item.event_name, item.ambiguous ? 'Nhiều dòng đặc tả cùng phù hợp; chưa gán luồng' : 'Event bắn ra nhưng đặc tả không có', item.ambiguous ? 'Cần xác định luồng' : 'Ngoài đặc tả', item.count, '', '', '', item.last_evidence_id, '', '', '']),
   ] : [];
   addSheet(workbook, 'Spec Coverage', ['STT', 'Nền tảng', 'Luồng', 'Event Name', 'Mô tả', 'Trạng thái', 'Số lần bắn', 'Khớp', 'Lệch', 'Trường lệch', 'Evidence ID', 'Ghi chú đặc tả', 'Sheet', 'Dòng'], coverageRows, [7, 11, 18, 26, 40, 14, 11, 8, 8, 60, 42, 40, 22, 8]);
   const byId = new Map(events.map(event => [event.evidence_id, event]));

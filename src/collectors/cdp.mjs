@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
+import { eventKind } from '../core/event-kind.mjs';
 
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
 
@@ -106,20 +107,24 @@ export function queueEvents(record) {
     historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
   let payload = record.item;
   let eventName;
+  const classified = events => events.map(event => ({ ...event, event_kind: eventKind(event) }));
   if (record.queue === 'InsiderDispatch') {
-    return [{ ...base, event_name: String(payload?.name || 'insider_dispatch'), queue_type: 'dispatch', payload: payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null } }];
+    const data = payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null };
+    return classified([{ ...base, event_name: typeof data.event_name === 'string' && data.event_name.trim() ? data.event_name : String(payload?.name || 'insider_dispatch'),
+      queue_type: 'dispatch', dispatch_name: payload?.name, queue_payload: payload, payload: data }]);
   }
   if (record.queue === 'insider_object') {
     const pageType = String(payload?.page?.type ?? '').toLowerCase();
     const name = payload?.transaction ? 'confirmation_page_view' : INSIDER_OBJECT_PAGES[pageType] || (pageType ? 'other_page_view' : 'insider_object');
-    return [{ ...base, event_name: name, queue_type: 'insider_object', payload }];
+    return classified([{ ...base, event_name: name, queue_type: 'insider_object', payload }]);
   }
   if (record.queue === 'InsiderQueue' && payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.type === 'string') {
     if (payload.type === 'custom_event' && Array.isArray(payload.value) && payload.value.length) {
-      return payload.value.map(item => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event', payload: { ...payload, value: [item] } }));
+      return classified(payload.value.map((item, index) => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event',
+        queue_batch_index: index, queue_batch_size: payload.value.length, queue_payload: payload, payload: { ...payload, value: [item] } })));
     }
     // init/user/currency/... configure the SDK; they are kept as evidence under a distinct name.
-    return [{ ...base, event_name: INSIDER_PAGE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }];
+    return classified([{ ...base, event_name: INSIDER_PAGE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }]);
   }
   if (Array.isArray(payload)) {
     if (payload[0] === 'event' || payload[0] === 'track') { eventName = payload[1]; payload = { ...(payload[2] || {}), event: eventName }; }
@@ -128,7 +133,7 @@ export function queueEvents(record) {
     // GTM clears the previous ecommerce object with {ecommerce: null} before each ecommerce event.
     eventName = payload.event || payload.event_name || payload.name || payload.type || (Object.keys(payload).length === 1 && payload.ecommerce === null ? 'ecommerce_reset' : 'QUEUE_ITEM');
   } else { eventName = 'QUEUE_ITEM'; payload = { value: payload }; }
-  return [{ ...base, event_name: String(eventName), payload }];
+  return classified([{ ...base, event_name: String(eventName), payload }]);
 }
 
 export class CDPCollector {

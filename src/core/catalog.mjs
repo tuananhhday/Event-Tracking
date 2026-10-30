@@ -1,4 +1,5 @@
 import { checkField } from './rules.mjs';
+import { isBusinessEvent } from './event-kind.mjs';
 
 // Queue/request records that set up a vendor SDK rather than report a user action.
 const SETUP_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$|config$|js$|set$|consent$|UNPARSED$|tracking_request$)/;
@@ -15,7 +16,10 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
  * dynamic values (`ref`) only need to be present, every other rule is applied as written.
  */
 function evaluate(testCase, rule, event) {
-  const checks = Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
+  const referenceOnly = rule.capture_platform === 'APP_SDK';
+  const checks = referenceOnly ? [{ code: 'SPEC_PLATFORM_MISMATCH', verdict: 'REVIEW', expected: 'APP_SDK', actual: 'WEB', evidence_id: event.evidence_id }]
+    : Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
+  if (!referenceOnly && (!Object.keys(rule.fields ?? {}).length || ['partial', 'unparsed'].includes(rule.sample_status))) checks.push({ code: 'SPEC_INCOMPLETE', verdict: 'REVIEW', evidence_id: event.evidence_id });
   const fixed = Object.entries(rule.fields ?? {}).filter(([, field]) => field?.op === 'eq' || field?.op === 'one_of').map(([path]) => path);
   const failedFixed = checks.filter(check => check.verdict !== 'PASS' && fixed.includes(check.path)).length;
   const passed = checks.filter(check => check.verdict === 'PASS').length;
@@ -47,14 +51,17 @@ function flowHint(flow, pageUrl) {
 
 /** Assigns each captured event to the specification row it most likely implements. */
 export function matchEvent(cases, event, index = indexCases(cases)) {
+  if (!isBusinessEvent(event)) return null;
   if (event.network?.phase && event.network.phase !== 'request') return null;
   const candidates = index.get(`${event.layer}|${String(event.source).toUpperCase()}|${event.event_name}`) || [];
-  let best = null;
+  let best = null, tied = [];
   for (const { testCase, rule } of candidates) {
     const result = evaluate(testCase, rule, event);
-    if (!best || result.score > best.score) best = { testCase, rule, ...result };
+    if (!best || result.score > best.score) { best = { testCase, rule, ...result }; tied = [testCase.id]; }
+    else if (result.score === best.score && !tied.includes(testCase.id)) tied.push(testCase.id);
   }
   if (!best) return null;
+  if (tied.length > 1) return { case_id: null, verdict: 'REVIEW', ambiguous: true, candidate_case_ids: tied, fields: {}, issues: [{ code: 'AMBIGUOUS_SPEC', verdict: 'REVIEW', expected: 'One specification row', actual: tied }] };
   const issues = best.checks.filter(check => check.verdict !== 'PASS').map(({ path, op, code, expected, actual, verdict }) => ({ path, op, code, expected, actual, verdict }));
   // Field paths the specification expects, so a viewer can mark every parameter of the event.
   const fields = Object.fromEntries(Object.entries(best.rule.fields ?? {}).map(([path, field]) => [path, field?.op]));
@@ -80,17 +87,19 @@ export function specCoverage(cases, events, cache = new Map()) {
   const rows = new Map(cases.map(testCase => [testCase.id, {
     case_id: testCase.id, stt: testCase.stt ?? '', source: testCase.source ?? '', flow: testCase.flow ?? '', event_name: testCase.rules?.[0]?.event_name ?? testCase.name,
     layer: testCase.rules?.[0]?.layer ?? '', description: testCase.description ?? '', notes: testCase.notes ?? '', row: testCase.provenance?.row ?? null, sheet: testCase.provenance?.sheet ?? null,
+    capture_platform: testCase.capture_platform, sample_status: testCase.sample_import?.status,
     seen: 0, pass: 0, fail: 0, review: 0, last_at: null, last_evidence_id: null, last_fail_evidence_id: null, issues: [],
   }]));
   const unmatched = new Map();
   for (const event of events) {
+    if (!isBusinessEvent(event)) continue;
     if (event.network?.phase && event.network.phase !== 'request') continue;
     let match = cache.get(event.evidence_id);
     if (match === undefined) { match = matchEvent(cases, event, index); cache.set(event.evidence_id, match); }
-    if (!match) {
+    if (!match || match.ambiguous) {
       if (event.layer !== 'JS_QUEUE' || SETUP_EVENT.test(event.event_name)) continue;
       const key = `${event.source}|${event.event_name}`;
-      const entry = unmatched.get(key) ?? { source: event.source, event_name: event.event_name, count: 0, last_evidence_id: null, page: event.page?.url ?? '' };
+      const entry = unmatched.get(key) ?? { source: event.source, event_name: event.event_name, count: 0, last_evidence_id: null, page: event.page?.url ?? '', ambiguous: Boolean(match?.ambiguous), candidate_case_ids: match?.candidate_case_ids };
       entry.count++; entry.last_evidence_id = event.evidence_id; unmatched.set(key, entry);
       continue;
     }
@@ -102,6 +111,7 @@ export function specCoverage(cases, events, cache = new Map()) {
   const list = [...rows.values()];
   for (const row of list) row.status = !row.seen ? 'NOT_SEEN' : row.fail ? 'MISMATCH' : row.review ? 'REVIEW' : 'MATCH';
   const totals = { rows: list.length, seen: list.filter(row => row.seen).length, match: list.filter(row => row.status === 'MATCH').length,
-    mismatch: list.filter(row => row.status === 'MISMATCH').length, not_seen: list.filter(row => !row.seen).length, unmatched: unmatched.size };
+    mismatch: list.filter(row => row.status === 'MISMATCH').length, not_seen: list.filter(row => !row.seen).length,
+    unmatched: [...unmatched.values()].filter(item => !item.ambiguous).length, ambiguous: [...unmatched.values()].filter(item => item.ambiguous).length };
   return { totals, rows: list, unmatched: [...unmatched.values()].sort((a, b) => b.count - a.count) };
 }
