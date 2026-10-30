@@ -16,10 +16,11 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
  * dynamic values (`ref`) only need to be present, every other rule is applied as written.
  */
 function evaluate(testCase, rule, event) {
-  const referenceOnly = rule.capture_platform === 'APP_SDK';
+  if (event.capture?.incomplete) return { checks: [{ code: 'CAPTURE_INCOMPLETE', verdict: 'REVIEW' }], score: 0 };
+  const referenceOnly = rule.capture_platform === 'APP_SDK' && !(event.payload?.default_parameters && event.payload?.custom_parameters);
   const checks = referenceOnly ? [{ code: 'SPEC_PLATFORM_MISMATCH', verdict: 'REVIEW', expected: 'APP_SDK', actual: 'WEB', evidence_id: event.evidence_id }]
     : Object.entries(rule.fields ?? {}).map(([path, field]) => checkField(event.payload, path, field?.op === 'ref' ? { op: 'exists' } : field, {}, event.evidence_id));
-  if (!referenceOnly && (!Object.keys(rule.fields ?? {}).length || ['partial', 'unparsed'].includes(rule.sample_status))) checks.push({ code: 'SPEC_INCOMPLETE', verdict: 'REVIEW', evidence_id: event.evidence_id });
+  if (!referenceOnly && (!Object.keys(rule.fields ?? {}).length || ['partial', 'unparsed'].includes(rule.sample_status))) checks.push({ code: !Object.keys(rule.fields ?? {}).length ? 'NO_EXPECTED_FIELDS' : 'SPEC_INCOMPLETE', verdict: 'REVIEW', evidence_id: event.evidence_id });
   const fixed = Object.entries(rule.fields ?? {}).filter(([, field]) => field?.op === 'eq' || field?.op === 'one_of').map(([path]) => path);
   const failedFixed = checks.filter(check => check.verdict !== 'PASS' && fixed.includes(check.path)).length;
   const passed = checks.filter(check => check.verdict === 'PASS').length;
@@ -71,9 +72,11 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
 export function indexCases(cases) {
   const index = new Map();
   for (const testCase of cases) for (const rule of testCase.rules ?? []) {
-    const key = `${rule.layer}|${String(rule.source ?? testCase.source).toUpperCase()}|${rule.event_name}`;
-    if (!index.has(key)) index.set(key, []);
-    index.get(key).push({ testCase, rule });
+    for (const name of new Set([rule.event_name, ...(rule.event_aliases ?? [])])) {
+      const key = `${rule.layer}|${String(rule.source ?? testCase.source).toUpperCase()}|${name}`;
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ testCase, rule });
+    }
   }
   return index;
 }
@@ -97,7 +100,7 @@ export function specCoverage(cases, events, cache = new Map()) {
     let match = cache.get(event.evidence_id);
     if (match === undefined) { match = matchEvent(cases, event, index); cache.set(event.evidence_id, match); }
     if (!match || match.ambiguous) {
-      if (event.layer !== 'JS_QUEUE' || SETUP_EVENT.test(event.event_name)) continue;
+      if (SETUP_EVENT.test(event.event_name)) continue;
       const key = `${event.source}|${event.event_name}`;
       const entry = unmatched.get(key) ?? { source: event.source, event_name: event.event_name, count: 0, last_evidence_id: null, page: event.page?.url ?? '', ambiguous: Boolean(match?.ambiguous), candidate_case_ids: match?.candidate_case_ids };
       entry.count++; entry.last_evidence_id = event.evidence_id; unmatched.set(key, entry);

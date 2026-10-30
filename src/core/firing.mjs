@@ -93,6 +93,7 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
   };
 
   for (const [index, event] of queue.entries()) {
+    if (event.capture?.incomplete) { add(event, { rule: 'CAPTURE_INCOMPLETE', status: 'WARN', message: 'Payload thu chưa đầy đủ; xem bằng chứng gốc.' }); continue; }
     // A malformed explicit custom_event is still a shape defect worth showing.
     if (eventKind(event) === 'observation' && !(event.queue_name === 'InsiderQueue' && event.queue_type === 'custom_event')) continue;
     const payload = event.payload ?? {};

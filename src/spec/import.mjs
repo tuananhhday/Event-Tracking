@@ -185,6 +185,11 @@ export async function readWorkbook(file) {
   }
 }
 
+export async function specSheets(file) {
+  const workbook = await readWorkbook(file);
+  return workbook.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.rowCount }));
+}
+
 export async function importSpec(filePath, { sheet } = {}) {
   const absolute = path.resolve(filePath);
   const extension = path.extname(absolute).toLowerCase();
@@ -222,7 +227,7 @@ export async function importSpec(filePath, { sheet } = {}) {
     if (!header) { warnings.push(`${worksheet.name}: no Event Name header found; skipped.`); continue; }
     // Execution logs/profile attributes and other vendors are not an event contract.
     // An explicitly selected sheet still has to carry a sample or explicit rules.
-    if ((!columns.sample && !columns.rules) || (!sheet && /(?:^|[\s_-])(?:test|uat|failed|adjust)(?:[\s_-]|$)/i.test(worksheet.name))) {
+    if ((!columns.sample && !columns.rules && !sheet) || (!sheet && /(?:^|[\s_-])(?:test|uat|failed|adjust)(?:[\s_-]|$)/i.test(worksheet.name))) {
       warnings.push(`${worksheet.name}: not a source event specification; skipped.`); continue;
     }
     for (let rowNumber = header + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
@@ -273,15 +278,24 @@ export async function importSpec(filePath, { sheet } = {}) {
       if (!testCase.sdk_method && sampleImport.sdk_method) testCase.sdk_method = sampleImport.sdk_method;
       const request = requestShape(payload);
       const inferred = inferredFields(request ?? payload);
+      if (appContract && sampleImport.format === 'json') {
+        for (const group of ['default_parameters', 'custom_parameters']) {
+          for (const key of ['platform', 'currency']) if (typeof payload[group]?.[key] === 'string') inferred.fields[`${group}.${key}`] = { op: 'eq', value: payload[group][key] };
+          if (Array.isArray(payload[group]?.taxonomy) && payload[group].taxonomy.length) inferred.fields[`${group}.taxonomy`] = { op: 'subset', value: payload[group].taxonomy };
+        }
+      }
       if (!Object.hasOwn(inferred.fields, 'event') && source === 'GA4') inferred.fields.event = { op: 'eq', value: eventName };
       // The Event Name column is authoritative when a pasted sample belongs to another event.
       for (const key of appContract ? [] : ['event', 'event_name', 'value.0.event_name']) {
         const field = inferred.fields[key];
         if (field?.op === 'eq' && field.value !== eventName) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
       }
-      testCase.rules = [{ event_name: eventName, source, layer: request ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
+      testCase.rules = [{ event_name: eventName, source, layer: request || appContract && sampleImport.format === 'json' ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
+        ...(appContract && payload.event ? { event_aliases: [payload.event] } : {}),
         ...(appContract ? { capture_platform: 'APP_SDK' } : {}), sample_status: sampleImport.status }];
       testCase.sample = appContract && !sampleImport.payload ? null : payload;
+      testCase.sample_text = sampleSource;
+      testCase.sample_available = Boolean(testCase.sample && Object.keys(testCase.sample).length);
       validateTestCase(testCase);
       cases.push(testCase);
       warnings.push(`${worksheet.name}!${rowNumber}: draft rule; confirm trigger, dynamic context and network mapping before acceptance.`);

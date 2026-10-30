@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const defaults = [{ mode: 'cdp', port: 4173 }, { mode: 'cdp-ai', port: 4174 }, { mode: 'proxy', port: 4175 }];
+const defaults = [{ mode: 'cdp', port: 4173 }, { mode: 'cdp-ai', port: 4174 }, { mode: 'proxy', port: 4175 }, { mode: 'hub', port: 4172 }];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Discover the actual local app; no stale PID manifest or process-wide kill. */

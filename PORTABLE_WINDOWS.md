@@ -8,6 +8,8 @@ Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Down
 
 Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không cần cài Node hay gõ lệnh npm. Máy cần có Chrome hoặc Edge. AI cần key riêng; Proxy cần mitmproxy riêng.
 
+Giao diện workspace của bản portable trước được khôi phục. Bấm tên event để xem **Event Details → Default Parameters → Custom Parameters**; dữ liệu lồng nhau có **Show Details**. JSON và payload gốc có tab riêng. GA4 được giải mã danh sách sản phẩm thay vì chỉ hiện chuỗi `pr1`. Danh sách hoạt động ghép queue/request phù hợp thành một dòng, giữ nguyên bằng chứng gốc và mọi request phát lặp.
+
 Gói có thể kèm danh mục tham khảo khi build với đối số `CATALOGUE_DIR`, nạp sẵn dưới dạng draft; JSON và Excel nằm trong `event-catalogue/`. Mẫu App SDK cần xác nhận mapping sang Web trước khi dùng để kết luận website đúng/sai. Bản portable lưu trong Git không kèm dữ liệu workbook của người dùng; nhập JSON/XLSX riêng ở bước Đặc tả tracking khi cần.
 
 Đã kiểm checksum runtime chính thức, tính toàn vẹn ZIP và ứng dụng với Chromium trên Linux. Chưa chạy launcher trực tiếp trên Windows. Không đóng kèm khóa API, profile đăng nhập hoặc CA proxy.

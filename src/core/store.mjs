@@ -58,6 +58,7 @@ export class EvidenceStore {
     this.recoveredSteps = [...latest.values()];
   }
   index(event) {
+    this.eventsCache = null;
     this.insert.run(event.evidence_id, event.session_id || null, event.test_case_id || null, event.step_id || null,
       event.captured_at, event.source || 'CUSTOM', event.layer, event.event_name, event.page?.url || '', JSON.stringify(event));
   }
@@ -77,6 +78,9 @@ export class EvidenceStore {
     atomicJson(path.join(this.runDir, 'session.json'), safe);
   }
   saveExpected(cases) { atomicJson(path.join(this.runDir, 'expected.json'), { cases }); }
-  events() { return this.db.prepare('SELECT record_json FROM events ORDER BY rowid').all().map(r => JSON.parse(r.record_json)); }
+  events() {
+    this.eventsCache ??= this.db.prepare('SELECT record_json FROM events ORDER BY rowid').all().map(r => JSON.parse(r.record_json));
+    return this.eventsCache.slice();
+  }
   close() { if (this.closed) return; this.closed = true; fs.closeSync(this.fd); fs.closeSync(this.stepsFd); this.db.close(); }
 }

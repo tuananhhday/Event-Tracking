@@ -108,7 +108,7 @@ export function validateCase(testCase, events = [], step) {
     const source = rule.source ?? testCase.source;
     // Native SDK examples are reference contracts. A reviewer must supply Web
     // field paths and remove this marker before evaluating them as browser rules.
-    if (rule.capture_platform === 'APP_SDK' || ['partial', 'unparsed'].includes(rule.sample_status)) {
+    if (rule.capture_platform === 'APP_SDK' && !scoped.some(e => (e.event_name === rule.event_name || rule.event_aliases?.includes(e.event_name)) && e.layer === rule.layer && (!source || e.source === source) && e.payload?.default_parameters && e.payload?.custom_parameters) || ['partial', 'unparsed'].includes(rule.sample_status)) {
       const issue = { code: rule.capture_platform === 'APP_SDK' ? 'SPEC_PLATFORM_MISMATCH' : 'SPEC_INCOMPLETE', expected: 'Reviewed Web mapping', actual: rule.capture_platform ?? rule.sample_status, evidence_id: stepEvidence, verdict: 'REVIEW' };
       base.results.push({ event_name: rule.event_name, layer: rule.layer, source, verdict: 'REVIEW', evidence_ids: [], checks: [issue], issues: [issue] });
       continue;
@@ -119,7 +119,7 @@ export function validateCase(testCase, events = [], step) {
       continue;
     }
     const matchesSource = event => !source || String(event.source).toUpperCase() === String(source).toUpperCase();
-    const matching = scoped.filter(event => event.event_name === rule.event_name && event.layer === rule.layer && matchesSource(event));
+    const matching = scoped.filter(event => (event.event_name === rule.event_name || rule.event_aliases?.includes(event.event_name)) && event.layer === rule.layer && matchesSource(event));
     const checks = [];
     const issues = [];
     const add = (code, expected, actual, evidenceId = stepEvidence, verdict = 'FAIL', path = undefined) => {
@@ -136,6 +136,7 @@ export function validateCase(testCase, events = [], step) {
     }
     for (const event of matching) {
       const evidenceId = event.evidence_id || stepEvidence;
+      if (event.capture?.incomplete) { add('CAPTURE_INCOMPLETE', 'Complete capture', event.capture, evidenceId, 'REVIEW'); continue; }
       if (rule.layer === 'TRACKING_REQUEST' && event.network?.request_id) {
         const lifecycle = associated.filter(candidate => candidate.layer === 'TRACKING_REQUEST' && matchesSource(candidate)
           && candidate.network?.request_id === event.network.request_id

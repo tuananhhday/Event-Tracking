@@ -16,7 +16,7 @@ Mở [START_EVENT_QA.cmd](START_EVENT_QA.cmd) để chọn phương án (hoặc 
 
 Mã giao diện: [src/web/cdp.html](src/web/cdp.html), [src/web/cdp-ai.html](src/web/cdp-ai.html), [src/web/proxy.html](src/web/proxy.html); CSS và JS dùng chung trong [src/web/shared/](src/web/shared/).
 
-**Event đầy đủ:** mở event để xem và sao chép nguyên JSON payload thực tế. Tín hiệu SDK và snapshot trạng thái được tách khỏi event nghiệp vụ. Trong tab **Đối chiếu đặc tả**, bấm tên event để xem toàn bộ mẫu (kể cả chưa thu được event), nguồn sheet/dòng, nhóm default/custom và các phần cần xác nhận. Importer hỗ trợ mẫu JSON, Swift/Java SDK và text Insider; mẫu App luôn cần xác nhận mapping sang Web. Xem [chi tiết cấu trúc event](docs/EVENT_STRUCTURES.md).
+**Chi tiết event:** giao diện workspace của bản portable cũ được giữ lại. Bấm event để xem tên, Event Details (Platform / Date / Time UTC), Default Parameters và Custom Parameters; dữ liệu lồng nhau có Show Details. JSON tham số và payload gốc nằm ở tab riêng. GA4 `pr1`, `pr2` được giải mã thành sản phẩm và tham số tùy chỉnh; mã vận chuyển GA4 không chen vào bảng nghiệp vụ. Queue/request phù hợp được ghép một-một thành một dòng bằng chứng; các request thực sự lặp vẫn giữ riêng. Importer tiếp tục hỗ trợ mẫu JSON, Swift/Java SDK và text Insider. Xem [chi tiết cấu trúc event](docs/EVENT_STRUCTURES.md).
 
 Nếu lấy **mã nguồn từ Git** thay vì gói Windows đầy đủ, cài Node.js 24+ rồi chạy tại thư mục dự án:
 

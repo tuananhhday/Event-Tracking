@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-theme="light">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>EventQA · 02 CDP + AI</title>
@@ -7,9 +7,11 @@
 <link rel="stylesheet" href="/assets/eventqa.css">
 </head>
 <body data-mode="cdp-ai">
+<nav class="app-rail" aria-label="Điều hướng chính"><a class="rail-logo" href="http://127.0.0.1:4172/" title="Chọn chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 13 4-7 4 12 4-12 4 7"/></svg></a><span class="rail-divider"></span><button type="button" data-workspace-tab="events" title="Event trực tiếp" aria-label="Event trực tiếp" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Event</span></button><button type="button" data-workspace-tab="spec" title="Đối chiếu đặc tả" aria-label="Đối chiếu đặc tả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>Đặc tả</span></button><button type="button" data-workspace-tab="results" title="Kết quả" aria-label="Kết quả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg><span>Kết quả</span></button><button type="button" data-setup-stage="report" title="Xuất báo cáo" aria-label="Xuất báo cáo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><span>Xuất</span></button><div class="rail-bottom"><button type="button" data-setup-stage="session" title="Thiết lập phiên" aria-label="Thiết lập phiên"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button><a href="http://127.0.0.1:4172/" title="Đổi chế độ" aria-label="Đổi chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a></div></nav>
 <header class="topbar">
-  <div class="brand"><div class="brand-mark">02</div><div><h1>EventQA · CDP + OpenRouter</h1><p>Thu thập CDP như 01 · AI gợi ý rule từ đặc tả và giải thích FAIL, không thay verdict</p></div></div>
+  <div class="brand"><div class="brand-mark">02</div><div><span class="eyebrow">KHÔNG GIAN KIỂM THỬ / CDP + AI</span><h1>Kiểm tra event với AI</h1><p>Bắt event trực tiếp · AI hỗ trợ phân tích kết quả</p></div></div>
   <span id="ai-chip" class="pill">AI: đang tải</span>
+  <button type="button" class="btn setup-toggle" id="setup-toggle" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg><span>Ẩn thiết lập</span></button>
   <span id="conn" class="conn">Đã kết nối</span>
   <button type="button" class="btn ghost" data-action="shutdown" id="shutdown">Tắt ứng dụng</button>
 </header>
@@ -21,12 +23,13 @@
 </div>
 
 <main class="layout">
-  <ol class="flow">
+  <ol class="flow" id="setup-panel" aria-label="Thiết lập và thực hiện phiên">
+    <li class="flow-heading"><span>THIẾT LẬP PHIÊN</span><small>Thực hiện theo từng bước bên dưới</small></li>
     <li class="stage" data-stage="session">
-      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>1</span></span><span class="stage-title"><strong>Website &amp; trình duyệt test</strong><small id="sum-session">—</small></span><span class="chev">›</span></button>
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>1</span></span><span class="stage-title"><strong>Website &amp; trình duyệt</strong><small id="sum-session">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
         <label for="url">URL website cần test</label>
-        <input id="url" type="text" inputmode="url" placeholder="vd: inpearlota.com/vi hoặc https://www.website.vn/" autocomplete="url" data-lock-running>
+        <input id="url" type="text" inputmode="url" placeholder="https://website-can-kiem-tra.vn" autocomplete="url" data-lock-running>
         <div id="recent" class="chips hidden"></div>
         <span class="label">Trình duyệt</span>
         <div class="segmented"><button type="button" data-browser="chrome" aria-pressed="true" data-lock-running>Chrome</button><button type="button" data-browser="edge" aria-pressed="false" data-lock-running>Edge</button></div>
@@ -38,6 +41,7 @@
           <button type="button" class="btn" data-action="scan-targets" data-lock-running>Quét tab trên cổng debug</button>
           <div id="targets" class="cases" style="margin-top:8px"></div>
         </div>
+        <label class="check"><input id="request-only" type="checkbox" data-lock-running> Chỉ bắt request · không gắn hook vào website</label><p class="hint">Dùng nếu website lag hoặc không thao tác được. Không đọc dataLayer / InsiderQueue; tầng JS chưa quan sát sẽ trả REVIEW. Áp dụng khi mở phiên mới.</p>
         <span class="label">Tracking cần bắt</span>
         <div id="vendors" class="vendor-list"></div>
         <details class="more"><summary>Endpoint bổ sung &amp; nâng cao</summary>
@@ -54,13 +58,17 @@
     </li>
 
     <li class="stage" data-stage="spec">
-      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>2</span></span><span class="stage-title"><strong>Đặc tả tracking <span class="hint">(không bắt buộc)</span></strong><small id="sum-spec">—</small></span><span class="chev">›</span></button>
+      <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>2</span></span><span class="stage-title"><strong>File đặc tả <span class="optional">Tùy chọn</span></strong><small id="sum-spec">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
         <p class="hint" style="margin-top:0">Không có file đặc tả? Cứ thu thập, rồi bấm <b>Tạo rule</b> trên event thật ở tab Event. Rule đã lưu được tự nạp lại lần sau.</p>
-        <label for="spec-path">File XLSX / JSON trên máy</label>
+        <label class="file-drop" for="spec-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><strong>Chọn file đặc tả</strong><span>Excel (.xlsx) hoặc JSON · tối đa 3 MB</span><input id="spec-file" type="file" accept=".xlsx,.json" aria-label="Chọn file đặc tả Excel hoặc JSON"></label>
+        <p class="hint" id="spec-file-status" role="status">Chọn file, chọn sheet rồi bấm Nhập file. Hỗ trợ cột Chi tiết event.</p>
+        <label for="sheet-select">Sheet trong file đã chọn</label><select id="sheet-select" disabled><option value="">Chọn file Excel trước</option></select>
+        <details class="more manual-spec"><summary>Nhập đường dẫn hoặc tên sheet thủ công</summary>        <label for="spec-path">Hoặc đường dẫn file trên máy</label>
         <input id="spec-path" placeholder="F:\...\Martech_WebOTA_20260501.xlsx" autocomplete="off">
         <label for="sheet">Sheet <span class="hint">(để trống: tự nhận diện)</span></label>
-        <input id="sheet" placeholder="Tổng hợp Event tracking">
+        <input id="sheet" list="sheet-list" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
+</details>
         <div class="row" style="margin-top:12px"><button type="button" class="btn primary" id="import" data-action="import">Nhập file</button><button type="button" class="btn" data-action="open-ai">✦ Tạo rule bằng AI</button></div>
         <p class="hint">Nhập file thay toàn bộ case hiện có. Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
       </div>
@@ -120,16 +128,17 @@
     <div id="error" class="banner error hidden" role="alert"></div>
     <div id="ai-off-banner" class="banner warn hidden"><p></p></div>
     <div class="metrics">
-      <div class="metric"><span>Bằng chứng</span><b id="event-count">0</b></div>
+      <div class="metric"><span>Event thu được</span><b id="event-count">0</b></div>
       <div class="metric"><span>Loại event</span><b id="kind-count">0</b></div>
-      <div class="metric PASS"><span>Pass</span><b id="pass-count">0</b></div>
-      <div class="metric FAIL"><span>Fail</span><b id="fail-count">0</b></div>
-      <div class="metric REVIEW"><span>Review</span><b id="review-count">0</b></div>
+      <div class="metric PASS"><span>Đạt</span><b id="pass-count">0</b></div>
+      <div class="metric FAIL"><span>Cần sửa</span><b id="fail-count">0</b></div>
+      <div class="metric REVIEW"><span>Cần duyệt</span><b id="review-count">0</b></div>
     </div>
     <div class="panel">
+      <div class="board-heading"><div><span class="eyebrow">QUAN SÁT &amp; ĐỐI CHIẾU</span><h2 id="board-title">Event trực tiếp</h2></div><span class="live-indicator" id="board-capture-status">Chưa mở phiên</span></div>
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
-        <button type="button" class="tab" role="tab" data-tab="spec">Danh mục &amp; đối chiếu <span id="spec-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
@@ -138,7 +147,7 @@
       </div>
       <div class="tabpanel" data-panel="events">
         <div class="toolbar">
-          <div class="segmented shrink"><button type="button" data-view="groups" aria-pressed="true">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
+          <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Hoạt động · Event</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
           <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
           <select id="ev-source" aria-label="Lọc theo nguồn"><option value="">Mọi nguồn</option></select>
           <input id="ev-search" type="text" placeholder="Tìm event, giá trị, evidence ID…" aria-label="Tìm bằng chứng">
@@ -147,15 +156,16 @@
           <button type="button" class="btn small" data-action="set-marker">⚑ Đặt mốc</button>
           <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
           <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
-          <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện tín hiệu hệ thống / quan sát SDK</label>
+          <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện event hệ thống <span class="hint">(gtm.*, ecommerce_reset, insider_init…)</span></label>
         </div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
-        <div id="event-groups"></div>
+        <div id="activity-filters" class="toolbar"><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
+        <div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
+        <div id="event-groups" class="hidden"></div>
         <div id="events" class="hidden"></div>
       </div>
       <div class="tabpanel hidden" data-panel="spec">
-        <div class="toolbar"><p class="hint">Bấm tên event để mở cấu trúc đầy đủ, kể cả event chưa phát.</p><a class="btn small" href="/api/spec/export" download="event-catalogue.json">Tải danh mục JSON</a></div>
         <div id="spec-totals" class="kv"></div>
         <div class="toolbar" style="margin-top:12px">
           <select id="spec-flow" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
@@ -163,7 +173,8 @@
           <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
-        <p class="hint" style="margin:0 0 8px">Mỗi dòng giữ nguồn sheet, luồng và cấu trúc event mong đợi. Dữ liệu đã thu được đối chiếu khi có mapping phù hợp; các mẫu App SDK cần xác nhận mapping sang Web.</p>
+        <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
+        <div id="spec-format-note" class="banner warn hidden"><p>File có mẫu AppOTA với default_parameters/custom_parameters. Website phải phát đúng cấu trúc này mới đối chiếu được; app không tự biến InsiderQueue thành event AppOTA. Giá trị mẫu như ngày, thiết bị, giá tiền là ví dụ: mặc định kiểm trường và kiểu; muốn so đúng giá trị thực tế, cần duyệt rule/context.</p></div>
         <div id="spec-table"></div>
       </div>
       <div class="tabpanel hidden" data-panel="firing">
@@ -202,6 +213,9 @@
 </dialog>
 <div id="toasts" class="toasts"></div>
 
+<dialog id="spec-detail-dialog" class="spec-dialog">
+<div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
+<dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';
@@ -294,5 +308,6 @@ EventQA.boot({ token, mode: 'cdp-ai', hooks: {
   },
 } });
 </script>
+
 </body>
 </html>

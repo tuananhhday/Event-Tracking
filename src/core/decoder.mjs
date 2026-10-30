@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ga4Items } from './ga4-parameters.mjs';
 import { redact, redactUrl } from './privacy.mjs';
 import { eventKind } from './event-kind.mjs';
 
@@ -70,6 +71,8 @@ function ga4Payload(input) {
     else if (k === 'en') result.event = v;
     else result[k] = v;
   }
+  const items = ga4Items(input);
+  if (items.length && !result.ecommerce) result.ecommerce = { items };
   return result;
 }
 export function decodeRequest({ url, body = '', contentType = '', method = 'POST', requestId, status, source, capturedAt, pageUrl }) {
