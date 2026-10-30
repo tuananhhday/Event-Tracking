@@ -434,7 +434,7 @@
     $('event-groups')?.classList.toggle('hidden', ui.view !== 'groups');
     $('events')?.classList.toggle('hidden', ui.view !== 'stream');
     const emptyHtml = !s.session
-      ? '<div class="empty"><strong>Chưa có phiên</strong>Nhập URL website thật ở bước 1 và mở trình duyệt test. Event tracking của website sẽ hiện tại đây theo thời gian thực.</div>'
+      ? '<div class="empty"><span class="empty-art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18m-13 6 3-3 3 5 3-3"/></svg></span><strong>Sẵn sàng cho phiên kiểm tra đầu tiên?</strong><p>Nhập website cần kiểm tra, mở trình duyệt test và thực hiện thao tác. Event thực tế sẽ xuất hiện tại đây.</p><div class="empty-actions"><button type="button" class="btn primary" data-setup-stage="session">Thiết lập website →</button><button type="button" class="btn" data-action="use-demo">Thử với demo</button></div><div class="empty-steps"><span><b>1</b>Mở website</span><span><b>2</b>Thực hiện thao tác</span><span><b>3</b>Xem event &amp; đối chiếu</span></div></div>'
       : s.eventCount ? '<div class="empty"><strong>Không có event khớp bộ lọc</strong>Bấm “Bỏ lọc”, bỏ tick “Chỉ sau mốc” hoặc tick “Hiện event hệ thống”.</div>'
       : '<div class="empty"><strong>Chưa nhận được event</strong>Thao tác trên trình duyệt test. Không thấy request? Xem tab <b>Endpoint</b> để thêm endpoint tracking của website.</div>';
     if (ui.view === 'groups') {
@@ -741,6 +741,8 @@
   function render() {
     const s = ui.state; if (!s || ui.stopped) return;
     const phase = phaseOf(s);
+    const indicator = $('board-capture-status');
+    if (indicator) { indicator.textContent = s.running ? 'Đang thu thập' : s.session ? 'Đã kết thúc phiên' : 'Chưa mở phiên'; indicator.classList.toggle('active', !!s.running); }
     const casesKey = JSON.stringify([s.specSource, s.cases.length, s.cases.at(-1)?.id]);
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
@@ -755,6 +757,24 @@
     ui.tab = name;
     for (const tab of $$('.tab')) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
     for (const panel of $$('.tabpanel')) panel.classList.toggle('hidden', panel.dataset.panel !== name);
+    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
+    setText('board-title', names[name] || 'Event trực tiếp');
+    for (const link of $$('[data-workspace-tab]')) {
+      if (link.dataset.workspaceTab === name) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+  }
+
+  function toggleSetup(collapsed = !document.body.classList.contains('setup-collapsed')) {
+    document.body.classList.toggle('setup-collapsed', collapsed);
+    $('setup-toggle')?.setAttribute('aria-expanded', String(!collapsed));
+    const label = $('setup-toggle')?.querySelector('span'); if (label) label.textContent = collapsed ? 'Thiết lập phiên' : 'Ẩn thiết lập';
+  }
+  function revealSetup(stage) {
+    toggleSetup(false);
+    for (const item of $$('[data-stage]')) setStage(item.dataset.stage, item.dataset.stage === stage);
+    document.querySelector(`[data-stage="${stage}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (stage === 'session') $('url')?.focus({ preventScroll: true });
   }
 
   // ---- actions ------------------------------------------------------------
@@ -841,6 +861,7 @@
   };
 
   function bindCommon() {
+    $('setup-toggle')?.addEventListener('click', () => toggleSetup());
     $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
     $('sheet-select')?.addEventListener('change', () => { $('sheet').value = $('sheet-select').value; });
     $('spec-file')?.addEventListener('change', run(async () => {
@@ -860,9 +881,11 @@
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage]');
       if (!target || target.disabled) return;
       const d = target.dataset;
+      if (d.workspaceTab) { selectTab(d.workspaceTab); if (d.workspaceTab === 'spec' && !ui.state?.cases.length) revealSetup('spec'); return; }
+      if (d.setupStage) return revealSetup(d.setupStage);
       if (d.specDetail) return run(() => openSpecDetail(d.specDetail))();
       if (d.action && actions[d.action]) return run(actions[d.action])();
       if (d.action && ui.hooks.actions?.[d.action]) return run(ui.hooks.actions[d.action])();
@@ -912,6 +935,7 @@
     api, toast, showError, esc, short, run, selectTab, refresh, get state() { return ui.state; }, get selectedCase() { return ui.selectedCase; },
     loadIntoRuleEditor(testCase) {
       if (!$('case-json')) return;
+      toggleSetup(false);
       $('case-json').value = JSON.stringify(testCase, null, 2); if ($('approve')) $('approve').checked = !testCase.needs_review;
       if ($('rule-title')) $('rule-title').textContent = `${testCase.id || ''} (chưa lưu)`;
       setStage('step', true); $('with-cases')?.classList.remove('hidden'); $('rule-editor').open = true; $('case-json').scrollIntoView({ block: 'center', behavior: 'smooth' });

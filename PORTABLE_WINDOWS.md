@@ -2,6 +2,8 @@
 
 Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Download raw file** nếu GitHub hiển thị trang xem file.
 
+Giao diện mới có thanh điều hướng Event / Đặc tả / Kết quả / Xuất báo cáo; nút **Ẩn thiết lập** để dành toàn bộ vùng làm việc cho dữ liệu. Chọn Excel qua ô **Chọn file đặc tả**, chọn sheet rồi bấm **Nhập file**. Tùy chọn nhập đường dẫn thủ công nằm trong mục nâng cao. Cửa sổ chi tiết đặt mẫu và payload thực tế cạnh nhau, có thể đóng bằng nút **Đóng** hoặc phím Escape.
+
 1. Giải nén **toàn bộ** ZIP vào thư mục có quyền ghi, ví dụ Documents\EventQA.
 2. Mở `START_PORTABLE.cmd`; giữ cửa sổ lệnh mở khi dùng.
 3. Trang chính có **3 lựa chọn: CDP không AI / CDP có AI / Proxy**. Chọn chế độ, rồi chọn Chrome hoặc Edge đã có trên máy.
@@ -17,7 +19,7 @@ Máy phải cho phép chạy `node.exe`, file CMD và Chrome/Edge với cổng d
 
 Gói được tạo trên Linux: đã kiểm tra checksum Node từ nguồn chính thức, cấu trúc ZIP, chạy code được giải nén và smoke CDP trên Linux. **Chưa chạy thử trực tiếp trên Windows**. Kiểm tra tại máy công ty: launcher hiện phiên bản Node, giao diện mở, chạy demo và xuất báo cáo XLSX được.
 
-SHA-256 của ZIP: `51781d501bf473295079878ff28130cce05f11ea23ab77071aded794f2afeb8c`.
+SHA-256 của ZIP: `ada923cdefe7c0265464a9700dae51499821d2a30fc080ff779fec49ec3a470a`.
 
 ## Tạo lại gói
 

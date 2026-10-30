@@ -24,6 +24,10 @@ export async function createHub({ port = 4172, modePorts = [4173, 4174, 4175], r
       res.end(typeof data === 'string' ? data : JSON.stringify(data));
     };
     if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(req.headers.host)) return send(403, { error: 'Localhost required' });
+    if (req.method === 'GET' && req.url === '/assets/eventqa.css') {
+      try { return send(200, await fs.readFile(new URL('./web/shared/eventqa.css', import.meta.url), 'utf8'), 'text/css; charset=utf-8'); }
+      catch { return send(500, { error: 'Không tải được giao diện.' }); }
+    }
     if (req.method === 'GET' && req.url === '/api/state') return send(200, { application: 'event-tracking-qa', mode: 'hub', process_id: process.pid, modes: apps.map((app, i) => ({ mode: modes[i], url: app.url })) });
     if (req.method === 'POST' && req.url === '/api/shutdown') {
       if (req.headers['x-eventqa-token'] !== csrf || (req.headers.origin && ![`http://127.0.0.1:${port}`, `http://localhost:${port}`].includes(req.headers.origin))) return send(403, { error: 'Local request token required' });
