@@ -23,5 +23,5 @@ export function ga4Items(payload) {
   });
 }
 
-const transport = new Set('v tid gtm gcd npa dma dma_cps cid ul sr uaa uab uafvl uamb uam uap uapv uaw frm pscdl sid sct seg dl dr dt tfd ec_mode tag_exp ngs gcs gcu richsstsse pae ir tt apve apvf gtm_up gcut dp ecid en rcb cu'.split(' '));
+const transport = new Set('v tid gtm gcd npa dma dma_cps cid ul sr uaa uab uafvl uamb uam uap uapv uaw frm pscdl sid sct seg dl dr dt tfd ec_mode tag_exp ngs gcs gcu richsstsse pae ir tt apve apvf gtm_up gcut dp ecid en rcb cu gaf are aip'.split(' '));
 export const isGa4Transport = key => transport.has(key) || key.startsWith('_') || /^pr\d+$/.test(key) || key.startsWith('gtm.');

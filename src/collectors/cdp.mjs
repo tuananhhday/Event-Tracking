@@ -1,7 +1,12 @@
-import { eventKind } from '../core/event-kind.mjs';
+import { eventKind, INSIDER_TYPE_EVENTS, INSIDER_OBJECT_PAGES } from '../core/event-kind.mjs';
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
+import { redactUrl } from '../core/privacy.mjs';
+
+// A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
+// between the events of one request.
+const hitPage = (event, page) => { const url = event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
 
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
 
@@ -95,16 +100,12 @@ export class CDPConnection extends EventEmitter {
   close() { this.#closed(); try { this.socket?.close(); } catch { /* A connecting/already-closed socket may reject close. */ } }
 }
 
-// InsiderQueue page types carry Insider's event names, as used in tracking specifications.
-export const INSIDER_PAGE_EVENTS = { home: 'homepage_view', category: 'listing_page_view', product: 'product_detail_page_view', cart: 'cart_page_view', purchase: 'confirmation_page_view', other: 'other_page_view', add_to_cart: 'add_to_cart', remove_from_cart: 'remove_from_cart' };
-
-// insider_object.page.type values (legacy Insider page object) and the matching page events.
-const INSIDER_OBJECT_PAGES = { home: 'homepage_view', main: 'homepage_view', listing: 'listing_page_view', category: 'listing_page_view', product: 'product_detail_page_view', basket: 'cart_page_view', cart: 'cart_page_view', confirmation: 'confirmation_page_view', purchase: 'confirmation_page_view' };
-
 /** One queue push becomes one event, except an Insider custom_event push, which can carry several. */
 export function queueEvents(record) {
   const base = { schema_version: '1.0', source: record.queue === 'dataLayer' ? 'GA4' : 'INSIDER', layer: 'JS_QUEUE', queue_name: record.queue,
-    historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' } };
+    historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' },
+    // Position in the page's array, as F12 lists dataLayer[i] / InsiderQueue[i].
+    ...(Number.isInteger(record.index) ? { queue_index: record.index } : {}) };
   let payload = record.item;
   let eventName;
   const classified = events => events.map(event => ({ ...event, event_kind: eventKind(event) }));
@@ -124,7 +125,7 @@ export function queueEvents(record) {
         queue_batch_index: index, queue_batch_size: payload.value.length, queue_payload: payload, payload: { ...payload, value: [item] } })));
     }
     // init/user/currency/... configure the SDK; they are kept as evidence under a distinct name.
-    return classified([{ ...base, event_name: INSIDER_PAGE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }]);
+    return classified([{ ...base, event_name: INSIDER_TYPE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }]);
   }
   if (Array.isArray(payload)) {
     if (payload[0] === 'event' || payload[0] === 'track') { eventName = payload[1]; payload = { ...(payload[2] || {}), event: eventName }; }
@@ -290,8 +291,8 @@ export class CDPCollector {
           catch { this.#status('A tracking request body was unavailable; evidence is retained with the URL.'); }
         }
         const contentType = Object.entries(request.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '';
-        pending.events = decodeRequest({ url: request.url, body, contentType, method: request.method, requestId: params.requestId });
-        for (const event of pending.events) await this.#emit({ ...event, captured_at: capturedAt, page: pending.page,
+        pending.events = decodeRequest({ url: request.url, body, contentType, method: request.method, requestId: params.requestId }).map(event => ({ ...event, page: hitPage(event, pending.page) }));
+        for (const event of pending.events) await this.#emit({ ...event, captured_at: capturedAt,
           network: { ...event.network, request_id: params.requestId, url: request.url, method: request.method, phase: 'request' } }, generation);
       })();
       await pending.ready;
@@ -306,7 +307,7 @@ export class CDPCollector {
       if (method === 'Network.responseReceived') pending.responded = true;
       if (method !== 'Network.loadingFinished' && !canceledAfterResponse) {
         const failed = method === 'Network.loadingFailed';
-        for (const event of pending.events) await this.#emit({ ...event, captured_at: pending.capturedAt, page: pending.page,
+        for (const event of pending.events) await this.#emit({ ...event, captured_at: pending.capturedAt,
           network: { ...event.network, request_id: pending.requestId, url: pending.url, method: pending.method,
             phase: failed ? 'failed' : 'response', ...(failed ? { error: params.errorText || 'Network request failed' } : { status: params.response?.status }) } }, generation);
       }

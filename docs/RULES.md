@@ -10,6 +10,6 @@ Rule engine hỗ trợ `eq`, `exists`, `not_exists`, `type`, `regex`, `one_of`, 
 
 `NOT_EXECUTED` có nghĩa chưa chạy; thiếu context/định dạng rule không hợp lệ cần `REVIEW`. Case/rule chưa duyệt và step chưa hoàn tất luôn là `REVIEW`, vẫn giữ các check chênh lệch nhưng chưa tạo bug xác nhận. Mỗi lỗi có event evidence ID, hoặc step evidence ID nếu event vắng mặt. `JS_QUEUE` và `TRACKING_REQUEST` luôn được đối chiếu riêng; thành công HTTP không phải bằng chứng vendor đã ingest.
 
-Nếu step khai báo `observed_layers`, các layer collector không quan sát được trả `REVIEW / LAYER_UNAVAILABLE`; proxy không thể kết luận thiếu event trong JS queue. Layer được quan sát vẫn chạy kiểm tra đầy đủ.
+Nếu step khai báo `observed_layers`, các layer collector không quan sát được trả `REVIEW / LAYER_UNAVAILABLE`; phiên chỉ bắt request (không gắn hook) không thể kết luận thiếu event trong JS queue. Layer được quan sát vẫn chạy kiểm tra đầy đủ.
 
 Exporter tạo sáu sheet `Run Summary`, `Test Cases`, `Expected Events`, `Actual Events`, `Comparison`, `Bug Reports`, cùng HTML, comparison JSON và mẫu bug Markdown. Exporter tự che dữ liệu nhạy cảm lần nữa trước khi ghi, giữ các QA session ID và cấu trúc rule/path/op. HTML escape toàn bộ dữ liệu và XLSX chống chuỗi bắt đầu bằng công thức. Không gửi bug lên Jira tự động.

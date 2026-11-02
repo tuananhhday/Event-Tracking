@@ -5,6 +5,7 @@ import JSON5 from 'json5';
 import Ajv from 'ajv';
 import JSZip from 'jszip';
 import { parseInsiderSample } from './insider-sample.mjs';
+import { INSIDER_TYPE_EVENTS, INSIDER_OBJECT_PAGES } from '../core/event-kind.mjs';
 
 const fieldSchema = {
   type: 'object', required: ['op'], additionalProperties: true,
@@ -52,17 +53,23 @@ const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u030
 const aliases = {
   id: ['stt', 'id', 'testcaseid'], source: ['nentang', 'platform', 'source'], flow: ['luong', 'flow'],
   event: ['eventname', 'tenevent', 'event'], description: ['eventdescription', 'description', 'mota'],
-  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'samplepayloadapp', 'chitietevent'], note: ['note', 'notes', 'ghichu'],
-  trigger: ['trigger', 'triggercondition', 'dieukienkichhoat', 'thoidiemban', 'thoidiembanevent', 'triggerpointtrenapp'],
+  sample: ['datalayersample', 'sample', 'payloadsample', 'payload', 'insiderqueuesample', 'samplepayload', 'samplepayloadapp', 'chitietevent',
+    'datalayer', 'samplevaluejson', 'newdatalayersample', 'newsamplepayload', 'sampledatalayer', 'sampledatalayermoi'],
+  // Change sheets keep the previous sample beside the new one; it is read only when the new cell is empty.
+  sample_old: ['olddatalayersample', 'oldsamplepayload', 'sampledatalayercu'], note: ['note', 'notes', 'ghichu'],
+  trigger: ['trigger', 'triggercondition', 'dieukienkichhoat', 'thoidiemban', 'thoidiembanevent', 'triggerpoint', 'triggerpointtrenapp'],
   sdk: ['sdk', 'sdkmethod', 'insidersdk', 'sdkmethodapp', 'cachfireinsidermobilesdk'], parameter_notes: ['giaithichthamso', 'chitietthamso', 'parameterdescription', 'diengiaiparam'],
   rules: ['rules', 'expectedrules', 'rulejson'],
 };
 
 function text(cell) {
   if (!cell) return '';
+  // A merged cell reads its master; ExcelJS throws on `.text` when that master is empty.
+  if (cell.isMerged && cell.master !== cell) return text(cell.master);
   const value = cell.value;
-  if (value && typeof value === 'object' && 'result' in value) return String(value.result ?? '');
-  return cell.text ?? String(value ?? '');
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object' && 'result' in value) return String(value.result ?? '');
+  return cell.text ?? String(value);
 }
 
 /** Parse data literals only; never execute workbook JavaScript. */
@@ -78,14 +85,44 @@ export function parseSample(input) {
   return parsed;
 }
 
+// Slips in hand-typed samples: lines that are only "..." placeholders, a doubled quote around a
+// value (`"abc"",` / `""https://…"`), an unquoted date, a note in parentheses or a `-- note` after
+// a value, `;` instead of `,`, and a missing comma before the next property. An empty string `""`
+// stays as it is. Structural mistakes (a missing bracket) are left for the import warning.
+function repairSample(sample) {
+  return sample
+    .replace(/^[\s.,…]*(?:\.\.\.|…)[\s.,…]*$/gm, '')
+    .replace(/([^\s:"])""(?=\s*[,}\]\n])/g, '$1"')
+    .replace(/:(\s*)""(?=[^\s,}\]"])/g, ':$1"')
+    .replace(/:(\s*)(\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?)(?=\s*[,}\n])/g, ':$1"$2"')
+    .replace(/,[ \t]*\([^\n]*$/gm, ',')
+    .replace(/[ \t]+--[^\n]*$/gm, '')
+    .replace(/;[ \t]*$/gm, ',')
+    .replace(/(["'\d\]}]|\btrue|\bfalse|\bnull)([ \t]*\r?\n\s*)(?=["']?[A-Za-z_$][\w$.-]*["']?\s*:)/g, '$1,$2');
+}
+
 /**
  * Lenient reader for workbook samples written by people: leading prose, `//` comments,
  * several objects in one cell, `Insider.eventManager.dispatch(...)` calls, unquoted
- * placeholder values and samples cut off mid-object. Still parses data only (JSON5).
+ * placeholder values, typing slips (see repairSample), a cell that starts at the first property
+ * instead of `{`, and samples cut off mid-object. Still parses data only (JSON5).
  */
 export function extractSamples(input) {
-  const source = String(input ?? '').split('\n').filter(line => !/^\s*\/\//.test(line)).join('\n');
+  let source = String(input ?? '').split('\n').filter(line => !/^\s*\/\//.test(line)).join('\n');
+  // A cell pasted from CSV: wrapped in quotes with every inner quote doubled.
+  if (/^\s*"[{[]/.test(source) && source.includes('""')) source = source.trim().replace(/^"|"$/g, '').replace(/""/g, '"');
+  if (/^\s*(["'])[A-Za-z_$][\w$]*\1\s*:/.test(source)) source = `{${source}}`;
+  const first = readBlocks(source);
+  if (first.complete) return first.parsed;
+  // Slips such as a doubled quote also derail finding where an object ends; read the repaired
+  // text too and keep whichever result holds more data.
+  const repaired = readBlocks(repairSample(source));
+  return JSON.stringify(repaired.parsed).length > JSON.stringify(first.parsed).length ? repaired.parsed : first.parsed;
+}
+
+function readBlocks(source) {
   const blocks = [];
+  let complete = true;
   for (let start = source.indexOf('{'); start !== -1 && blocks.length < 20;) {
     const stack = []; let quote = null, end = -1, lastComma = null;
     for (let i = start; i < source.length; i++) {
@@ -98,7 +135,7 @@ export function extractSamples(input) {
     }
     // A truncated sample keeps every complete field: cut at the last complete element, then close.
     blocks.push(end !== -1 ? source.slice(start, end + 1) : lastComma ? source.slice(start, lastComma.index) + lastComma.closers : source.slice(start) + stack.reverse().join(''));
-    if (end === -1) break;
+    if (end === -1) { complete = false; break; }
     start = source.indexOf('{', end + 1);
   }
   const parsed = [];
@@ -106,17 +143,31 @@ export function extractSamples(input) {
     const attempts = [block, block.replace(/:\s*undefined\b/g, ': null')];
     // `key: Slug của trang (...)` placeholders become strings.
     attempts.push(attempts[1].replace(/^(\s*"?[\w.$-]+"?\s*:\s*)(?!["'{[\-\d]|true\b|false\b|null\b)([^\n]*?)\s*(,?)\s*$/gm, (_, key, value, comma) => `${key}${JSON.stringify(value)}${comma}`));
-    for (const attempt of attempts) {
-      try { const value = parseSample(attempt); if (value && typeof value === 'object' && !Array.isArray(value)) { parsed.push(value); break; } } catch { /* next attempt */ }
-    }
+    attempts.push(repairSample(attempts[1]), repairSample(attempts[2]));
+    const value = attempts.map(attempt => { try { return parseSample(attempt); } catch { return null; } }).find(item => item && typeof item === 'object' && !Array.isArray(item));
+    if (value) parsed.push(value); else complete = false;
   }
-  return parsed;
+  return { parsed, complete };
 }
 // The object in a cell that describes this row's event, when a cell holds several.
-function sampleFor(eventName, samples) {
-  const names = sample => [sample.event, sample.event_name, sample.value?.[0]?.event_name, sample.events?.[0]?.event_name].filter(Boolean);
-  return samples.find(sample => names(sample).includes(eventName)) ?? samples[0];
+// Insider pushes are named by `type` ({type:'cart'} is cart_page_view) or by insider_object's page type.
+function sampleFor(names, samples) {
+  const namesOf = sample => [sample.event, sample.event_name, sample.value?.[0]?.event_name, sample.events?.[0]?.event_name,
+    INSIDER_TYPE_EVENTS[sample.type], sample.transaction ? 'confirmation_page_view' : INSIDER_OBJECT_PAGES[String(sample.page?.type ?? '').toLowerCase()]].filter(Boolean);
+  // GTM's `{ecommerce: null}` clear push precedes the event in GA4 cells; it is never the event itself.
+  return samples.find(sample => namesOf(sample).some(name => names.includes(name)))
+    ?? samples.find(sample => !(Object.keys(sample).length === 1 && sample.ecommerce === null));
 }
+// Event Name cells read "03. view_item_list", "product_detail_page_view (Hotel)" or
+// "purchase / confirmation_page_view": numbering and the flow note are not part of the name.
+function eventNames(cell) {
+  return [...new Set(String(cell).replace(/\([^)]*\)/g, ' ').split(/[/,\n]/)
+    // App SDK sheets use Insider's display names ("Listing Page View"), so words may be spaced;
+    // test logs append what was tested ('Cart Page View "Gói Shopping"'), which is not the name.
+    .map(name => name.trim().replace(/^\d+[.)]\s*/, '').match(/^[A-Za-z][\w.:-]*(?: [A-Za-z0-9][\w.:-]*(?=\s|$))*/)?.[0] ?? '')
+    .filter(name => name.length >= 3))];
+}
+
 // Insider request bodies ({partner, events: [{event_name, event_params}]}) as the decoder flattens them.
 function requestShape(sample) {
   if (!Array.isArray(sample?.events) || !sample.events[0]?.event_params) return null;
@@ -141,7 +192,7 @@ function inferredFields(payload) {
       const fieldPath = prefix ? `${prefix}.${key}` : key;
       if (key.startsWith('gtm.') || key.startsWith('gtag.') || ignoredKeys.has(key)) fields[fieldPath] = { op: 'ignore' };
       else if (fixed.has(key) && (!prefix || /^value\.0$/.test(prefix)) && typeof value === 'string') fields[fieldPath] = { op: 'eq', value };
-      else if (dynamicRefs[key] && !prefix) fields[fieldPath] = { op: 'ref', value: dynamicRefs[key] };
+      else if (dynamicRefs[key] && !prefix && value !== null) fields[fieldPath] = { op: 'ref', value: dynamicRefs[key] };
       else if (value !== null && typeof value === 'object' && !Array.isArray(value)) visit(value, fieldPath);
       // Lists (ecommerce.items, Insider value[]) are checked through their first element.
       else if (Array.isArray(value) && value.length && value[0] && typeof value[0] === 'object' && !Array.isArray(value[0])) {
@@ -214,91 +265,100 @@ export async function importSpec(filePath, { sheet } = {}) {
   const worksheets = preferred ? [preferred] : workbook.worksheets;
   const cases = [];
   for (const worksheet of worksheets) {
-    let header;
-    let columns;
-    for (let index = 1; index <= Math.min(worksheet.rowCount, 50); index++) {
+    // A sheet can hold several tables (a guide's explanations, its event table, then a parameter
+    // dictionary). A header row has an Event column plus another known column; a table ends at the
+    // next header row. Tables with samples or rules are the event contract.
+    const headers = [];
+    for (let index = 1; index <= worksheet.rowCount; index++) {
       const mapping = {};
       worksheet.getRow(index).eachCell((cell, column) => {
         const name = normalized(text(cell));
         for (const [key, values] of Object.entries(aliases)) if (values.includes(name)) mapping[key] = column;
       });
-      if (mapping.event) { header = index; columns = mapping; break; }
+      if (mapping.event && Object.keys(mapping).length >= 2) headers.push({ header: index, columns: mapping });
     }
-    if (!header) { warnings.push(`${worksheet.name}: no Event Name header found; skipped.`); continue; }
-    // Execution logs/profile attributes and other vendors are not an event contract.
-    // An explicitly selected sheet still has to carry a sample or explicit rules.
-    if ((!columns.sample && !columns.rules && !sheet) || (!sheet && /(?:^|[\s_-])(?:test|uat|failed|adjust)(?:[\s_-]|$)/i.test(worksheet.name))) {
+    if (!headers.length) { warnings.push(`${worksheet.name}: no Event Name header found; skipped.`); continue; }
+    // Execution logs, parameter dictionaries and profile attributes are not an event contract:
+    // even an explicitly selected sheet needs a sample or rules column.
+    const tables = headers.filter(({ columns }) => columns.sample || columns.sample_old || columns.rules);
+    if (!tables.length || (!sheet && /(?:^|[\s_-])(?:test|uat|failed|adjust)(?:[\s_-]|$)/i.test(worksheet.name))) {
       warnings.push(`${worksheet.name}: not a source event specification; skipped.`); continue;
     }
-    for (let rowNumber = header + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
-      const row = worksheet.getRow(rowNumber);
-      const get = key => columns[key] ? text(row.getCell(columns[key])).trim() : '';
-      const eventName = get('event');
-      if (!eventName) continue;
-      // Sheets without a platform column (e.g. an "...Insider..." workbook) take it from the file or sheet name.
-      const platform = get('source') || `${path.basename(absolute)} ${worksheet.name}`;
-      const source = /insider/i.test(platform) ? 'INSIDER' : /ga4|google/i.test(platform) ? 'GA4' : 'CUSTOM';
-      const provenance = { file: absolute, sheet: worksheet.name, row: rowNumber };
-      const caseId = `TC-${normalized(worksheet.name).slice(0, 30)}-${get('id').replace(/[^a-zA-Z0-9_-]/g, '') || rowNumber}-${rowNumber}`;
-      const testCase = { id: caseId, name: [get('flow'), eventName].filter(Boolean).join(' / '), source, flow: get('flow'), stt: get('id'), description: get('description'), notes: get('note'), provenance, needs_review: true, rules: [] };
-      testCase.trigger = get('trigger');
-      testCase.sdk_method = get('sdk');
-      testCase.parameter_notes = get('parameter_notes');
-      if (get('rules')) {
-        try {
-          const rules = JSON5.parse(get('rules'));
-          testCase.rules = Array.isArray(rules) ? rules : [rules];
-          testCase.needs_review = testCase.rules.some(rule => rule.needs_review);
-          validateTestCase(testCase);
-          cases.push(testCase);
-          continue;
-        } catch (error) { warnings.push(`${worksheet.name}!${rowNumber}: invalid explicit rules (${error.message}); imported as draft.`); }
-      }
-      const sampleSource = get('sample');
-      const appContract = source === 'INSIDER' && (/samplepayloadapp|chitietevent/.test(normalized(text(worksheet.getRow(header).getCell(columns.sample || 1)))) || /(?:tagEvent|visitProductDetailPage|default_parameters|custom_parameters)/.test(sampleSource));
-      let payload = {}, sampleImport;
-      if (appContract) {
-        sampleImport = parseInsiderSample(sampleSource, eventName);
-        payload = sampleImport.payload ?? {};
-        testCase.capture_platform = 'APP_SDK';
-        testCase.sample_source = sampleSource;
-        testCase.event_label = payload.event ?? eventName;
-      } else {
-        try { payload = parseSample(get('sample')); }
-        catch (error) {
-          const samples = extractSamples(get('sample'));
-          if (samples.length) payload = sampleFor(eventName, samples);
-          else if (get('sample')) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
+    for (const { header, columns } of tables) {
+      const end = headers.find(table => table.header > header)?.header ?? worksheet.rowCount + 1;
+      for (let rowNumber = header + 1; rowNumber < end; rowNumber++) {
+        const row = worksheet.getRow(rowNumber);
+        const get = key => columns[key] ? text(row.getCell(columns[key])).trim() : '';
+        const names = eventNames(get('event'));
+        if (!names.length) continue;
+        const [eventName] = names;
+        const flow = get('flow') || get('event').match(/\(([^)]+)\)/)?.[1]?.trim() || '';
+        // Sheets without a platform column (e.g. an "...Insider..." workbook) take it from the file or sheet name.
+        const platform = get('source') || `${path.basename(absolute)} ${worksheet.name}`;
+        const source = /insider/i.test(platform) ? 'INSIDER' : /ga4|google/i.test(platform) ? 'GA4' : 'CUSTOM';
+        const provenance = { file: absolute, sheet: worksheet.name, row: rowNumber };
+        const caseId = `TC-${normalized(worksheet.name).slice(0, 30)}-${get('id').replace(/[^a-zA-Z0-9_-]/g, '') || rowNumber}-${rowNumber}`;
+        const testCase = { id: caseId, name: [flow, eventName].filter(Boolean).join(' / '), source, flow, stt: get('id'), description: get('description'), notes: get('note'), provenance, needs_review: true, rules: [] };
+        testCase.trigger = get('trigger');
+        testCase.sdk_method = get('sdk');
+        testCase.parameter_notes = get('parameter_notes');
+        if (get('rules')) {
+          try {
+            const rules = JSON5.parse(get('rules'));
+            testCase.rules = Array.isArray(rules) ? rules : [rules];
+            testCase.needs_review = testCase.rules.some(rule => rule.needs_review);
+            validateTestCase(testCase);
+            cases.push(testCase);
+            continue;
+          } catch (error) { warnings.push(`${worksheet.name}!${rowNumber}: invalid explicit rules (${error.message}); imported as draft.`); }
         }
-        sampleImport = { format: 'json', status: Object.keys(payload).length ? 'complete' : 'unparsed', warnings: Object.keys(payload).length ? [] : ['No structured payload was extracted.'] };
-      }
-      const { payload: _parsedPayload, records, ...sampleMetadata } = sampleImport;
-      testCase.sample_import = sampleMetadata;
-      if (records?.length) testCase.sample_variants = records;
-      if (!testCase.sdk_method && sampleImport.sdk_method) testCase.sdk_method = sampleImport.sdk_method;
-      const request = requestShape(payload);
-      const inferred = inferredFields(request ?? payload);
-      if (appContract && sampleImport.format === 'json') {
-        for (const group of ['default_parameters', 'custom_parameters']) {
-          for (const key of ['platform', 'currency']) if (typeof payload[group]?.[key] === 'string') inferred.fields[`${group}.${key}`] = { op: 'eq', value: payload[group][key] };
-          if (Array.isArray(payload[group]?.taxonomy) && payload[group].taxonomy.length) inferred.fields[`${group}.taxonomy`] = { op: 'subset', value: payload[group].taxonomy };
+        // A new-sample cell without a payload ("Không đổi" = unchanged) means the old sample still applies.
+        const sampleSource = /[{[]/.test(get('sample')) || !get('sample_old') ? get('sample') : get('sample_old');
+        const appContract = source === 'INSIDER' && (/samplepayloadapp|chitietevent/.test(normalized(text(worksheet.getRow(header).getCell(columns.sample || 1)))) || /(?:tagEvent|visitProductDetailPage|default_parameters|custom_parameters)/.test(sampleSource));
+        let payload = {}, sampleImport;
+        if (appContract) {
+          sampleImport = parseInsiderSample(sampleSource, eventName);
+          payload = sampleImport.payload ?? {};
+          testCase.capture_platform = 'APP_SDK';
+          testCase.sample_source = sampleSource;
+          testCase.event_label = payload.event ?? eventName;
+        } else {
+          try { payload = parseSample(sampleSource); }
+          catch (error) {
+            const chosen = sampleFor(names, extractSamples(sampleSource));
+            if (chosen) payload = chosen;
+            else if (sampleSource) warnings.push(`${worksheet.name}!${rowNumber}: sample could not be parsed safely (${error.message}).`);
+          }
+          sampleImport = { format: 'json', status: Object.keys(payload).length ? 'complete' : 'unparsed', warnings: Object.keys(payload).length ? [] : ['No structured payload was extracted.'] };
         }
+        const { payload: _parsedPayload, records, ...sampleMetadata } = sampleImport;
+        testCase.sample_import = sampleMetadata;
+        if (records?.length) testCase.sample_variants = records;
+        if (!testCase.sdk_method && sampleImport.sdk_method) testCase.sdk_method = sampleImport.sdk_method;
+        const request = requestShape(payload);
+        const inferred = inferredFields(request ?? payload);
+        if (appContract && sampleImport.format === 'json') {
+          for (const group of ['default_parameters', 'custom_parameters']) {
+            for (const key of ['platform', 'currency']) if (typeof payload[group]?.[key] === 'string') inferred.fields[`${group}.${key}`] = { op: 'eq', value: payload[group][key] };
+            if (Array.isArray(payload[group]?.taxonomy) && payload[group].taxonomy.length) inferred.fields[`${group}.taxonomy`] = { op: 'subset', value: payload[group].taxonomy };
+          }
+        }
+        if (!Object.hasOwn(inferred.fields, 'event') && source === 'GA4') inferred.fields.event = { op: 'eq', value: eventName };
+        // The Event Name column is authoritative when a pasted sample belongs to another event.
+        for (const key of appContract ? [] : ['event', 'event_name', 'value.0.event_name']) {
+          const field = inferred.fields[key];
+          if (field?.op === 'eq' && !names.includes(field.value)) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
+        }
+        testCase.rules = [{ event_name: eventName, source, layer: request || appContract && sampleImport.format === 'json' ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
+          ...(names.length > 1 || appContract && payload.event ? { event_aliases: [...new Set([...names.slice(1), ...(appContract && payload.event ? [payload.event] : [])])] } : {}),
+          ...(appContract ? { capture_platform: 'APP_SDK' } : {}), sample_status: sampleImport.status }];
+        testCase.sample = appContract && !sampleImport.payload ? null : payload;
+        testCase.sample_text = sampleSource;
+        testCase.sample_available = Boolean(testCase.sample && Object.keys(testCase.sample).length);
+        validateTestCase(testCase);
+        cases.push(testCase);
+        warnings.push(`${worksheet.name}!${rowNumber}: draft rule; confirm trigger, dynamic context and network mapping before acceptance.`);
       }
-      if (!Object.hasOwn(inferred.fields, 'event') && source === 'GA4') inferred.fields.event = { op: 'eq', value: eventName };
-      // The Event Name column is authoritative when a pasted sample belongs to another event.
-      for (const key of appContract ? [] : ['event', 'event_name', 'value.0.event_name']) {
-        const field = inferred.fields[key];
-        if (field?.op === 'eq' && field.value !== eventName) { warnings.push(`${worksheet.name}!${rowNumber}: sample is for "${field.value}", not "${eventName}".`); field.value = eventName; }
-      }
-      testCase.rules = [{ event_name: eventName, source, layer: request || appContract && sampleImport.format === 'json' ? 'TRACKING_REQUEST' : 'JS_QUEUE', count: { min: 1, max: 1 }, fields: inferred.fields, needs_review: true,
-        ...(appContract && payload.event ? { event_aliases: [payload.event] } : {}),
-        ...(appContract ? { capture_platform: 'APP_SDK' } : {}), sample_status: sampleImport.status }];
-      testCase.sample = appContract && !sampleImport.payload ? null : payload;
-      testCase.sample_text = sampleSource;
-      testCase.sample_available = Boolean(testCase.sample && Object.keys(testCase.sample).length);
-      validateTestCase(testCase);
-      cases.push(testCase);
-      warnings.push(`${worksheet.name}!${rowNumber}: draft rule; confirm trigger, dynamic context and network mapping before acceptance.`);
     }
   }
   if (!cases.length) warnings.push('No specification cases were found.');

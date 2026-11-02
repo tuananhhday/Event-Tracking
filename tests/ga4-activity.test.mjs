@@ -18,16 +18,25 @@ test('GA4 compact ecommerce becomes business JSON while wire payload is retained
   assert.ok(e.request_payload.pr1.includes('~qt1'));
 });
 
-test('queue/request evidence pairs one-to-one, never hides repeated outgoing requests', () => {
+test('a push and the hit that sent it are one row showing what Google received; repeated hits stay separate', () => {
   const base = { source: 'GA4', event_name: 'begin_checkout', captured_at: '2026-10-30T00:00:00Z', page: { target_id: 'tab1', url: 'https://example.test/checkout' }, payload: { event: 'begin_checkout', value: 2500000 } };
-  const queue = { ...base, evidence_id: 'queue', layer: 'JS_QUEUE' };
-  const request = { ...base, evidence_id: 'request1', layer: 'TRACKING_REQUEST', network: { phase: 'request' } };
+  const queue = { ...base, evidence_id: 'queue', layer: 'JS_QUEUE', queue_name: 'dataLayer' };
+  const request = { ...base, evidence_id: 'request1', layer: 'TRACKING_REQUEST', captured_at: '2026-10-30T00:00:02Z', network: { phase: 'request' } };
   const repeated = { ...request, evidence_id: 'request2' };
-  let rows = activityEntries([queue, request, repeated]);
+  const now = Date.parse('2026-10-30T00:05:00Z');
+  let rows = activityEntries([queue, request, repeated], { now });
   assert.equal(rows.length, 2);
   assert.deepEqual(rows[0].evidence_ids, ['queue', 'request1']);
   assert.deepEqual(rows[1].evidence_ids, ['request2']);
-  assert.equal(activityEntries([queue, { ...request, payload: { event: 'begin_checkout', value: 100 } }]).length, 2);
-  assert.equal(activityEntries([queue, { ...request, page: { ...base.page, target_id: 'other' } }]).length, 2);
-  assert.equal(activityEntries([queue, { ...request, captured_at: '2026-10-30T00:01:00Z' }]).length, 2);
+  assert.deepEqual(rows.map(row => row.delivery), ['sent', 'sent']);
+  // GA4 batching sends seconds after the push; the row shows Google's value, not the pushed one.
+  rows = activityEntries([queue, { ...request, payload: { event: 'begin_checkout', value: 100 } }], { now });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].json.default_parameters.value, 100);
+  // A hit from another tab or long after did not send this push: the push was never sent.
+  for (const other of [{ ...request, page: { ...base.page, target_id: 'other' } }, { ...request, captured_at: '2026-10-30T00:01:00Z' }]) {
+    rows = activityEntries([queue, other], { now });
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(row => row.delivery), ['not_sent', 'sent']);
+  }
 });

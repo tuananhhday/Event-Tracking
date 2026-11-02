@@ -22,16 +22,16 @@ function openInBrowser(url) {
 }
 const command = positionals[0] || 'serve';
 async function main() {
-  if (values.help) { console.log('EventQA (Node.js 24+)\n  node src/cli.mjs serve --mode cdp|cdp-ai|proxy [--port 4173] [--open]\n  node src/cli.mjs demo [--failure]\n  node src/cli.mjs import --spec file.xlsx [--sheet name] --out rules.json\n  node src/cli.mjs report --run runs/S-... --spec rules.json'); return; }
+  if (values.help) { console.log('EventQA (Node.js 24+)\n  node src/cli.mjs serve --mode cdp|cdp-ai [--port 4173] [--open]\n  node src/cli.mjs demo [--failure]\n  node src/cli.mjs import --spec file.xlsx [--sheet name] --out rules.json\n  node src/cli.mjs report --run runs/S-... --spec rules.json'); return; }
   if (command === 'hub') {
     const app = await createHub({ port: Number(values.port || 4172), runsDir: values['runs-dir'] });
     const address = await app.listen();
-    console.log(`EventQA · Chọn 3 chế độ\n${address}\nDừng ứng dụng: Ctrl+C`);
+    console.log(`EventQA · Chọn chế độ\n${address}\nDừng ứng dụng: Ctrl+C`);
     if (values.open) openInBrowser(address);
     const stop = async () => { await app.close(); process.exit(0); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
   } else if (command === 'serve') {
-    const port = Number(values.port || ({ cdp: 4173, 'cdp-ai': 4174, proxy: 4175 }[values.mode]));
+    const port = Number(values.port || ({ cdp: 4173, 'cdp-ai': 4174 }[values.mode]));
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be 1024..65535.');
     const app = await createApp({ mode: values.mode, port, runsDir: values['runs-dir'], initialCases: 'auto' });
     const address = await app.listen();

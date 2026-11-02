@@ -13,7 +13,7 @@ async function fixture(t, mode) {
   return { app, base };
 }
 
-const screens = { cdp: { mark: '>01<', unique: 'data-attach', absent: 'id="mitmdump"' }, 'cdp-ai': { mark: '>02<', unique: 'data-panel="ai"', absent: 'id="mitmdump"' }, proxy: { mark: '>03<', unique: 'id="mitmdump"', absent: 'data-attach' } };
+const screens = { cdp: { mark: '>01<', unique: 'data-attach', absent: 'data-panel="ai"' }, 'cdp-ai': { mark: '>02<', unique: 'data-panel="ai"', absent: '>01<' } };
 
 for (const [mode, expected] of Object.entries(screens)) {
   test(`${mode} serves its own screen with the session token and a strict page policy`, async t => {

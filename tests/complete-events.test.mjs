@@ -6,17 +6,34 @@ import { eventKind, isBusinessEvent } from '../src/core/event-kind.mjs';
 
 const record = (queue, item) => ({ queue, item, ts: Date.now() });
 
-test('Insider internal signals and snapshots remain evidence without becoming business actions', () => {
+test('Insider internal signals and page-less snapshots remain evidence without becoming business actions', () => {
   const [internal] = queueEvents(record('InsiderDispatch', { name: 'sdk:ready', data: { loaded: true } }));
-  const [snapshot] = queueEvents(record('insider_object', { page: { type: 'Product' }, product: { id: 'P1', custom: { service: 'hotel' } } }));
+  const [state] = queueEvents(record('insider_object', { user: { uuid: 'U1' } }));
   const [init] = queueEvents(record('InsiderQueue', { type: 'init' }));
   assert.equal(internal.event_kind, 'observation');
-  assert.equal(snapshot.event_kind, 'observation');
-  assert.deepEqual(snapshot.payload.product.custom, { service: 'hotel' });
+  assert.equal(state.event_kind, 'observation');
   assert.equal(init.event_kind, 'system');
   assert.equal(isBusinessEvent(internal), false);
-  assert.equal(isBusinessEvent(snapshot), false);
+  assert.equal(isBusinessEvent(state), false);
   assert.equal(isBusinessEvent(init), false);
+});
+
+test('insider_object page snapshots are the page views specifications define with it', () => {
+  const [product] = queueEvents(record('insider_object', { page: { type: 'Product' }, product: { id: 'P1', custom: { service: 'hotel' } } }));
+  const [listing] = queueEvents(record('insider_object', { page: { type: 'Listing' }, listing: { breadcrumb: ['Khách sạn', 'Nha Trang'] } }));
+  const [order] = queueEvents(record('insider_object', { transaction: { order_id: 'BXUZ9U9PCB', total: 7300000 } }));
+  assert.deepEqual([product, listing, order].map(event => [event.event_name, event.event_kind]),
+    [['product_detail_page_view', 'business'], ['listing_page_view', 'business'], ['confirmation_page_view', 'business']]);
+  assert.deepEqual(product.payload.product.custom, { service: 'hotel' });
+});
+
+test('InsiderQueue cart types used by golf, attraction and train specifications keep their names', () => {
+  const [added] = queueEvents(record('InsiderQueue', { type: 'item_added_to_cart', value: { id: 'A_10_1100', quantity: 2 } }));
+  const [removed] = queueEvents(record('InsiderQueue', { type: 'item_removed_from_cart', value: { id: 'A_10_1100', quantity: 1 } }));
+  const [typo] = queueEvents(record('InsiderQueue', { type: 'item_revmoved_from_cart', value: {} }));
+  assert.deepEqual([added, removed].map(event => [event.event_name, event.event_kind]), [['item_added_to_cart', 'business'], ['item_removed_from_cart', 'business']]);
+  // An unknown type is shown as is, so a misspelt push is visible instead of silently matched.
+  assert.deepEqual([typo.event_name, typo.event_kind], ['insider_item_revmoved_from_cart', 'observation']);
 });
 
 test('documented Insider page dispatch and explicit custom events preserve their full data', () => {

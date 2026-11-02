@@ -1,0 +1,2 @@
+# Windows launchers keep CRLF in clones and source downloads.
+*.cmd text eol=crlf

@@ -44,41 +44,56 @@
     return { item: copy(item), capture };
   }
 
-  function emit(queue, item, historical, prepared) {
+  function emit(queue, item, historical, prepared, at = Date.now(), index) {
     if (!state.enabled) return;
     try {
       const safe = prepared || snapshotItem(item);
-      const snapshot = JSON.stringify({ queue, ...safe, historical, href: location.href, title: document.title, ts: Date.now() });
+      const snapshot = JSON.stringify({ queue, ...safe, historical, href: location.href, title: document.title, ts: at, ...(Number.isInteger(index) && index >= 0 ? { index } : {}) });
       if (typeof window.__eventqa_emit === 'function') window.__eventqa_emit(snapshot);
     } catch (_) { /* Evidence capture must never break the site. */ }
   }
 
+  // `push` becomes a getter/setter. Vendors replace it after the page creates the queue:
+  // Insider's SDK assigns a push that calls Array.prototype.push directly, and GTM assigns one
+  // that calls the previous push. The setter keeps their function and the getter returns it
+  // wrapped, so no push is missed between their assignment and the next poll.
   function hook(queue, array, historical) {
     if (!Array.isArray(array)) return;
     let record = state.arrays.get(array);
-    if (record?.wrapper === array.push) return;
-    const original = array.push;
-    const originalDescriptor = Object.getOwnPropertyDescriptor(array, 'push');
-    if (typeof original !== 'function') return;
+    const descriptor = Object.getOwnPropertyDescriptor(array, 'push');
+    if (record && descriptor?.get === record.get) return;
+    const head = array.push;
+    if (typeof head !== 'function') return;
     const first = !record;
-    record = record || { depth: 0 };
-    const wrapper = function (...items) {
-      // Vendors often wrap an earlier push. Every generation shares this guard,
-      // so their call through an older collector wrapper cannot duplicate evidence.
-      const outermost = record.depth === 0;
-      record.depth++;
-      try {
-        if (outermost) for (const item of items) emit(queue, item, false);
-        return Reflect.apply(original, this, items);
-      } finally { record.depth--; }
+    record = record || { depth: 0, wrappers: new WeakMap(), descriptor };
+    const wrap = target => {
+      let wrapper = record.wrappers.get(target);
+      if (!wrapper) {
+        wrapper = function (...items) {
+          // A vendor push calls the push it read earlier, i.e. another wrapper. Every wrapper
+          // shares this guard, so only the outermost call records the items.
+          const outermost = record.depth === 0, at = Date.now();
+          record.depth++;
+          try { return Reflect.apply(target, this, items); }
+          finally {
+            record.depth--;
+            // Recorded once GTM / the Insider SDK have handled the push, as F12 then shows it
+            // (gtm.uniqueEventId, processed: true), with its position in the queue.
+            if (outermost) for (const item of items) emit(queue, item, false, undefined, at, Array.isArray(this) ? Array.prototype.lastIndexOf.call(this, item) : undefined);
+          }
+        };
+        record.wrappers.set(target, wrapper);
+      }
+      return wrapper;
     };
+    const get = () => typeof record.head === 'function' ? wrap(record.head) : record.head;
+    const set = value => { record.head = value; };
     try {
-      Object.defineProperty(array, 'push', { value: wrapper, writable: true,
-        enumerable: Object.prototype.propertyIsEnumerable.call(array, 'push'), configurable: true });
-      Object.assign(record, { wrapper, original, descriptor: originalDescriptor });
+      Object.defineProperty(array, 'push', { get, set, enumerable: false, configurable: true });
+      Object.assign(record, { head, get });
       state.arrays.set(array, record);
       state.ownedArrays.add(array);
-      if (first) for (const item of array) emit(queue, item, historical);
+      if (first) array.forEach((item, index) => emit(queue, item, historical, undefined, Date.now(), index));
     } catch (_) { /* Frozen/non-configurable queues cannot be instrumented safely. */ }
   }
 
@@ -107,7 +122,10 @@
       if (!manager || typeof manager.dispatch !== 'function' || manager.dispatch === state.dispatchWrapper) return;
       const original = manager.dispatch;
       const wrapper = function (...args) {
-        if (!state.dispatching && typeof args[0] === 'string') {
+        // The SDK also dispatches its own signals here (`web-sdk:log`, `hit:userEvent:sent`,
+        // `userLocationSet`...). Tracking events dispatched by the website are snake_case
+        // (other_page_view); nothing else is recorded.
+        if (!state.dispatching && typeof args[0] === 'string' && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(args[0])) {
           state.dispatching = true;
           try { emit('InsiderDispatch', { name: args[0], data: args[1] }, false); } finally { state.dispatching = false; }
         }
@@ -141,14 +159,14 @@
     state.enabled = false;
     clearInterval(state.timer);
     try { if (state.dispatchManager && state.dispatchManager.dispatch === state.dispatchWrapper) state.dispatchManager.dispatch = state.dispatchOriginal; } catch (_) {}
+    // Hand the queue back with the vendor's current push, so the site keeps working.
     for (const array of state.ownedArrays) {
       const record = state.arrays.get(array);
-      if (array.push === record.wrapper) {
-        try {
-          if (record.descriptor) Object.defineProperty(array, 'push', record.descriptor);
-          else delete array.push;
-        } catch (_) {}
-      }
+      if (Object.getOwnPropertyDescriptor(array, 'push')?.get !== record.get) continue;
+      try {
+        if (!record.descriptor && record.head === Array.prototype.push) delete array.push;
+        else Object.defineProperty(array, 'push', { value: record.head, writable: true, enumerable: false, configurable: true });
+      } catch (_) {}
     }
     for (const property of state.properties) {
       if (Object.getOwnPropertyDescriptor(window, property.name)?.get !== property.getter) continue;

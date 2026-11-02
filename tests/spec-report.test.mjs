@@ -90,7 +90,8 @@ test('long evidence remains complete in JSON and fits Excel cell/row limits with
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(paths.xlsx);
   const sheet = workbook.getWorksheet('Actual Events');
-  const actual = sheet.getCell('I2').value;
+  const payloadColumn = sheet.getRow(1).values.indexOf('Payload');
+  const actual = sheet.getRow(2).getCell(payloadColumn).value;
   assert.match(actual, /^\[TRUNCATED: full record in comparison\.json\]/);
   assert.ok(actual.length <= 32000);
   assert.ok(sheet.getRow(2).height > 45 && sheet.getRow(2).height <= 409);

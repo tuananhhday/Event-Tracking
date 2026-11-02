@@ -29,7 +29,12 @@
     OUT_OF_ORDER: 'Sai thứ tự', ORDER_PREDECESSOR_MISSING: 'Thiếu event đứng trước', MISSING_CONTEXT: 'Context chưa có giá trị này',
     INVALID_RULE: 'Rule không hợp lệ', RULE_NEEDS_REVIEW: 'Rule chưa được duyệt', LAYER_UNAVAILABLE: 'Phương án này không quan sát được tầng này',
     VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review', NO_EXPECTED_FIELDS: 'Đặc tả chưa có chi tiết payload', INCOMPLETE_CAPTURE: 'Payload thu chưa đầy đủ',
+    NOT_FORWARDED: 'Website có push nhưng Google không nhận', NOT_SENT: 'Có push nhưng không gửi lên server', PENDING_DELIVERY: 'Đang chờ request gửi đi',
   };
+  // Whether a pushed event left the browser (src/core/delivery.mjs).
+  const vendorName = source => source === 'GA4' ? 'Google' : source === 'INSIDER' ? 'Insider' : 'server';
+  const DELIVERY_PILL = { sent: s => ['PASS', `Đã gửi lên ${vendorName(s)}`], not_sent: () => ['FAIL', 'Không gửi lên server'], pending: () => ['REVIEW', 'Đang chờ gửi'], unverified: () => ['', 'Trước khi thu thập'] };
+  const deliveryPill = (status, source) => DELIVERY_PILL[status] ? (([cls, label]) => `<span class="pill ${cls}">${esc(label)}</span>`)(DELIVERY_PILL[status](source)) : '';
   const VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', REVIEW: 'REVIEW', NOT_EXECUTED: 'Chưa chạy' };
   const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request' };
   const FILE_TEXT = { xlsx: ['Excel', '6 sheet đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'] };
@@ -38,7 +43,7 @@
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
     sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'activity', marker: null,
     activity: [], activityVersion: null, activityNext: null, activityTotal: 0, activitySelected: null,
-    hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null };
+    hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null, pushes: [], pushVersion: null, pushLoading: false };
   const siteKey = () => `eventqa:${ui.mode}:site`;
 
   // ---- feedback ---------------------------------------------------------
@@ -107,7 +112,7 @@
     const host = $('vendors'); if (!host || ui.vendorsRendered || !s.vendors) return;
     const saved = store.get(siteKey(), {});
     const chosen = new Set(saved.vendors || DEFAULT_VENDORS);
-    host.innerHTML = Object.entries(s.vendors).map(([key, vendor]) => `<label class="check"><input type="checkbox" data-vendor="${esc(key)}" ${chosen.has(key) ? 'checked' : ''} data-lock-proxy> ${esc(vendor.label)}</label>`).join('');
+    host.innerHTML = Object.entries(s.vendors).map(([key, vendor]) => `<label class="check"><input type="checkbox" data-vendor="${esc(key)}" ${chosen.has(key) ? 'checked' : ''}> ${esc(vendor.label)}</label>`).join('');
     ui.vendorsRendered = true;
   }
   function endpointPatterns() {
@@ -371,6 +376,7 @@
     const contract = spec ? `<p><b>Event Name trong đặc tả:</b> ${esc(spec.event_name)} · ${esc(spec.provenance?.sheet)}!${esc(spec.provenance?.row)}<br>${esc(spec.description)}</p><button type="button" class="btn small" data-spec-detail="${esc(spec.case_id)}">Xem chi tiết đặc tả</button>` : '';
     return `${head}${contract}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
       <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
+      ${ui.hooks.eventExtras?.(e) || ''}
       <details class="raw"><summary>JSON gốc (bằng chứng đầy đủ)</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
   }
   async function loadDetail(id) {
@@ -390,13 +396,33 @@
   }
 
   // ---- live evidence ------------------------------------------------------
+  // dataLayer / InsiderQueue as F12's Console shows them: every push in order, newest first.
+  async function refreshPushes() {
+    if (ui.pushLoading || !ui.state) return;
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${JSON.stringify(ui.state.delivery || {})}`;
+    if (version === ui.pushVersion) return;
+    ui.pushLoading = true;
+    try {
+      const response = await fetch('/api/pushes', { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Chưa tải được dataLayer / InsiderQueue.');
+      ui.pushes = (await response.json()).pushes; ui.pushVersion = version; ui.sig.events = null; render();
+    } catch (error) { showError(error.message); }
+    finally { ui.pushLoading = false; }
+  }
+  function renderPushes(f, emptyHtml) {
+    const items = ui.pushes.filter(p => (!f.source || (f.source === 'GA4') === (p.queue_name === 'dataLayer')) && (!f.marked || !ui.marker || Date.parse(p.captured_at) >= ui.marker)
+      && (!f.query || JSON.stringify(p).toLowerCase().includes(f.query)));
+    const where = p => p.queue_name === 'InsiderDispatch' ? 'Insider.eventManager.dispatch' : p.queue_name === 'insider_object' ? 'window.insider_object' : `${p.queue_name}${Number.isInteger(p.queue_index) ? `[${p.queue_index}]` : ''}`;
+    $('push-list').innerHTML = items.length ? `<div class="activity-caption">${items.length} push · giống khi gõ <code>dataLayer</code> / <code>InsiderQueue</code> trong F12 Console (mới nhất ở trên, gồm cả event hệ thống). Cột “Gửi lên server” cho biết push có thật sự được gửi lên Google / Insider hay không.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Vị trí</th><th>Event</th><th>Gửi lên server</th><th>Nội dung push</th></tr></thead><tbody>${items.map(p => `<tr${p.event_kind !== 'business' ? ' class="muted-row"' : ''}><td>${esc(new Date(p.captured_at).toLocaleTimeString('vi-VN', { hour12: false }))}${p.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><code>${esc(where(p))}</code></td><td><b>${esc(p.event_name)}</b>${p.event_kind !== 'business' ? '<br><small class="hint">hệ thống</small>' : ''}</td><td>${p.event_kind === 'business' ? deliveryPill(p.delivery, p.queue_name === 'dataLayer' ? 'GA4' : 'INSIDER') : '<small class="hint">không gửi riêng</small>'}</td><td><details class="parameter-tree"><summary>${esc(short(JSON.stringify(p.payload), 90))}</summary><pre>${esc(JSON.stringify(p.payload, null, 2))}</pre></details></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+  }
   async function refreshActivity(more = false) {
     if (ui.activityLoading || !ui.state) return;
     const session = ui.state.session?.id || null;
     if (ui.activitySession !== session) {
       ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activitySession = session;
     }
-    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}`;
+    // A pending push turns not_sent without new evidence: its count is part of the version.
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${ui.state.delivery?.pending ?? ''}:${ui.state.delivery?.not_sent ?? ''}`;
     if (!more && version === ui.activityVersion) return;
     ui.activityLoading = true;
     try {
@@ -420,11 +446,23 @@
     const from = $('activity-from')?.value, to = $('activity-to')?.value;
     const items = ui.activity.filter(e => {
       const at = new Date(e.captured_at); const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+      // By default only what reached Google/Insider: a push no request carried is not a fired event.
       return (f.system || (e.event_kind !== 'system' && e.event_kind !== 'observation' && !SYSTEM_EVENT.test(e.event_name))) && (!f.layer || e.layer === f.layer) && (!f.source || e.source === f.source)
+        && (f.unsent || !['pending', 'not_sent', 'unverified'].includes(e.delivery))
         && (!f.marked || !ui.marker || at.getTime() >= ui.marker) && (!from || day >= from) && (!to || day <= to)
         && (!f.query || JSON.stringify(e).toLowerCase().includes(f.query));
     });
-    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} event đã ghi. Queue và request tương ứng được ghép thành một dòng bằng chứng; các request phát lặp vẫn giữ riêng.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button><br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.source)}</span><br><small class="hint">${esc((e.layers || [e.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+    const counts = ui.state?.delivery || {};
+    const note = $('ev-delivery-note');
+    // A session started with "Không đọc dataLayer / InsiderQueue" sees requests only: it cannot match F12's Console.
+    const requestOnly = ui.state?.session?.capture_queues === false;
+    if (note) {
+      note.classList.toggle('hidden', !counts.not_sent && !counts.pending && !requestOnly);
+      note.innerHTML = requestOnly
+        ? '<p><b>Phiên này không đọc dataLayer / InsiderQueue</b> (đã tick “Không đọc dataLayer / InsiderQueue” ở bước 1), nên chỉ thấy request gửi lên server và không so được với F12 Console. Bỏ tick rồi mở phiên mới để thấy đủ như F12.</p>'
+        : `<p>${counts.not_sent ? `<b>${counts.not_sent} event website đã push vào dataLayer / InsiderQueue nhưng không có request gửi lên Google / Insider</b>, nên không được tính là đã bắn.` : ''}${counts.pending ? ` ${counts.pending} event vừa push, đang chờ GA4/Insider gửi đi.` : ''}${f.unsent ? '' : ' Tick “Hiện cả push chưa gửi lên server” để xem, hoặc mở chế độ xem “dataLayer · InsiderQueue (F12)”.'}</p>`;
+    }
+    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} dòng đã ghi. Mỗi dòng là một event gửi lên Google/Insider: push trong dataLayer/InsiderQueue được ghép với request đã gửi nó; event GA4 hiển thị tham số Google nhận được. Request phát lặp vẫn giữ riêng.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button>${e.repeat ? ` <span class="pill warn" title="Cùng hệ thống, cùng event, cùng trang">⚠ Lặp lại sau ${esc((e.repeat.after_ms / 1000).toFixed(1))} s</span>` : ''}<br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.source)}</span> ${deliveryPill(e.delivery, e.source)}<br><small class="hint">${esc((e.layers || [e.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}${e.measurement_id ? ` · ${esc(e.measurement_id)}` : ''}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
     $('activity-more').classList.toggle('hidden', !ui.activityNext);
   }
   async function openActivity(id) {
@@ -438,24 +476,33 @@
       : `<span class="parameter-value">${esc(value === null ? 'null' : String(value))}</span>`;
     const parameters = group => Object.entries(group).map(([key, value]) => `<tr><td><strong>${esc(label(key))}</strong><small class="hint parameter-key">${esc(key)}</small></td><td>${valueHtml(value)}</td></tr>`).join('') || '<tr><td colspan="2" class="hint">Nguồn thực tế không có tham số trong nhóm này.</td></tr>';
     const date = new Date(a.captured_at);
+    // What reached the vendor: the push, the request that sent it, and pushed fields Google did not receive.
+    const d = detail.delivery || {}, vendor = vendorName(a.source), queue = a.source === 'GA4' ? 'dataLayer' : 'InsiderQueue';
+    const deliveryHtml = d.status === 'sent' ? `<div class="banner info"><p><b>✓ Đã gửi lên ${vendor}</b>${d.push && d.hit ? `, ${Math.max(0, Date.parse(d.hit.captured_at) - Date.parse(d.push.captured_at))} ms sau khi website push vào ${queue}` : d.push ? '' : ' (request gửi thẳng, không thấy push tương ứng trong ' + queue + ')'}.${a.source === 'GA4' ? ' Tham số bên dưới là những gì Google nhận được.' : ''}</p>${d.not_forwarded?.length ? `<p><b>Website có push nhưng Google không nhận:</b> ${d.not_forwarded.map(path => `<code>${esc(path)}</code>`).join(', ')}. Tag GA4 trong GTM chưa gửi các trường này.</p>` : ''}</div>`
+      : d.status === 'not_sent' ? `<div class="banner error"><p><b>✗ Không gửi lên ${vendor}.</b> Website đã push vào ${queue} nhưng không có request nào mang event này lên ${vendor}, nên event chưa được bắn. Kiểm tra tag/trigger trong GTM${a.source === 'INSIDER' ? ' hoặc init của Insider' : ''}.</p></div>`
+      : d.status === 'pending' ? `<div class="banner warn"><p>Website vừa push; đang chờ ${vendor} gửi request (GA4 gom event rồi mới gửi).</p></div>`
+      : d.status === 'unverified' ? '<div class="banner warn"><p>Push từ trước khi bắt đầu thu thập: không xác định được đã gửi lên server hay chưa.</p></div>' : '';
+    const payloadOf = view => view === 'hit' ? d.hit?.payload ?? null : view === 'push' ? (a.capture?.incomplete ? { _capture: a.capture, payload: d.push?.payload } : d.push?.payload ?? null) : a.json;
+    const selectedView = () => document.querySelector('[data-activity-view][aria-pressed="true"]')?.dataset.activityView ?? 'params';
     $('activity-content').innerHTML = `<header class="insider-event-title"><h2>${esc(a.display_name)}</h2><code>${esc(a.event_name)}</code></header>
       <section class="insider-event-details"><h3>Event Details</h3><div class="kv"><div><span>Platform</span><b>Web</b></div><div><span>Date</span><b>${esc(date.toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Time (UTC)</span><b>${esc(date.toISOString().slice(11, 19))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc((a.layers || [a.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}</b></div></div>${e.page?.url ? `<p class="hint event-page">${esc(e.page.url)}</p>` : ''}</section>
+      ${deliveryHtml}
       ${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
-      <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div><div class="segmented"><button type="button" data-activity-view="params" aria-pressed="true">Event Details</button><button type="button" data-activity-view="json" aria-pressed="false">JSON tham số</button><button type="button" data-activity-view="raw" aria-pressed="false">Payload gốc</button></div>
+      <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div>${ui.hooks.eventExtras?.(e) || ''}<div class="segmented"><button type="button" data-activity-view="params" aria-pressed="true">Event Details</button><button type="button" data-activity-view="json" aria-pressed="false">JSON tham số</button><button type="button" data-activity-view="hit" aria-pressed="false">Request gửi lên server</button><button type="button" data-activity-view="push" aria-pressed="false">Website push</button></div>
       <section data-activity-panel="params"><h3>Default Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.default_parameters)}</tbody></table><h3>Custom Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.custom_parameters)}</tbody></table></section>
-      <section data-activity-panel="json" class="hidden"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section><section data-activity-panel="raw" class="hidden"><p class="hint">Payload thực tế, đã che dữ liệu nhạy cảm. Bằng chứng ${esc(e.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(e.payload, null, 2))}</pre></section>
+      <section data-activity-panel="json" class="hidden"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section>
+      <section data-activity-panel="hit" class="hidden">${d.hit ? `<p class="hint">Request thật gửi lên ${vendor} (${esc(d.hit.network?.url || '')}), đã giải mã và che dữ liệu nhạy cảm. Bằng chứng ${esc(d.hit.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(d.hit.payload, null, 2))}</pre>` : `<p class="hint">Không có request nào gửi event này lên ${vendor}.</p>`}</section>
+      <section data-activity-panel="push" class="hidden">${d.push ? `<p class="hint">Dữ liệu website push vào ${queue}${d.push.queue_name && d.push.queue_name !== queue ? ` (${esc(d.push.queue_name)})` : ''}. Bằng chứng ${esc(d.push.evidence_id)}.</p><pre class="activity-json" tabindex="0">${esc(JSON.stringify(d.push.payload, null, 2))}</pre>` : `<p class="hint">Không thấy push tương ứng trong ${queue}: request được gửi thẳng (ví dụ event GA4 tự động hoặc trigger trong GTM).</p>`}</section>
       <p class="hint">Chỉ hiển thị tham số đã thu; không điền thêm từ mẫu Excel. Hai nguồn bằng chứng không tự chứng minh website phát hai lần.</p>`;
     $('activity-copy').onclick = run(async () => {
-      const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
-      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      const value = payloadOf(selectedView());
       try { await navigator.clipboard.writeText(JSON.stringify(value, null, 2)); toast('Đã sao chép toàn bộ JSON.', 'ok'); }
       catch { throw new Error('Trình duyệt chưa cho phép sao chép. Dùng nút Tải JSON để lấy đầy đủ dữ liệu.'); }
     });
     $('activity-download').onclick = () => {
-      const raw = document.querySelector('[data-activity-view="raw"]')?.getAttribute('aria-pressed') === 'true';
-      const value = raw ? (a.capture?.incomplete ? { _capture: a.capture, payload: e.payload } : e.payload) : a.json;
+      const view = selectedView(), value = payloadOf(view);
       const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${e.evidence_id}${raw ? '-raw' : ''}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${e.evidence_id}${['hit', 'push'].includes(view) ? `-${view}` : ''}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
     $('activity-dialog').showModal();
   }
@@ -464,7 +511,7 @@
   const isSystem = e => e.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(e.event_name);
   function eventFilters() {
     return { layer: $('ev-layer')?.value || '', source: $('ev-source')?.value || '', query: ($('ev-search')?.value || '').trim().toLowerCase(),
-      marked: !!$('ev-marked')?.checked, system: !!$('ev-system')?.checked, group: ui.groupFilter };
+      marked: !!$('ev-marked')?.checked, system: !!$('ev-system')?.checked, unsent: !!$('ev-unsent')?.checked, group: ui.groupFilter };
   }
   function renderSourceFilter(s) {
     const select = $('ev-source'); if (!select) return;
@@ -492,11 +539,12 @@
   }
   function renderEvents(s) {
     if (ui.view === 'activity') void refreshActivity();
+    if (ui.view === 'f12') void refreshPushes();
     renderSourceFilter(s);
     const f = eventFilters();
     if ($('ev-search')) $('ev-search').placeholder = ui.view === 'activity' ? 'Tìm tên event, nguồn hoặc evidence ID…' : 'Tìm event, giá trị, evidence ID…';
-    const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup, $('activity-from')?.value, $('activity-to')?.value, ui.activity.length]);
-    const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, view, s.cases.length]); if (sig === ui.sig.events) return;
+    const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup, $('activity-from')?.value, $('activity-to')?.value, ui.activity.length, ui.pushVersion]);
+    const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, view, s.cases.length, s.delivery]); if (sig === ui.sig.events) return;
     // Keep an expanded event steady while new evidence arrives; offer to refresh instead.
     const reading = ui.view === 'stream' && $$('#events details[open]').length > 0 && ui.sig.eventsView === view;
     if (reading) { const note = $('ev-pending'); if (note) { note.classList.remove('hidden'); note.textContent = 'Có event mới · bấm để cập nhật danh sách'; } return; }
@@ -508,6 +556,7 @@
     $('event-groups')?.classList.toggle('hidden', ui.view !== 'groups');
     $('events')?.classList.toggle('hidden', ui.view !== 'stream');
     $('activity-events')?.classList.toggle('hidden', ui.view !== 'activity');
+    $('push-list')?.classList.toggle('hidden', ui.view !== 'f12');
     $('activity-filters')?.classList.toggle('hidden', ui.view !== 'activity');
     if (ui.view !== 'activity') $('activity-more')?.classList.add('hidden');
     const emptyHtml = !s.session
@@ -516,6 +565,8 @@
       : '<div class="empty"><strong>Chưa nhận được event</strong>Thao tác trên trình duyệt test. Không thấy request? Xem tab <b>Endpoint</b> để thêm endpoint tracking của website.</div>';
     if (ui.view === 'activity') {
       renderActivity(f, emptyHtml);
+    } else if (ui.view === 'f12') {
+      renderPushes(f, emptyHtml);
     } else if (ui.view === 'groups') {
       const markerSince = ui.marker && f.marked;
       // Counts after a marker come from the buffered recent events; totals come from the server summary.
@@ -523,7 +574,7 @@
       if (markerSince) for (const e of s.events) if (afterMarker(e) && (!e.network?.phase || e.network.phase === 'request')) { const key = [e.layer, e.source, e.event_name].join('|'); recentCounts.set(key, (recentCounts.get(key) || 0) + 1); }
       const groups = (s.eventSummary || []).filter(g => (f.system || !(g.layer === 'JS_QUEUE' && SYSTEM_EVENT.test(g.event_name))) && (!f.layer || g.layer === f.layer) && (!f.source || g.source === f.source) && (!f.query || `${g.event_name} ${g.source} ${g.pages.join(' ')}`.toLowerCase().includes(f.query)) && (!markerSince || recentCounts.has(g.key)));
       $('event-groups').innerHTML = groups.length ? `<div class="table-scroll"><table class="checks groups"><thead><tr><th>Event</th><th>Tầng · nguồn</th><th>${markerSince ? 'Sau mốc / tổng' : 'Số lần'}</th><th>Lần cuối · trang</th><th></th></tr></thead><tbody>${groups.map(g => `<tr>
-        <td><button type="button" class="ev-toggle" data-expand="${esc(g.key)}" aria-expanded="${ui.expandedGroup === g.key}">${ui.expandedGroup === g.key ? '▾' : '▸'} <b>${esc(g.event_name)}</b></button>${g.failed ? ` <span class="pill FAIL">${g.failed} lỗi</span>` : ''}</td>
+        <td><button type="button" class="ev-toggle" data-expand="${esc(g.key)}" aria-expanded="${ui.expandedGroup === g.key}">${ui.expandedGroup === g.key ? '▾' : '▸'} <b>${esc(g.event_name)}</b></button>${g.failed ? ` <span class="pill FAIL">${g.failed} lỗi</span>` : ''}${g.not_sent ? ` <span class="pill FAIL">${g.not_sent} không gửi lên server</span>` : ''}</td>
         <td><span class="pill layer">${esc(LAYER_TEXT[g.layer] || g.layer)}</span> <span class="pill">${esc(g.source)}</span></td>
         <td><b>${markerSince ? `${recentCounts.get(g.key)} / ` : ''}${g.count}</b>${g.bound ? `<br><small class="hint">${g.bound} trong bước</small>` : ''}</td>
         <td><small>${esc(clock(g.last_at))}</small><br><small class="hint">${esc(short(g.pages.join(', '), 60))}</small></td>
@@ -608,7 +659,7 @@
       <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Payload · thực tế</h3><pre>${esc(event ? JSON.stringify(event.payload, null, 2) : 'Chưa có event')}</pre></section></div>`;
     $('spec-detail-dialog').showModal();
   }
-  const SPEC_STATUS = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy'] };
+  const SPEC_STATUS = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
   function renderSpec(s) {
     const host = $('spec-table'); if (!host) return;
     const cov = s.specCoverage;
@@ -618,17 +669,18 @@
     setText('spec-count', cov ? `${cov.totals.seen}/${cov.totals.rows}` : '0');
     if (!cov) { $('spec-totals').innerHTML = ''; host.innerHTML = '<div class="empty"><strong>Chưa có đặc tả</strong>Nhập file Excel đặc tả ở bước 2 (vd Martech_WebOTA_….xlsx). App sẽ tự gắn từng event bắt được vào đúng dòng Nền tảng · Luồng · Event Name và kiểm trường theo DataLayer Sample.</div>'; return; }
     const t = cov.totals;
-    $('spec-totals').innerHTML = [['Dòng đặc tả', t.rows], ['Đã bắn', t.seen], ['Khớp', t.match], ['Lệch', t.mismatch], ['Chưa thấy', t.not_seen], ['Ngoài đặc tả', t.unmatched]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    $('spec-totals').innerHTML = [['Dòng đặc tả', t.rows], ['Đã gửi lên server', t.seen], ['Khớp', t.match], ['Lệch', t.mismatch], ['Có push, không gửi', t.not_sent ?? 0], ['Chưa thấy', t.not_seen], ['Ngoài đặc tả', t.unmatched]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     const flows = [...new Set(cov.rows.map(r => r.flow).filter(Boolean))];
     const select = $('spec-flow'); const flowSig = flows.join('|');
     if (select.dataset.sig !== flowSig) { const current = select.value; select.innerHTML = '<option value="">Mọi luồng</option>' + flows.map(fl => `<option>${esc(fl)}</option>`).join(''); select.value = flows.includes(current) ? current : ''; select.dataset.sig = flowSig; }
     const text = r => `${r.event_name} ${r.notes} ${r.description} ${r.flow}`.toLowerCase();
     const rows = f.status === 'UNMATCHED' ? [] : cov.rows.filter(r => (!f.flow || r.flow === f.flow) && (!f.platform || r.source === f.platform) && (!f.query || text(r).includes(f.query))
       && (!f.status || (f.status === 'FIRED' ? r.seen > 0 : r.status === f.status)))
-      // Fired rows first (mismatches on top), then the rest in specification order.
-      .sort((a, b) => (b.seen > 0) - (a.seen > 0) || (b.status === 'MISMATCH') - (a.status === 'MISMATCH') || 0);
+      // Rows with evidence first (mismatches and pushes never sent on top), then the rest in specification order.
+      .sort((a, b) => (b.seen > 0 || b.not_sent > 0) - (a.seen > 0 || a.not_sent > 0) || ['MISMATCH', 'NOT_SENT'].includes(b.status) - ['MISMATCH', 'NOT_SENT'].includes(a.status) || 0);
     const unmatched = (!f.status || f.status === 'UNMATCHED') && !f.flow ? cov.unmatched.filter(u => (!f.platform || u.source === f.platform) && (!f.query || u.event_name.toLowerCase().includes(f.query))) : [];
-    const issueText = r => r.issues.slice(0, 5).map(i => `<div class="issue"><b>${esc(ISSUE_TEXT[i.code] || i.code)}</b> <code>${esc(i.path || '')}</code>${['VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH'].includes(i.code) ? `<div class="diff"><span>Mong đợi</span><code>${esc(short(i.expected, 60))}</code><span>Thực tế</span><code>${esc(short(i.actual, 60))}</code></div>` : ''}</div>`).join('') + (r.issues.length > 5 ? `<small class="hint">+${r.issues.length - 5} trường khác</small>` : '');
+    const issueText = r => (r.not_sent ? `<div class="issue"><b>Website push ${r.not_sent} lần nhưng không gửi lên ${vendorName(r.source)}</b></div>` : '')
+      + r.issues.slice(0, 5).map(i => `<div class="issue"><b>${esc(ISSUE_TEXT[i.code] || i.code)}</b> <code>${esc(i.path || '')}</code>${['VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH'].includes(i.code) ? `<div class="diff"><span>Mong đợi</span><code>${esc(short(i.expected, 60))}</code><span>Thực tế</span><code>${esc(short(i.actual, 60))}</code></div>` : ''}${i.code === 'NOT_FORWARDED' ? `<div class="diff"><span>Website push</span><code>${esc(short(i.pushed, 60))}</code><span>Google nhận</span><code>(không có)</code></div>` : ''}</div>`).join('') + (r.issues.length > 5 ? `<small class="hint">+${r.issues.length - 5} trường khác</small>` : '');
     host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks"><thead><tr><th>STT</th><th>Nền tảng · Luồng</th><th>Event</th><th>Trạng thái</th><th>Số lần</th><th>Trường lệch</th><th>Ghi chú đặc tả</th></tr></thead><tbody>
       ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status]; const evidence = r.last_fail_evidence_id || r.last_evidence_id; return `<tr>
         <td>${esc(r.stt || r.row || '')}</td><td><span class="pill">${esc(r.source)}</span><br><small>${esc(r.flow)}</small></td>
@@ -664,14 +716,14 @@
         : `<p class="hint">${ui.hooks.discoveryNote || (s.running ? 'Chưa thấy request nào giống tracking ngoài allowlist.' : 'Mở phiên để phát hiện endpoint tracking của website.')}</p>`}
       <h3 class="section-title">Đang theo dõi (${(s.patterns || []).length})</h3>
       <ul class="log">${(s.patterns || []).map(p => `<li><code>${esc(p)}</code></li>`).join('')}</ul>
-      <p class="hint">Sửa danh sách ở bước 1 (vendor + endpoint bổ sung).${ui.mode === 'proxy' ? ' Proxy áp dụng khi mở phiên mới.' : ' Khi phiên đang chạy, bấm “Áp dụng” để theo dõi ngay từ request tiếp theo.'}</p>`;
+      <p class="hint">Sửa danh sách ở bước 1 (vendor + endpoint bổ sung). Khi phiên đang chạy, bấm “Áp dụng” để theo dõi ngay từ request tiếp theo.</p>`;
   }
   async function addEndpoint(endpoint) {
     const pattern = `^${escapeRegex(endpoint)}$`;
     const area = $('patterns'); const lines = area.value.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lines.includes(pattern)) area.value = [...lines, pattern].join('\n');
     saveSite();
-    if (ui.state?.running && ui.mode !== 'proxy') { await api('endpoints', { patterns: endpointPatterns() }, 'endpoints'); toast('Đã theo dõi endpoint; request mới sẽ được ghi.', 'ok'); }
+    if (ui.state?.running) { await api('endpoints', { patterns: endpointPatterns() }, 'endpoints'); toast('Đã theo dõi endpoint; request mới sẽ được ghi.', 'ok'); }
     else toast('Đã thêm vào endpoint bổ sung; áp dụng khi mở phiên.', 'ok');
   }
 
@@ -707,7 +759,7 @@
     const fields = flatten(event.payload || {}).map(([path, value]) => defaultField(path, value, event));
     let id = `TC-${slug(event.event_name)}-${event.layer === 'JS_QUEUE' ? 'QUEUE' : 'REQ'}`;
     for (let n = 2; caseById(id); n++) id = `${id.replace(/-\d+$/, '')}-${n}`;
-    const pairedRequest = event.layer === 'JS_QUEUE' && ui.mode !== 'proxy' && (ui.state?.eventSummary || []).some(g => g.layer === 'TRACKING_REQUEST' && g.event_name === event.event_name);
+    const pairedRequest = event.layer === 'JS_QUEUE' && (ui.state?.eventSummary || []).some(g => g.layer === 'TRACKING_REQUEST' && g.event_name === event.event_name);
     ui.builder = { event, fields };
     const cases = ui.state?.cases || [];
     $('builder-body').innerHTML = `
@@ -794,25 +846,25 @@
     setText('run-dir', s.runDir ? `Thư mục phiên: ${s.runDir}` : '');
   }
   function renderMetrics(s) {
-    setText('event-count', String(s.eventCount));
-    setText('kind-count', String(s.eventSummary?.length ?? 0));
+    // Events Google/Insider received, not every record captured (setup pushes, unsent pushes…).
+    setText('event-count', String(s.delivery?.sent ?? s.eventCount));
+    setText('kind-count', String(s.delivery?.kinds ?? s.eventSummary?.length ?? 0));
     const count = verdict => s.results.filter(r => r.verdict === verdict).length;
     setText('pass-count', String(count('PASS'))); setText('fail-count', String(count('FAIL'))); setText('review-count', String(count('REVIEW'))); setText('notrun-count', String(count('NOT_EXECUTED')));
     setText('results-count', String(s.results.filter(r => r.step_id).length));
   }
   function renderControls(s, phase) {
     const busy = !!ui.busy; const set = (id, disabled) => { if ($(id)) $(id).disabled = disabled; };
-    set('start', s.running || busy || s.closing); set('import', !!s.currentStep || (s.running && s.steps?.length > 0) || busy); set('demo-spec', s.running || busy);
+    set('start', s.running || busy || s.closing); set('import', !!s.currentStep || (s.running && s.steps?.length > 0) || busy);
     set('save-case', !!s.currentStep || busy); set('delete-case', !!s.currentStep || busy || !ui.selectedCase);
     set('step-start', !s.running || !!s.currentStep || busy || !ui.selectedCase); set('step-complete', !s.currentStep || busy);
     set('finish', !s.running || !!s.currentStep || busy); set('export', !s.session || busy); set('stop-session', !s.running || s.closing);
-    $('apply-endpoints')?.classList.toggle('hidden', !s.running || ui.mode === 'proxy');
+    $('apply-endpoints')?.classList.toggle('hidden', !s.running);
     $('recorder')?.classList.toggle('hidden', phase !== 'recording');
     $('step-idle')?.classList.toggle('hidden', phase === 'recording');
     if ($('context')) $('context').readOnly = phase === 'recording';
     for (const el of $$('[data-lock-running]')) el.disabled = s.running || busy;
     if (s.running && $('request-only')) $('request-only').checked = s.session?.capture_queues === false;
-    if (ui.mode === 'proxy') for (const el of $$('[data-lock-proxy]')) el.disabled = s.running || busy;
     if (phase === 'recording') setText('rec-count', String(s.stepEventCount ?? 0));
     $('review-banner')?.classList.toggle('hidden', !caseNeedsReview(caseById(ui.selectedCase)));
     $('ev-marked')?.closest('label')?.classList.toggle('hidden', !ui.marker);
@@ -913,7 +965,6 @@
       if ($('spec-file-status')) $('spec-file-status').textContent = `Đã nhập ${result.cases.length} dòng. ` + (result.cases.some(c => c.payload_format === 'default_custom_parameters') ? 'Mẫu AppOTA: xem lưu ý cấu trúc và bảng chi tiết.' : 'Mở tab Đối chiếu đặc tả để xem chi tiết từng event.');
       resetSelection(); selectTab('spec'); toast(`Đã nhập ${ui.state?.cases.length ?? ''} dòng đặc tả. Event bắt được sẽ tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
     },
-    'demo-spec': async () => { await api('demo-spec', {}, 'demo-spec'); resetSelection(); toast('Đã nạp 3 case demo.', 'ok'); },
     'save-case': async () => {
       const parsed = parseJson('case-json', 'case-json-error'); if (!parsed.ok) throw new Error('Rule JSON chưa hợp lệ.');
       const testCase = parsed.value; const approved = !!$('approve')?.checked;
@@ -933,7 +984,6 @@
     'builder-close': () => $('builder').close(),
     'events-back': () => { ui.view = 'groups'; clearEventFilters(); },
     'events-clear': () => clearEventFilters(),
-    'events-refresh': () => { ui.openEvents.clear(); ui.sig.events = null; render(); },
     shutdown: async () => {
       if (!confirm(ui.state?.running ? 'Phiên đang chạy sẽ được lưu rồi tắt ứng dụng. Tiếp tục?' : 'Tắt ứng dụng?')) return;
       const result = await api('shutdown', {}, 'shutdown'); ui.stopped = true;
@@ -979,7 +1029,7 @@
       if (d.setupStage) return revealSetup(d.setupStage);
       if (d.specDetail) return run(() => openSpecDetail(d.specDetail))();
       if (d.action && actions[d.action]) return run(actions[d.action])();
-      if (d.action && ui.hooks.actions?.[d.action]) return run(ui.hooks.actions[d.action])();
+      if (d.action && ui.hooks.actions?.[d.action]) return run(() => ui.hooks.actions[d.action](target))();
       if (d.case) return selectCase(d.case);
       if (d.evidence) return jumpToEvidence(d.evidence);
       if (d.build) return run(() => openBuilder(d.build))();
@@ -1002,7 +1052,7 @@
     $('context-format')?.addEventListener('click', () => { const parsed = validateContext(); if (parsed.ok) { $('context').value = JSON.stringify(parsed.value, null, 2); ui.contexts.set(ui.selectedCase, $('context').value); } });
     $('context-reset')?.addEventListener('click', () => { ui.contexts.delete(ui.selectedCase); selectCase(ui.selectedCase, { force: true }); });
     $('rule-reset')?.addEventListener('click', () => loadRuleEditor(caseById(ui.selectedCase)));
-    for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system']) $(id)?.addEventListener('input', () => { if (id !== 'ev-marked' && id !== 'ev-system') ui.groupFilter = null; ui.sig.events = null; render(); });
+    for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system', 'ev-unsent']) $(id)?.addEventListener('input', () => { if (!['ev-marked', 'ev-system', 'ev-unsent'].includes(id)) ui.groupFilter = null; ui.sig.events = null; render(); });
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
     $('firing-status')?.addEventListener('input', () => { ui.sig.firing = null; render(); });
     $('events')?.addEventListener('toggle', event => {

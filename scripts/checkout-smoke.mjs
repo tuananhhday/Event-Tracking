@@ -65,8 +65,8 @@ try{
  await cdp.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:dir});await evaluate('document.getElementById("activity-download").click()');
  let file;for(let i=0;i<100&&!file;i++){file=(await fs.readdir(dir)).find(n=>n.endsWith('.json'));if(!file)await delay(50);}
  assert.ok(file);assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,file),'utf8')),view);
- await evaluate('document.querySelector("[data-activity-view=raw]").click()');
- const raw=JSON.parse(await evaluate('document.querySelector("[data-activity-panel=raw] pre").textContent'));
+ await evaluate('document.querySelector("[data-activity-view=hit]").click()');
+ const raw=JSON.parse(await evaluate('document.querySelector("[data-activity-panel=hit] pre").textContent'));
  assert.equal(raw.event_params.custom.provider,'fixture-provider');
  await evaluate('document.querySelector("[data-activity-view=json]").click()');
  await fs.mkdir('runs/checkout-smoke',{recursive:true});

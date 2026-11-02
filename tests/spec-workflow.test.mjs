@@ -64,10 +64,16 @@ test('an imported event with no payload details cannot claim a field match', asy
   const { file } = await workbook(t);
   const w = new ExcelJS.Workbook();
   const s = w.addWorksheet('R1511');
-  s.addRow(['Event Name']); s.addRow(['unknown']);
+  s.addRow(['Event Name', 'Sample Payload']); s.addRow(['unknown', '']);
+  // A list of names without a sample column (a parameter dictionary, an audit grid) is not a contract.
+  const names = w.addWorksheet('Names only');
+  names.addRow(['Event Name', 'Note']); names.addRow(['unknown', 'x']);
   await w.xlsx.writeFile(file);
+  assert.equal((await importSpec(file, { sheet: 'Names only' })).cases.length, 0);
   const { cases } = await importSpec(file, { sheet: 'R1511' });
-  const result = specCoverage(cases, [{ layer: 'JS_QUEUE', source: 'INSIDER', event_name: 'unknown', payload: {}, evidence_id: 'EV' }]);
+  const at = new Date().toISOString();
+  const result = specCoverage(cases, [{ layer: 'JS_QUEUE', source: 'INSIDER', event_name: 'unknown', payload: {}, evidence_id: 'EV', captured_at: at },
+    { layer: 'TRACKING_REQUEST', source: 'INSIDER', event_name: 'unknown', payload: { event_name: 'unknown' }, evidence_id: 'HIT', captured_at: at, network: { phase: 'request' } }]);
   assert.equal(result.rows[0].status, 'REVIEW');
   assert.equal(result.rows[0].issues[0].code, 'NO_EXPECTED_FIELDS');
 });
@@ -98,9 +104,9 @@ test('browser upload lists sheets, imports R1511 and exposes missing fields and 
   assert.ok(detail.spec.issues.some(i => i.path === 'custom_parameters.platform'));
 });
 
-test('mode selector starts three distinct apps and closes only its owned servers', async t => {
+test('mode selector starts two distinct apps and closes only its owned servers', async t => {
   const { dir } = await workbook(t);
-  const hub = await createHub({ port: 0, modePorts: [0, 0, 0], runsDir: dir });
+  const hub = await createHub({ port: 0, modePorts: [0, 0], runsDir: dir });
   const base = await hub.listen();
   t.after(() => hub.close());
   const response = await fetch(base);
@@ -109,7 +115,7 @@ test('mode selector starts three distinct apps and closes only its owned servers
   assert.ok(!html.includes('__MODE_'));
   assert.equal(html.match(/const token='([a-f0-9]{48})'/)?.[1], hub.csrf);
   const { modes } = await (await fetch(base + '/api/state')).json();
-  assert.deepEqual(modes.map(m => m.mode), ['cdp', 'cdp-ai', 'proxy']);
+  assert.deepEqual(modes.map(m => m.mode), ['cdp', 'cdp-ai']);
   for (const mode of modes) {
     const page = await (await fetch(mode.url)).text();
     assert.ok(page.includes(`data-mode="${mode.mode}"`));

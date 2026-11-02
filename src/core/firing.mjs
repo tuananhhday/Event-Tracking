@@ -3,10 +3,9 @@
 // Insider page data must be followed by `init`, events must reach the vendor, dates come in
 // ISO + _str pairs, ecommerce data is reset first, and nothing is fired twice.
 import { eventKind } from './event-kind.mjs';
+import { linkDeliveries, isRequest, INSIDER_SERVER_NAME, REPEAT_MS } from './delivery.mjs';
 
 const INSIDER_PAGE_TYPES = new Set(['home', 'category', 'product', 'cart', 'purchase', 'other']);
-// Queue pushes and the event name Insider sends to its servers for them.
-const INSIDER_SERVER_NAME = { add_to_cart: 'item_added_to_cart', remove_from_cart: 'item_removed_from_cart' };
 const GA4_ECOMMERCE = new Set(['view_item_list', 'view_item', 'select_item', 'add_to_cart', 'remove_from_cart', 'view_cart', 'begin_checkout', 'add_shipping_info',
   'add_payment_info', 'purchase', 'refund', 'search_result_list', 'search_result_select', 'view_promotion', 'select_promotion', 'purchase_fail']);
 // Date parameters of the guidelines: each one is sent as ISO8601 and as yyyy-MM-dd in <name>_str.
@@ -29,8 +28,6 @@ export const FIRING_RULES = {
 
 const time = event => Date.parse(event.captured_at);
 const tab = event => event.page?.target_id ?? event.page?.url ?? '';
-const isRequest = event => event.layer === 'TRACKING_REQUEST' && (!event.network?.phase || event.network.phase === 'request');
-const sameTab = (a, b) => !a.page?.target_id || !b.page?.target_id || a.page.target_id === b.page.target_id;
 
 function leaves(value, prefix = '', out = [], depth = 0) {
   if (value && typeof value === 'object' && !Array.isArray(value) && depth < 6) {
@@ -82,15 +79,9 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
   const ordered = events.filter(event => Number.isFinite(time(event))).sort((a, b) => time(a) - time(b));
   const queue = ordered.filter(event => event.layer === 'JS_QUEUE' && !event.historical);
   const requests = ordered.filter(isRequest);
-  const used = new Set();
+  const { sentBy } = linkDeliveries(events, { windowMs: deliveryWindowMs });
   const results = new Map();
   const add = (event, check) => { if (!check) return; if (!results.has(event.evidence_id)) results.set(event.evidence_id, []); results.get(event.evidence_id).push(check); };
-  const deliveredBy = (event, name, source, test = () => true) => {
-    const request = requests.find(candidate => !used.has(candidate.evidence_id) && candidate.source === source && candidate.event_name === name
-      && time(candidate) >= time(event) - 2000 && time(candidate) <= time(event) + deliveryWindowMs && sameTab(event, candidate) && test(candidate));
-    if (request) used.add(request.evidence_id);
-    return request;
-  };
 
   for (const [index, event] of queue.entries()) {
     if (event.capture?.incomplete) { add(event, { rule: 'CAPTURE_INCOMPLETE', status: 'WARN', message: 'Payload thu chưa đầy đủ; xem bằng chứng gốc.' }); continue; }
@@ -114,7 +105,7 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
         add(event, init ? { rule: 'INSIDER_INIT', status: 'PASS', message: `init sau ${time(init) - time(event)} ms`, evidence_id: init.evidence_id }
           : { rule: 'INSIDER_INIT', status: 'FAIL', message: 'Không có init sau push: Insider sẽ không gửi page view này' });
         if (init) {
-          const hit = deliveredBy(init, 'pageView', 'INSIDER');
+          const hit = sentBy.get(event.evidence_id);
           add(event, hit ? { rule: 'DELIVERED', status: 'PASS', message: `Insider đã gửi pageView${hit.payload?.page_type ? ` (page_type=${hit.payload.page_type})` : ''} sau ${time(hit) - time(event)} ms`, evidence_id: hit.evidence_id }
             : { rule: 'DELIVERED', status: 'WARN', message: 'Chưa thấy request pageView của Insider (hit.api) sau init' });
         }
@@ -124,9 +115,10 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
         const shapeOk = Array.isArray(payload.value) && item && typeof item.event_name === 'string' && item.event_parameters && typeof item.event_parameters === 'object';
         add(event, shapeOk ? { rule: 'CUSTOM_EVENT_SHAPE', status: 'PASS', message: 'Đúng cấu trúc' } : { rule: 'CUSTOM_EVENT_SHAPE', status: 'FAIL', message: 'value phải là mảng các {event_name, event_parameters}' });
       }
-      if (type === 'custom_event' || INSIDER_SERVER_NAME[type]) {
+      // Custom events, cart pushes (add_to_cart, item_added_to_cart…), dispatches and insider_object pages.
+      if (!INSIDER_PAGE_TYPES.has(type) && (type === 'custom_event' || eventKind(event) === 'business')) {
         const name = INSIDER_SERVER_NAME[type] ?? event.event_name;
-        const request = deliveredBy(event, name, 'INSIDER');
+        const request = sentBy.get(event.evidence_id);
         add(event, request ? { rule: 'DELIVERED', status: 'PASS', message: `Insider đã nhận ${name} sau ${time(request) - time(event)} ms`, evidence_id: request.evidence_id }
           : { rule: 'DELIVERED', status: 'WARN', message: `Chưa thấy request ${name} gửi lên Insider trong ${deliveryWindowMs / 1000}s` });
       }
@@ -149,7 +141,7 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
       if (event.event_name === 'coupon_interacted') {
         add(event, COUPON_ACTIONS.includes(payload.action) ? { rule: 'COUPON_ACTION', status: 'PASS', message: payload.action } : { rule: 'COUPON_ACTION', status: 'FAIL', message: `action ${JSON.stringify(payload.action)} không thuộc ${COUPON_ACTIONS.join('/')}` });
       }
-      const request = deliveredBy(event, event.event_name, 'GA4');
+      const request = sentBy.get(event.evidence_id);
       add(event, request ? { rule: 'DELIVERED', status: 'PASS', message: `GA4 đã nhận sau ${time(request) - time(event)} ms`, evidence_id: request.evidence_id }
         : { rule: 'DELIVERED', status: 'WARN', message: `Chưa thấy request GA4 (/g/collect) cho ${event.event_name} trong ${deliveryWindowMs / 1000}s: tag GA4 chưa cấu hình, bị chặn, hoặc đang gom batch` });
     }
@@ -159,6 +151,18 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
   }
 
   for (const request of requests) if (request.source === 'INSIDER') for (const check of dateChecks(request.payload?.event_params ?? {})) add(request, check);
+
+  // A hit repeating the previous one of its kind for the same page shortly after: sent twice. A site with
+  // two GA4 properties sends each event once per measurement ID; that is not a repeat.
+  const lastHit = new Map();
+  for (const request of requests) {
+    if (eventKind(request) !== 'business') continue;
+    let path = ''; try { const url = new URL(request.page?.url); path = url.host + url.pathname; } catch { /* no page URL */ }
+    const key = `${request.source}|${request.payload?.tid ?? ''}|${request.event_name}|${path}`, previous = lastHit.get(key);
+    if (previous && time(request) - time(previous) <= REPEAT_MS) add(request, { rule: 'DUPLICATE', status: 'WARN',
+      message: `Gửi lặp ${request.event_name} lên ${request.source === 'GA4' ? `Google${request.payload?.tid ? ` ${request.payload.tid}` : ''}` : 'Insider'} ${((time(request) - time(previous)) / 1000).toFixed(1)} s sau lần trước, cùng trang${previous.page?.url !== request.page?.url ? ' (URL chỉ khác tham số)' : ''}`, evidence_id: previous.evidence_id });
+    lastHit.set(key, request);
+  }
 
   const summary = Object.entries(FIRING_RULES).map(([rule, label]) => {
     const all = [...results.entries()].flatMap(([id, checks]) => checks.filter(check => check.rule === rule).map(check => ({ ...check, id })));

@@ -53,6 +53,28 @@ test('explanation preserves verdict, sanitizes input and caches duplicate reques
   assert.equal(JSON.parse(transport.calls[1].init.body).provider.data_collection, 'deny');
 });
 
+test('event explanation carries the local verdict, sanitizes the payload and rejects malformed answers', async () => {
+  const answer = { summary: 'Website đẩy search_hotel vào InsiderQueue khi bấm Tìm kiếm. Lệch đặc tả.', problems: ['Thiếu `destination_id`.'], next_steps: ['Dev bổ sung `destination_id`.'] };
+  const transport = mockTransport([models, completion(answer)]);
+  const client = new OpenRouterClient(config(transport.fetch));
+  const event = { evidence_id: 'EV-9', event_name: 'search_hotel', source: 'INSIDER', layer: 'JS_QUEUE', page: { url: 'https://ota.test/vi/hotel' }, payload: { type: 'custom_event', email: 'private@example.com' } };
+  const spec = { verdict: 'FAIL', event_name: 'search_hotel', flow: 'Hotel', issues: [{ path: 'value.0.event_parameters.custom.destination_id', code: 'MISSING_FIELD', verdict: 'FAIL' }] };
+  const result = await client.explainEvent({ event, spec, firing: [{ rule: 'insider_date_pair', status: 'PASS' }, { rule: 'destination_id', status: 'WARN', message: 'Có destination, thiếu destination_id' }], specLoaded: true });
+  assert.equal(result.available, true);
+  assert.equal(result.verdict, 'FAIL');
+  assert.deepEqual(result.explanation, answer);
+  const sent = JSON.parse(JSON.parse(transport.calls[1].init.body).messages[1].content);
+  assert.equal(sent.local_verdict, 'FAIL');
+  assert.deepEqual(sent.firing_checks.map(check => check.rule), ['destination_id']);
+  assert.ok(!transport.calls[1].init.body.includes('private@example.com'));
+
+  const outside = new OpenRouterClient(config(mockTransport([models, completion({ summary: 'x', problems: [], next_steps: [] })]).fetch));
+  assert.equal((await outside.explainEvent({ event, specLoaded: true })).verdict, 'NOT_IN_SPECIFICATION');
+  const malformed = new OpenRouterClient(config(mockTransport([models, completion({ note: 'wrong shape' })]).fetch));
+  assert.equal((await malformed.explainEvent({ event })).available, false);
+  assert.equal((await client.explainEvent({})).reason, 'INVALID_AI_INPUT');
+});
+
 test('quota exhaustion is unavailable and provider body is never exposed', async () => {
   const transport = mockTransport([models, { status: 429, data: { error: 'contains-private-secret' } }, { status: 429 }]);
   const delays = [];

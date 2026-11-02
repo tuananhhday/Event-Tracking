@@ -22,7 +22,7 @@ Ví dụ SDK nguồn App được đánh dấu `APP_SDK`. Đây là tài liệu 
 
 Trong **Event trực tiếp**, mở event để xem **Event đầy đủ · thực tế đã thu** và sao chép JSON. Đây là `payload` thực tế đã che thông tin nhạy cảm; không điền thêm tham số từ mẫu. Bảng tham số là cách đọc bổ sung; JSON không bị cắt theo giới hạn dòng/cột của bảng.
 
-`InsiderDispatch` giữ tham số trực tiếp và `insider_object` giữ snapshot đầy đủ. Snapshot và dispatcher nội bộ được phân loại `observation`, cấu hình SDK là `system`; mặc định chỉ hiện `business`. Có thể bật **Hiện tín hiệu kỹ thuật** để xem bằng chứng còn lại. Snapshot không chứng minh một event đã được phát hoặc gửi.
+`InsiderDispatch` giữ tham số trực tiếp và `insider_object` giữ snapshot đầy đủ. Snapshot `insider_object` có `page.type` đã biết hoặc `transaction` là page view tương ứng (`business`), vì đặc tả định nghĩa listing/confirmation bằng nó; snapshot khác là `observation` (tín hiệu nội bộ của SDK qua dispatcher, tên có `:`, không được ghi), cấu hình SDK là `system`; mặc định chỉ hiện `business`. Có thể bật **Hiện tín hiệu kỹ thuật** để xem bằng chứng còn lại. Snapshot không chứng minh một event đã được phát hoặc gửi.
 
 Một push/request chứa nhiều event vẫn được tách theo từng event để so rule. `queue_payload`/`request_payload` giữ batch đầy đủ đã che dữ liệu cùng chỉ số phần tử. Không ghép tham số giữa các event. Dữ liệu opaque vẫn chỉ giữ hash/lý do, không tự giải mã hoặc tái tạo payload.
 

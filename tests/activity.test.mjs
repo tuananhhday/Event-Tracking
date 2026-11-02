@@ -36,8 +36,12 @@ test('request and queue parameter groups retain nested products, types and origi
 
 test('partial captures are reviewable evidence, never a successful or failing field verdict', () => {
   const c = { id: 'TC', source: 'INSIDER', rules: [{ layer: 'JS_QUEUE', event_name: 'cart_page_view', fields: { total: { op: 'type', value: 'number' } } }] };
-  const event = { ...base, layer: 'JS_QUEUE', payload: {}, capture: { incomplete: true, reasons: ['accessor_omitted'] } };
-  assert.equal(specCoverage([c], [event]).rows[0].status, 'REVIEW');
+  const event = { ...base, layer: 'JS_QUEUE', queue_name: 'InsiderQueue', queue_type: 'cart', payload: {}, capture: { incomplete: true, reasons: ['accessor_omitted'] } };
+  const init = { ...base, evidence_id: 'EV-INIT', event_name: 'insider_init', layer: 'JS_QUEUE', queue_name: 'InsiderQueue', queue_type: 'init', payload: { type: 'init' } };
+  const hit = { ...base, evidence_id: 'EV-HIT', event_name: 'pageView', captured_at: '2026-10-30T00:00:01Z', network: { phase: 'request' }, payload: { event: 'pageView', page_type: 'cart' } };
+  assert.equal(specCoverage([c], [event, init, hit]).rows[0].status, 'REVIEW');
+  // Whether it was sent does not depend on how much of the payload could be read.
+  assert.equal(specCoverage([c], [event, init]).rows[0].status, 'NOT_SENT');
   const step = { id: 'STEP', status: 'COMPLETED', started_at: '2026-10-29T00:00:00Z', completed_at: '2026-10-31T00:00:00Z' };
   assert.equal(validateCase(c, [{ ...event, step_id: 'STEP', test_case_id: 'TC' }], step).verdict, 'REVIEW');
   assert.equal(firingChecks([event]).byEvent.get(event.evidence_id)[0].status, 'WARN');

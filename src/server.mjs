@@ -8,21 +8,22 @@ import { SessionManager } from './core/session.mjs';
 import { redact } from './core/privacy.mjs';
 import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
-import { specCoverage, matchEvent } from './core/catalog.mjs';
+import { specCoverage, matchTracked } from './core/catalog.mjs';
+import { linkDeliveries, deliveryStatus, notForwarded, isRequest } from './core/delivery.mjs';
+import { eventKind } from './core/event-kind.mjs';
 import { firingChecks } from './core/firing.mjs';
 import { activityEvent, activityEntries } from './core/activity.mjs';
 import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
-import { CDPCollector, CDPConnection, listTargets } from './collectors/cdp.mjs';
+import { CDPCollector, listTargets } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
-import { ProxyCollector, proxyCaSpki } from './collectors/proxy.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), 'utf8');
 // Each mode has its own screen; styling and client logic are shared assets.
-const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html', proxy: 'proxy.html' };
+const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html' };
 const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -36,20 +37,19 @@ function navigationHint(host, code) {
   return `Không mở được ${host} (${code}).`;
 }
 const reviewedSpecPath = path.join(rootDir, 'imports', 'reviewed-cases.json');
-// One CA for all proxy sessions, so the test browser trusts a single stable key.
-const proxyConfDir = path.join(rootDir, 'profiles', 'mitmproxy');
 
 /** Counts per event name/layer/source over all evidence, for exploring a site without a specification. */
-function summarize(events) {
+function summarize(events, links, now = Date.now()) {
   const groups = new Map();
   for (const event of events) {
     const phase = event.network?.phase;
     const key = [event.layer, event.source, event.event_name].join('|');
     let group = groups.get(key);
-    if (!group) groups.set(key, group = { key, event_name: event.event_name, layer: event.layer, source: event.source, count: 0, bound: 0, failed: 0, first_at: event.captured_at, last_at: event.captured_at, last_evidence_id: null, pages: [] });
+    if (!group) groups.set(key, group = { key, event_name: event.event_name, layer: event.layer, source: event.source, count: 0, bound: 0, failed: 0, not_sent: 0, first_at: event.captured_at, last_at: event.captured_at, last_evidence_id: null, pages: [] });
     if (phase === 'failed' || (phase === 'response' && Number(event.network?.status) >= 400)) group.failed++;
     if (phase && phase !== 'request') continue;
     group.count++; if (event.step_id) group.bound++;
+    if (deliveryStatus(event, links, now) === 'not_sent') group.not_sent++;
     group.last_at = event.captured_at; group.last_evidence_id = event.evidence_id;
     let page = ''; try { const url = new URL(event.page?.url); page = url.host + url.pathname; } catch {}
     if (page && !group.pages.includes(page) && group.pages.length < 3) group.pages.push(page);
@@ -57,11 +57,23 @@ function summarize(events) {
   return [...groups.values()].filter(group => group.count).sort((a, b) => b.last_at.localeCompare(a.last_at));
 }
 
-export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo' } = {}) {
-  if (!['cdp', 'cdp-ai', 'proxy'].includes(mode)) throw new Error('Mode must be cdp, cdp-ai or proxy.');
+// Writes the OpenRouter key entered on the AI screen into .env (excluded from Git and the portable
+// package) and turns AI on; other settings in the file are kept.
+async function saveAiKey(envPath, key) {
+  const current = await fs.readFile(envPath, 'utf8')
+    .catch(() => fs.readFile(path.join(rootDir, '.env.example'), 'utf8'))
+    .catch(() => '');
+  const lines = current.split(/\r?\n/).filter((line, index, all) => line || index < all.length - 1);
+  for (const [name, value] of [['AI_ENABLED', 'true'], ['OPENROUTER_API_KEY', key]]) {
+    const index = lines.findIndex(line => line.startsWith(`${name}=`));
+    if (index === -1) lines.push(`${name}=${value}`); else lines[index] = `${name}=${value}`;
+  }
+  await fs.writeFile(envPath, `${lines.join('\n')}\n`, { mode: 0o600 });
+}
+
+export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo', envPath = path.join(rootDir, '.env') } = {}) {
+  if (!['cdp', 'cdp-ai'].includes(mode)) throw new Error('Mode must be cdp or cdp-ai.');
   const csrf = randomBytes(24).toString('hex');
-  const bundledProxy = path.join(rootDir, '.venv-proxy', process.platform === 'win32' ? 'Scripts/mitmdump.exe' : 'bin/mitmdump');
-  const defaultProxyCommand = await fs.access(bundledProxy).then(() => bundledProxy, () => 'mitmdump');
   // 'auto' (CLI) resumes reviewed rules or starts empty for a real site; tests keep the demo default.
   let specSource = 'demo', cases;
   if (Array.isArray(initialCases)) { cases = initialCases; specSource = initialCases.length ? 'file' : 'none'; }
@@ -70,7 +82,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     catch { cases = []; specSource = 'none'; }
   } else cases = await loadDemoCases();
   const manager = new SessionManager({ mode, runsDir, cases });
-  let activePatterns = [...DEFAULT_ENDPOINT_PATTERNS], proxyCa = null, navigationError = null;
+  let activePatterns = [...DEFAULT_ENDPOINT_PATTERNS], navigationError = null;
   // Firing checks over all evidence; recomputed only when evidence grows.
   let firingCache = { count: -1, result: null };
   const firingResult = events => { if (firingCache.count !== events.length) firingCache = { count: events.length, result: firingChecks(events) }; return firingCache.result; };
@@ -80,12 +92,28 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const problems = [...byEvent.entries()].flatMap(([id, checks]) => checks.filter(check => check.status !== 'PASS').map(check => ({ ...check, id, event_name: byId.get(id)?.event_name, source: byId.get(id)?.source, layer: byId.get(id)?.layer, at: byId.get(id)?.captured_at })));
     return { summary, problems: problems.slice(-200).reverse(), problemCount: problems.length };
   };
+  // Which push each vendor hit sent; recomputed only when evidence grows.
+  let linkCache = { count: -1, links: null };
+  const deliveryLinks = events => { if (linkCache.count !== events.length) linkCache = { count: events.length, links: linkDeliveries(events) }; return linkCache.links; };
+  // Events Google/Insider received (one per vendor hit, named as the website pushed them), and pushes
+  // no request carried (yet).
+  const deliveryCounts = events => {
+    const links = deliveryLinks(events), now = Date.now(), counts = { sent: 0, kinds: 0, not_sent: 0, pending: 0 }, kinds = new Set();
+    for (const event of events) {
+      const status = deliveryStatus(event, links, now);
+      if (status === 'not_sent' || status === 'pending') counts[status]++;
+      else if (isRequest(event) && eventKind(event) === 'business') {
+        counts.sent++; kinds.add(`${event.source}|${links.pushOf.get(event.evidence_id)?.event_name ?? event.event_name}`);
+      }
+    }
+    return { ...counts, kinds: kinds.size };
+  };
   // Event-to-specification matches, reset whenever the cases change.
   let coverageCases = null, coverageCache = new Map();
   const coverage = events => {
     if (!manager.cases.length) return null;
     if (coverageCases !== manager.cases) { coverageCases = manager.cases; coverageCache = new Map(); }
-    return specCoverage(manager.cases, events, coverageCache);
+    return specCoverage(manager.cases, events, coverageCache, { links: deliveryLinks(events) });
   };
   const statuses = []; let collector = null, browserHandle = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
@@ -93,11 +121,70 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   let ai = aiClient ?? new OpenRouterClient();
   const state = ({ compact = false } = {}) => {
     const snapshot = manager.snapshot();
-    return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, defaultProxyCommand, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
-      specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [], proxyCa,
-      eventSummary: summarize(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
+    return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
+      specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [],
+      eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
+  // One captured event with the specification row it matched (field-by-field outcome), its firing
+  // checks, and its delivery: the website push, the vendor hit that sent it, and for GA4 the pushed
+  // fields Google did not receive.
+  function eventDetail(id) {
+    const events = manager.snapshot().events;
+    const event = events.find(candidate => candidate.evidence_id === id);
+    if (!event) return null;
+    const links = deliveryLinks(events);
+    const match = manager.cases.length ? matchTracked(manager.cases, event, { links }) : null;
+    const testCase = match && manager.cases.find(c => c.id === match.case_id);
+    const spec = match ? { ...match, event_name: testCase?.rules?.[0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
+    const push = event.layer === 'JS_QUEUE' ? event : links.pushOf.get(event.evidence_id) ?? null;
+    const hit = event.layer === 'TRACKING_REQUEST' ? event : links.sentBy.get(event.evidence_id) ?? null;
+    const delivery = { status: deliveryStatus(push ?? event, links), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
+    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery };
+  }
+  // What the AI reads to review a session: the QC's requirement, the specification rows the session is
+  // about (rows with evidence and the unseen rows of the same flows), the tool's verdict per row, what
+  // reached Google/Insider, pushes never sent, events outside the specification and firing problems.
+  function sessionReviewInput(events, requirement) {
+    const links = deliveryLinks(events), now = Date.now();
+    const rows = activityEntries(events, { links, now }).filter(row => row.event_kind === 'business');
+    const covered = coverage(events);
+    const flows = new Set(covered?.rows.filter(row => row.seen || row.not_sent).map(row => row.flow));
+    const relevant = covered ? covered.rows.filter(row => row.status !== 'NOT_SEEN' || !flows.size || flows.has(row.flow)).slice(0, 80) : [];
+    const caseById = new Map(manager.cases.map(testCase => [testCase.id, testCase]));
+    const where = url => { try { const parsed = new URL(url); return parsed.pathname + parsed.search.slice(0, 80); } catch { return ''; } };
+    return {
+      requirement: requirement || null,
+      specification: relevant.map(row => ({ event: row.event_name, vendor: row.source, flow: row.flow, when_fired: String(row.description ?? '').slice(0, 220), notes: String(row.notes ?? '').slice(0, 160),
+        expected_fields: Object.keys(caseById.get(row.case_id)?.rules?.[0]?.fields ?? {}).slice(0, 30), sheet_row: `${row.sheet ?? ''}!${row.row ?? ''}` })),
+      coverage: relevant.map(row => ({ event: row.event_name, flow: row.flow, status: row.status, times_sent: row.seen, not_sent: row.not_sent,
+        issues: row.issues.slice(0, 6).map(issue => ({ code: issue.code, field: issue.path, expected: issue.expected, actual: issue.actual })) })),
+      sent_events: rows.filter(row => row.delivery === 'sent').slice(-120).map(row => ({ at: row.captured_at.slice(11, 19), vendor: row.source, event: row.display_name, page: where(row.page?.url),
+        ...(row.measurement_id ? { ga4_property: row.measurement_id } : {}), ...(row.repeat ? { repeat_after_s: Number((row.repeat.after_ms / 1000).toFixed(1)) } : {}) })),
+      not_sent: rows.filter(row => row.delivery === 'not_sent').slice(-40).map(row => ({ at: row.captured_at.slice(11, 19), vendor: row.source, event: row.event_name, page: where(row.page?.url) })),
+      outside_spec: covered?.unmatched.slice(0, 30).map(item => ({ vendor: item.source, event: item.event_name, count: item.count })) ?? [],
+      firing_problems: firingState(events).problems.slice(0, 40).map(problem => ({ rule: problem.rule, level: problem.status, event: problem.event_name, message: problem.message })),
+    };
+  }
+  // The AI writes the words; which rows are correct, wrong or missing is the tool's verdict. The three
+  // lists are rebuilt from it, keeping the AI's sentence for a row only when it names that row's event
+  // and no other event of the review (page_view is not named by "listing_page_view").
+  function alignReview(review, rows) {
+    const literal = text => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const named = [...new Set(rows.map(row => row.event))].map(event => [event, new RegExp(`(?:^|\\W)${literal(event)}(?:\\W|$)`)]);
+    const used = new Set();
+    const sentence = (items, row) => {
+      const item = items.find(text => !used.has(text) && named.every(([event, pattern]) => pattern.test(text) === (event === row.event)));
+      if (item) used.add(item);
+      return item;
+    };
+    const issues = row => row.issues.slice(0, 3).map(issue => [issue.code, issue.field].filter(Boolean).join(' ')).join(', ');
+    return { ...review,
+      correct: rows.filter(row => row.status === 'MATCH').map(row => `${row.event} · ${row.flow}`),
+      wrong: rows.filter(row => row.status === 'MISMATCH').map(row => sentence(review.wrong, row) ?? `${row.event} · ${row.flow}: ${issues(row)}`),
+      missing: rows.filter(row => row.status === 'NOT_SEEN' || row.status === 'NOT_SENT')
+        .map(row => sentence(review.missing, row) ?? `${row.event} · ${row.flow}: ${row.status === 'NOT_SENT' ? 'có push nhưng không gửi lên server' : 'chưa thấy'}`) };
+  }
   async function bounded(promise, milliseconds) {
     let timer;
     try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Cleanup deadline exceeded')), milliseconds); })]); }
@@ -110,8 +197,6 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     try { await bounded(current.stop(), 4500); }
     catch {
       current.forceStop?.();
-      // ProxyCollector owns only the mitmdump child it launched.
-      if (current instanceof ProxyCollector) current.process?.kill();
       status('Collector đã dừng sau giới hạn thời gian chờ.');
     }
   }
@@ -198,7 +283,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
       if (req.method === 'GET' && url.pathname === '/api/activity') {
-        const entries = activityEntries(manager.snapshot().events);
+        const events = manager.snapshot().events;
+        const entries = activityEntries(events, { links: deliveryLinks(events) });
         const before = url.searchParams.get('before');
         const end = before ? entries.findIndex(e => e.evidence_ids.includes(before)) : entries.length;
         if (end < 0) return send(res, 400, { error: 'Mốc event không thuộc phiên hiện tại.' });
@@ -207,17 +293,22 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           ? { ...activity, json: undefined, default_count: Object.keys(activity.json.default_parameters).length, custom_count: Object.keys(activity.json.custom_parameters).length } : activity);
         return send(res, 200, { events: page, total: entries.length, next: start > 0 ? entries[start].evidence_id : null, session_id: manager.session?.id || null });
       }
+      if (req.method === 'GET' && url.pathname === '/api/pushes') {
+        // dataLayer / InsiderQueue as F12 shows them: one row per array element (a custom_event push
+        // carrying several events is one element), with whether it reached the vendor.
+        const events = manager.snapshot().events, links = deliveryLinks(events), now = Date.now();
+        const pushes = events.filter(event => event.layer === 'JS_QUEUE' && !(event.queue_batch_index > 0));
+        return send(res, 200, { total: pushes.length, session_id: manager.session?.id || null, pushes: pushes.slice(-300).reverse().map(event => ({
+          evidence_id: event.evidence_id, captured_at: event.captured_at, queue_name: event.queue_name, queue_index: event.queue_index, event_name: event.event_name,
+          event_kind: eventKind(event), historical: Boolean(event.historical), page: event.page, payload: event.queue_payload ?? event.payload,
+          delivery: deliveryStatus(event, links, now), sent_by: links.sentBy.get(event.evidence_id)?.evidence_id ?? null })) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
       if (req.method === 'GET' && url.pathname === '/api/event') {
-        const id = url.searchParams.get('id');
-        const event = manager.snapshot().events.find(candidate => candidate.evidence_id === id);
-        if (!event) return send(res, 404, { error: 'Không có event này trong phiên.' });
-        // The specification row this event was matched to, with its field-by-field outcome.
-        const match = manager.cases.length ? matchEvent(manager.cases, event) : null;
-        const testCase = match && manager.cases.find(c => c.id === match.case_id);
-        const spec = match ? { ...match, event_name: testCase?.rules?.[0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
-        const firing = firingResult(manager.snapshot().events).byEvent.get(event.evidence_id) ?? [];
-        return send(res, 200, { event, spec, firing, activity: activityEntries(manager.snapshot().events).find(row => row.evidence_ids.includes(event.evidence_id)) ?? activityEvent(event) });
+        const detail = eventDetail(url.searchParams.get('id'));
+        if (!detail) return send(res, 404, { error: 'Không có event này trong phiên.' });
+        const events = manager.snapshot().events;
+        return send(res, 200, { ...detail, activity: activityEntries(events, { links: deliveryLinks(events) }).find(row => row.evidence_ids.includes(detail.event.evidence_id)) ?? activityEvent(detail.event) });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });
@@ -296,7 +387,6 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           const patterns = Array.isArray(data.patterns) ? data.patterns.filter(p => typeof p === 'string' && p.length && p.length < 500) : null;
           if (!patterns?.length) throw new Error('Cần ít nhất một endpoint.');
           for (const pattern of patterns) { try { new RegExp(pattern, 'i'); } catch { throw new Error(`Regex endpoint không hợp lệ: ${pattern}`); } }
-          if (mode === 'proxy' && manager.session?.status === 'RUNNING') throw new Error('Proxy nhận allowlist khi khởi động; dừng phiên rồi mở phiên mới để áp dụng.');
           activePatterns = patterns; collector?.setPatterns?.(patterns);
           status(`Allowlist: ${patterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
         } else if (url.pathname === '/api/start') {
@@ -307,7 +397,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
           if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new Error('URL cần dùng http hoặc https.');
           const browser = data.browser === 'edge' ? 'edge' : 'chrome';
-          const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223, proxy: 9224 }[mode]));
+          const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223 }[mode]));
           const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(p => typeof p === 'string' && p.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
           if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
           activePatterns = endpointPatterns;
@@ -317,44 +407,24 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             try { await dns.lookup(targetUrl.hostname); }
             catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
           }
-          const captureQueues = mode !== 'proxy' && data.captureQueues !== false;
+          const captureQueues = data.captureQueues !== false;
           manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues }); exported = null;
           const epoch = ++captureEpoch;
           const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
           try {
-            if (mode === 'proxy') {
-              collector = new ProxyCollector({ onEvent: emit, onStatus: status, port: Number(data.proxyPort || 8080), runDir: manager.runDir,
-                endpointPatterns, command: data.proxyCommand || defaultProxyCommand, confDir: proxyConfDir });
-              await collector.start({ ...manager.session, runDir: manager.runDir });
-              const trustCa = data.trustProxyCa !== false;
-              const ca = await proxyCaSpki(proxyConfDir);
-              proxyCa = { cert_path: ca.file.replace(/.pem$/, '.cer'), trusted_in_test_browser: trustCa };
-              if (closing || epoch !== captureEpoch) return send(res, 200, state());
-              const opened = await openTestBrowser({ browser, port: debugPort, headless, url: targetUrl.toString(), profileDir: path.join(rootDir, 'profiles', `proxy-${browser}`), proxyServer: `http://127.0.0.1:${Number(data.proxyPort || 8080)}`, trustSpki: trustCa ? ca.spki : undefined });
-              {
-                const page = (await listTargets(debugPort)).find(target => target.id === opened.targetId);
-                if (!page) throw new Error('Không tìm thấy tab test vừa mở.');
-                const connection = new CDPConnection(page.webSocketDebuggerUrl);
-                try { await connection.connect(); const navigation = await connection.send('Page.navigate', { url: targetUrl.toString() }); if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText); }
-                finally { connection.close(); }
-              }
-              status(trustCa ? 'Proxy sẵn sàng. Trình duyệt test chỉ tin CA proxy cục bộ này; HTTPS dùng được.' : 'Proxy sẵn sàng. Chưa tin CA proxy: website HTTPS sẽ báo lỗi chứng chỉ.');
-              if (navigationError) status(navigationError);
-            } else {
-              const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
-              if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
-              collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
-              await collector.start(manager.session);
-              if (!data.attach) {
-                const page = collector.connections.get(opened.targetId);
-                if (!page) throw new Error('Không kết nối được tab test vừa mở.');
-                const { frameTree } = await page.connection.send('Page.getFrameTree');
-                const navigation = await page.connection.send('Page.navigate', { url: targetUrl.toString(), frameId: frameTree.frame.id });
-                if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
-              }
-              status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
-              if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
+            const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
+            if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
+            collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
+            await collector.start(manager.session);
+            if (!data.attach) {
+              const page = collector.connections.get(opened.targetId);
+              if (!page) throw new Error('Không kết nối được tab test vừa mở.');
+              const { frameTree } = await page.connection.send('Page.getFrameTree');
+              const navigation = await page.connection.send('Page.navigate', { url: targetUrl.toString(), frameId: frameTree.frame.id });
+              if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
             }
+            status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
+            if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
             if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); }
           } catch (error) { await stopCapture(); manager.abort(); throw error; }
         } else if (url.pathname === '/api/step/start') {
@@ -379,15 +449,36 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname === '/api/export') {
           if (!manager.session) throw new Error('Chưa có phiên.');
           exported = await exportReports(manager.snapshot(), manager.runDir); status('Đã xuất report hiện tại.');
+        } else if (url.pathname === '/api/ai-key') {
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
+          const key = String(data.key ?? '').trim();
+          if (!/^\S{20,300}$/.test(key)) throw new Error('Key chưa đúng: dán nguyên key OpenRouter (dạng sk-or-v1-…), không có khoảng trắng.');
+          await saveAiKey(envPath, key);
+          process.env.AI_ENABLED = 'true'; process.env.OPENROUTER_API_KEY = key;
+          if (!aiClient) { ai.close?.(); ai = new OpenRouterClient(); }
+          status('Đã lưu key OpenRouter vào .env và bật AI. Bấm “Kiểm tra kết nối AI” để thử.');
+        } else if (url.pathname === '/api/ai-review') {
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
+          const events = manager.snapshot().events;
+          if (!events.length) throw new Error('Phiên chưa có event để AI kiểm tra. Mở website và thao tác trước.');
+          const input = sessionReviewInput(events, String(data.requirement ?? '').trim().slice(0, 3000));
+          const result = await ai.reviewSession(input);
+          if (result.available) result.review = alignReview(result.review, input.coverage);
+          return send(res, 200, result);
+        } else if (url.pathname === '/api/ai-explain-event') {
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
+          const detail = eventDetail(String(data.id));
+          if (!detail) throw new Error('Không có event này trong phiên.');
+          return send(res, 200, await ai.explainEvent({ ...detail, specLoaded: manager.cases.length > 0 }));
         } else if (url.pathname === '/api/ai-draft') {
-          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong phương án 2.');
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           if (!data.input || typeof data.input !== 'object' || Array.isArray(data.input)) throw new Error('AI input cần là JSON object chứa đặc tả.');
           const draft = await ai.draftCase(data.input); return send(res, 200, draft);
         } else if (url.pathname === '/api/ai-models') {
-          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong phương án 2.');
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           return send(res, 200, { ...await ai.listRoutingCandidates({ task: 'spec' }), diagnostics: ai.diagnostics() });
         } else if (url.pathname === '/api/ai-test') {
-          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong phương án 2.');
+          if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           const result = await ai.explain({ test_case_id: 'AI-CONNECTION-DEMO', verdict: 'FAIL', issues: [{ code: 'MISSING_FIELD', path: 'destination_id', evidence_id: 'DEMO-EV-1' }] });
           return send(res, 200, { ...result, diagnostics: ai.diagnostics() });
         } else if (url.pathname === '/api/targets') return send(res, 200, { targets: await listTargets(Number(data.port || 9222)) });

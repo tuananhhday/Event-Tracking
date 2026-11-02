@@ -51,10 +51,10 @@ test('GA4 ecommerce needs a reset push, complete items and a /g/collect hit; rep
   assert.ok(!result.byEvent.has(reset.evidence_id), 'the reset push itself is not judged');
 });
 
-test('Insider hit bodies are base64 JSON and decode to pageView', () => {
+test('Insider hit bodies are base64 JSON; a pageView hit is the page event its page_type names', () => {
   const body = Buffer.from(JSON.stringify({ version: '1.0', event: 'pageView', page_type: 'main', current_url: 'https://vinpearlota.com/vi' })).toString('base64');
   const [record] = decodeRequest({ url: 'https://hit.api.useinsider.com/hit', body, contentType: 'text/plain;charset=UTF-8' });
-  assert.equal(record.source, 'INSIDER'); assert.equal(record.event_name, 'pageView'); assert.equal(record.payload.page_type, 'main');
+  assert.equal(record.source, 'INSIDER'); assert.equal(record.event_name, 'homepage_view'); assert.equal(record.payload.event, 'pageView'); assert.equal(record.payload.page_type, 'main');
 });
 
 test('Insider.eventManager.dispatch calls and insider_object snapshots become Insider events', () => {

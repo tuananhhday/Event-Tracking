@@ -37,7 +37,7 @@ export function checkEdgeDebugPolicy() {
   for (const hive of ['HKLM', 'HKCU']) {
     const result = spawnSync('reg.exe', ['query', `${hive}\\SOFTWARE\\Policies\\Microsoft\\Edge`, '/v', 'RemoteDebuggingAllowed'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
     if (/RemoteDebuggingAllowed\s+REG_DWORD\s+0x0\b/i.test(result.stdout || '')) {
-      throw new Error('Edge RemoteDebuggingAllowed policy is disabled. Contact IT or use the proxy collector; policy is not bypassed.');
+      throw new Error('Edge RemoteDebuggingAllowed policy is disabled. Contact IT or use Chrome; policy is not bypassed.');
     }
   }
 }
@@ -53,16 +53,11 @@ function validateProfile(path) {
 }
 
 export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'about:blank', profileDir,
-  executablePath, proxyServer, trustSpki, headless = false, startupTimeoutMs = 15000 } = {}) {
+  executablePath, headless = false, startupTimeoutMs = 15000 } = {}) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Debug port must be an integer from 1024 to 65535.');
   if (browser === 'edge') checkEdgeDebugPolicy();
   if (!['chrome', 'edge'].includes(browser)) throw new Error('Browser must be chrome or edge.');
   if (!/^(https?:\/\/|about:blank$)/i.test(url)) throw new Error('Browser URL must use HTTP or HTTPS, or be about:blank.');
-  if (proxyServer && !/^(?:http:\/\/)?(?:127\.0\.0\.1|localhost):\d{2,5}$/i.test(proxyServer)) {
-    throw new Error('Test proxy must be a localhost HTTP proxy.');
-  }
-  // Trusts only certificates carrying this one public key (the local proxy CA), not any certificate.
-  if (trustSpki && (!proxyServer || !/^[A-Za-z0-9+/]{43}=$/.test(trustSpki))) throw new Error('trustSpki needs a local proxy and a SHA-256 SPKI hash.');
   const executable = executablePath || findBrowser(browser);
   if (!isAbsolute(executable) || !executableExists(executable)) throw new Error('executablePath must point to an existing absolute browser executable.');
   const profile = validateProfile(profileDir || resolve('.profiles', browser));
@@ -74,8 +69,6 @@ export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'ab
   const args = [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--new-window'];
   if (!headless) args.push('--start-maximized');
-  if (proxyServer) args.push(`--proxy-server=${proxyServer}`, '--proxy-bypass-list=<-loopback>');
-  if (trustSpki) args.push(`--ignore-certificate-errors-spki-list=${trustSpki}`);
   if (headless) args.push('--headless=new');
   args.push(url);
   const child = spawn(executable, args, { windowsHide: true, stdio: 'ignore' });

@@ -3,9 +3,9 @@ import fs from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { createApp } from './server.mjs';
 
-// Own all three local applications so the portable launcher needs one window.
-export async function createHub({ port = 4172, modePorts = [4173, 4174, 4175], runsDir } = {}) {
-  const modes = ['cdp', 'cdp-ai', 'proxy'];
+// Own both local applications so the portable launcher needs one window.
+export async function createHub({ port = 4172, modePorts = [4173, 4174], runsDir } = {}) {
+  const modes = ['cdp', 'cdp-ai'];
   const apps = [];
   const csrf = randomBytes(24).toString('hex');
   let closing;

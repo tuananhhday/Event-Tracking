@@ -2,14 +2,14 @@
 <html lang="vi" data-theme="light">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EventQA · 02 CDP + AI</title>
+<title>EventQA · 02 Bản AI</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d4fd8'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,sans-serif' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3E02%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/assets/eventqa.css">
 </head>
 <body data-mode="cdp-ai">
 <nav class="app-rail" aria-label="Điều hướng chính"><a class="rail-logo" href="http://127.0.0.1:4172/" title="Chọn chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 13 4-7 4 12 4-12 4 7"/></svg></a><span class="rail-divider"></span><button type="button" data-workspace-tab="events" title="Event trực tiếp" aria-label="Event trực tiếp" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Event</span></button><button type="button" data-workspace-tab="spec" title="Đối chiếu đặc tả" aria-label="Đối chiếu đặc tả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>Đặc tả</span></button><button type="button" data-workspace-tab="results" title="Kết quả" aria-label="Kết quả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg><span>Kết quả</span></button><button type="button" data-setup-stage="report" title="Xuất báo cáo" aria-label="Xuất báo cáo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><span>Xuất</span></button><div class="rail-bottom"><button type="button" data-setup-stage="session" title="Thiết lập phiên" aria-label="Thiết lập phiên"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button><a href="http://127.0.0.1:4172/" title="Đổi chế độ" aria-label="Đổi chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a></div></nav>
 <header class="topbar">
-  <div class="brand"><div class="brand-mark">02</div><div><span class="eyebrow">KHÔNG GIAN KIỂM THỬ / CDP + AI</span><h1>Kiểm tra event với AI</h1><p>Bắt event trực tiếp · AI hỗ trợ phân tích kết quả</p></div></div>
+  <div class="brand"><div class="brand-mark">02</div><div><span class="eyebrow">KHÔNG GIAN KIỂM THỬ / BẢN AI</span><h1>Kiểm tra event với AI</h1><p>Bắt event như bản thường · AI giải thích bằng tiếng Việt dễ hiểu</p></div></div>
   <span id="ai-chip" class="pill">AI: đang tải</span>
   <button type="button" class="btn setup-toggle" id="setup-toggle" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg><span>Ẩn thiết lập</span></button>
   <span id="conn" class="conn">Đã kết nối</span>
@@ -41,7 +41,7 @@
           <button type="button" class="btn" data-action="scan-targets" data-lock-running>Quét tab trên cổng debug</button>
           <div id="targets" class="cases" style="margin-top:8px"></div>
         </div>
-        <label class="check"><input id="request-only" type="checkbox" data-lock-running> Chỉ bắt request · không gắn hook vào website</label><p class="hint">Dùng nếu website lag hoặc không thao tác được. Không đọc dataLayer / InsiderQueue; tầng JS chưa quan sát sẽ trả REVIEW. Áp dụng khi mở phiên mới.</p>
+        <label class="check"><input id="request-only" type="checkbox" data-lock-running> Không đọc dataLayer / InsiderQueue (chỉ khi website bị lag)</label><p class="hint">Để trống để thấy đủ như F12: dataLayer, InsiderQueue và request gửi lên Google/Insider. Chỉ tick khi website lag hoặc không thao tác được; khi đó app chỉ thấy request và không so được với F12 Console. Áp dụng khi mở phiên mới.</p>
         <span class="label">Tracking cần bắt</span>
         <div id="vendors" class="vendor-list"></div>
         <details class="more"><summary>Endpoint bổ sung &amp; nâng cao</summary>
@@ -94,7 +94,7 @@
           <div class="row" style="margin-top:6px"><button type="button" class="btn small shrink" id="context-format">Định dạng</button><button type="button" class="btn small shrink" id="context-reset">Khôi phục mẫu</button></div>
           <div id="step-idle" style="margin-top:14px">
             <button type="button" class="btn primary big" id="step-start" data-action="step-start">▶ Bắt đầu bước</button>
-            <p class="hint">Bấm trước khi thao tác. Khi bước FAIL, AI tự thêm gợi ý nguyên nhân dưới kết quả.</p>
+            <p class="hint">Bấm trước khi thao tác. Nếu bước ra <b>Cần sửa</b>, AI tự viết nguyên nhân bằng tiếng Việt ngay dưới kết quả.</p>
           </div>
           <div id="recorder" class="recorder hidden">
             <div><span class="label" style="margin:0">Event đã gắn vào bước</span><span id="rec-count" class="big-num">0</span></div>
@@ -128,8 +128,8 @@
     <div id="error" class="banner error hidden" role="alert"></div>
     <div id="ai-off-banner" class="banner warn hidden"><p></p></div>
     <div class="metrics">
-      <div class="metric"><span>Event thu được</span><b id="event-count">0</b></div>
-      <div class="metric"><span>Loại event</span><b id="kind-count">0</b></div>
+      <div class="metric"><span>Event đã gửi lên server</span><b id="event-count">0</b></div>
+      <div class="metric"><span>Loại event đã gửi</span><b id="kind-count">0</b></div>
       <div class="metric PASS"><span>Đạt</span><b id="pass-count">0</b></div>
       <div class="metric FAIL"><span>Cần sửa</span><b id="fail-count">0</b></div>
       <div class="metric REVIEW"><span>Cần duyệt</span><b id="review-count">0</b></div>
@@ -138,16 +138,16 @@
       <div class="board-heading"><div><span class="eyebrow">QUAN SÁT &amp; ĐỐI CHIẾU</span><h2 id="board-title">Event trực tiếp</h2></div><span class="live-indicator" id="board-capture-status">Chưa mở phiên</span></div>
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="ai">✦ Trợ lý AI</button>
         <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
-        <button type="button" class="tab" role="tab" data-tab="ai">✦ Trợ lý AI</button>
         <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
       </div>
       <div class="tabpanel" data-panel="events">
         <div class="toolbar">
-          <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Hoạt động · Event</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
+          <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Đã gửi lên server</button><button type="button" data-view="f12" aria-pressed="false">dataLayer · InsiderQueue (F12)</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
           <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
           <select id="ev-source" aria-label="Lọc theo nguồn"><option value="">Mọi nguồn</option></select>
           <input id="ev-search" type="text" placeholder="Tìm event, giá trị, evidence ID…" aria-label="Tìm bằng chứng">
@@ -157,11 +157,14 @@
           <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
           <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
           <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện event hệ thống <span class="hint">(gtm.*, ecommerce_reset, insider_init…)</span></label>
+          <label class="check" style="margin:0"><input id="ev-unsent" type="checkbox"> Hiện cả push chưa gửi lên server</label>
         </div>
+        <div id="ev-delivery-note" class="banner warn hidden"></div>
         <div id="ev-filterbar" class="filterbar hidden"></div>
         <button type="button" id="ev-pending" class="pending hidden"></button>
         <div id="activity-filters" class="toolbar"><label class="activity-date">Từ ngày<input type="date" id="activity-from"></label><label class="activity-date">Đến ngày<input type="date" id="activity-to"></label><span class="hint">Chọn một event để xem / sao chép / tải JSON thực tế.</span></div>
         <div id="activity-events"></div><button type="button" class="btn hidden" id="activity-more">Tải thêm lịch sử event</button>
+        <div id="push-list" class="hidden"></div>
         <div id="event-groups" class="hidden"></div>
         <div id="events" class="hidden"></div>
       </div>
@@ -170,7 +173,7 @@
         <div class="toolbar" style="margin-top:12px">
           <select id="spec-flow" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
           <select id="spec-platform" aria-label="Lọc theo nền tảng"><option value="">Mọi nền tảng</option><option value="GA4">GA4</option><option value="INSIDER">Insider</option></select>
-          <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
+          <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SENT">Có push, không gửi lên server</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
         <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
@@ -186,20 +189,46 @@
       <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>
       <div class="tabpanel hidden" data-panel="ai">
-        <h3 class="section-title">Kết nối &amp; giới hạn chi phí</h3>
-        <div id="ai-config" class="kv"></div>
-        <div id="ai-keys" class="not-run"></div>
-        <div class="row" style="margin-top:12px"><button type="button" class="btn" data-action="ai-test">Kiểm tra kết nối</button><button type="button" class="btn" data-action="ai-models">Xem model &amp; giá</button></div>
-        <div id="ai-check" style="margin-top:10px"></div>
+        <div id="ai-status" class="ai-status" role="status"></div>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn small shrink" data-action="ai-test">Kiểm tra kết nối AI</button></div>
+        <div id="ai-check" style="margin-top:8px"></div>
 
-        <h3 class="section-title">Tạo rule nháp từ đặc tả</h3>
-        <p class="hint" style="margin-top:0">Mô tả event và dán sample payload từ đặc tả (hoặc copy payload từ tab Event). Dữ liệu được che trước khi gửi. Bản nháp phải được QC duyệt trước khi dùng.</p>
-        <textarea id="ai-input" class="code" rows="8" spellcheck="false"></textarea>
+        <h3 class="section-title">✦ AI kiểm tra cả phiên</h3>
+        <p class="hint" style="margin-top:0">AI đọc yêu cầu của bạn và file đặc tả đã nhập (ví dụ sheet R1511), đọc các event đã gửi lên Google / Insider trong phiên, rồi chỉ ra event nào <b>đúng</b>, <b>sai</b>, <b>thiếu</b> và đang có <b>vấn đề</b> gì (gửi lặp, ngoài đặc tả, có push nhưng không gửi…). Kết luận đúng/sai vẫn do công cụ tự kiểm; AI tổng hợp và giải thích.</p>
+        <label for="ai-requirement">Yêu cầu kiểm tra <span class="hint">(không bắt buộc)</span></label>
+        <textarea id="ai-requirement" rows="3" placeholder="Ví dụ: Kiểm tra luồng Golf trên web theo sheet R1511: tìm kiếm sân → xem chi tiết → chọn tee time → thanh toán."></textarea>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="ai-review" data-action="ai-review">✦ AI kiểm tra phiên này</button></div>
+        <div id="ai-review-output" style="margin-top:12px"></div>
+
+        <h3 class="section-title">AI còn giúp được gì?</h3>
+        <div class="ai-helps">
+          <div class="ai-help"><b>1 · Giải thích một event</b><p>Ở tab Event trực tiếp, bấm <b>Xem chi tiết</b> một event rồi bấm <b>✦ AI giải thích event này</b>. AI cho biết event là gì, có khớp file đặc tả không và cần sửa gì.</p><button type="button" class="btn small" data-workspace-tab="events">Mở danh sách event</button></div>
+          <div class="ai-help"><b>2 · Giải thích lỗi tự động</b><p>Khi một bước kiểm tra ra <b>Cần sửa</b>, AI tự viết nguyên nhân và việc cần làm ngay dưới kết quả. Không cần bấm gì thêm.</p></div>
+          <div class="ai-help"><b>3 · Tạo rule từ mô tả</b><p>Điền thông tin một event ở ô bên dưới. AI đề xuất cần kiểm những trường nào; bạn xem lại rồi lưu.</p></div>
+        </div>
+        <p class="hint">Kết luận <b>khớp / lệch</b> luôn do công cụ tự kiểm theo file đặc tả. AI chỉ diễn giải cho dễ hiểu, không đổi kết quả. Dữ liệu nhạy cảm (email, số điện thoại, token…) được che trước khi gửi cho AI.</p>
+
+        <h3 class="section-title">Tạo rule từ mô tả event</h3>
+        <div class="ai-form-grid">
+          <div><label for="ai-event-name">Tên event</label><input id="ai-event-name" placeholder="search_submit" autocomplete="off"></div>
+          <div><label for="ai-source">Gửi cho</label><select id="ai-source"><option value="GA4">GA4 (dataLayer)</option><option value="INSIDER">Insider (InsiderQueue)</option></select></div>
+          <div><label for="ai-flow">Luồng <span class="hint">(không bắt buộc)</span></label><input id="ai-flow" placeholder="Khách sạn, Vé máy bay…" autocomplete="off"></div>
+        </div>
+        <label for="ai-description">Event bắn khi nào?</label>
+        <textarea id="ai-description" rows="2" placeholder="Ví dụ: khi người dùng bấm Tìm kiếm ở trang danh sách khách sạn."></textarea>
+        <label for="ai-sample-text">Payload mẫu <span class="hint">(dán nguyên ô DataLayer Sample trong Excel, hoặc JSON sao chép từ một event)</span></label>
+        <textarea id="ai-sample-text" class="code" rows="8" spellcheck="false"></textarea>
         <div id="ai-input-error" class="field-error"></div>
-        <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="ai-draft" data-action="ai-draft">✦ Tạo nháp bằng AI</button><button type="button" class="btn shrink" data-action="ai-sample">Chèn mẫu</button></div>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="ai-draft" data-action="ai-draft">✦ Tạo rule bằng AI</button><button type="button" class="btn shrink" data-action="ai-sample">Điền ví dụ</button></div>
         <div id="ai-output" style="margin-top:12px"></div>
 
-        <details class="more"><summary>Lượt gọi AI gần nhất (trace)</summary><div id="ai-trace" style="margin-top:8px"></div></details>
+        <details class="more"><summary>Chi tiết kỹ thuật (model, chi phí, lượt gọi gần nhất)</summary>
+          <div id="ai-config" class="kv" style="margin-top:8px"></div>
+          <div id="ai-keys" class="not-run"></div>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn small shrink" data-action="ai-models">Xem model &amp; giá</button></div>
+          <div id="ai-models-list" style="margin-top:8px"></div>
+          <div id="ai-trace" style="margin-top:8px"></div>
+        </details>
       </div>
       <div class="tabpanel hidden" data-panel="log"><ul id="log" class="log"></ul></div>
     </div>
@@ -220,18 +249,54 @@
 <script>
 const token='__CSRF__';
 let attach = false, targetId = '', lastDraft = null, aiSig = '';
+// AI answers per event, kept across re-renders of the event detail.
+const explanations = new Map();
 const $ = id => document.getElementById(id);
 const { esc, short } = EventQA;
 const AI_REASON = {
-  AI_DISABLED: 'AI đang tắt. Đặt AI_ENABLED=true trong .env rồi chạy lại.', API_KEY_MISSING: 'Chưa có OpenRouter key. Điền OPENROUTER_API_KEY trong .env.',
+  AI_DISABLED: 'AI chưa bật: mở tab ✦ Trợ lý AI, dán key OpenRouter rồi bấm Bật AI.', API_KEY_MISSING: 'Chưa có OpenRouter key: mở tab ✦ Trợ lý AI, dán key rồi bấm Bật AI.',
+  OPENROUTER_TIMEOUT: 'AI trả lời quá lâu. Thử lại sau ít phút.', OPENROUTER_UNAVAILABLE: 'Không kết nối được OpenRouter. Kiểm tra mạng rồi thử lại.',
+  OPENROUTER_HTTP_401: 'OpenRouter key không đúng. Ở tab ✦ Trợ lý AI, mở “Đổi key OpenRouter” và dán lại key.', OPENROUTER_HTTP_402: 'Key hết credit cho model trả phí.', OPENROUTER_HTTP_429: 'AI đang quá tải. Thử lại sau ít phút.',
+  INVALID_AI_EXPLANATION: 'AI trả lời sai định dạng. Bấm thử lại.', INVALID_AI_REVIEW: 'AI trả lời sai định dạng. Bấm thử lại.',
   AI_CANCELLED: 'Lệnh AI đã bị huỷ do dừng phiên.', NO_SUITABLE_MODELS: 'Không có model phù hợp giới hạn giá/ngân sách hiện tại.', MODEL_NOT_FOUND: 'Model cấu hình không tồn tại trên OpenRouter.',
   MODEL_STRUCTURED_OUTPUT_UNSUPPORTED: 'Model cấu hình không hỗ trợ xuất JSON.', MODEL_UNSUITABLE_OR_OVER_BUDGET: 'Model cấu hình vượt giới hạn giá hoặc ngân sách.',
-  AI_REQUEST_BUDGET_EXCEEDED: 'Vượt ngân sách ước tính cho một tác vụ.', CREDIT_EXHAUSTED: 'Key hết credit cho model trả phí; chỉ còn model free.', API_KEYS_UNAVAILABLE: 'Tất cả key đang bị tạm khoá (sai key hoặc hết quota).',
+  AI_REQUEST_BUDGET_EXCEEDED: 'Vượt ngân sách ước tính cho một tác vụ.', CREDIT_EXHAUSTED: 'Key hết credit cho model trả phí; chỉ còn model free.', API_KEYS_UNAVAILABLE: 'Key không dùng được (sai key hoặc hết credit). Mở “Đổi key OpenRouter” ở thẻ trên và dán lại key.',
   AI_INPUT_TOO_LARGE: 'Đầu vào quá lớn; rút gọn sample.', INVALID_AI_INPUT: 'Đầu vào cần là JSON object.', INVALID_AI_JSON: 'Model trả JSON không hợp lệ.',
 };
 const reasonText = reason => AI_REASON[reason] || reason || 'Không rõ lý do';
-const usd = value => typeof value === 'number' ? `$${value < 0.01 ? value.toPrecision(2) : value.toFixed(2)}` : '—';
+const usd = value => typeof value !== 'number' ? '—' : value === 0 ? 'miễn phí' : `$${value < 0.01 ? value.toPrecision(2) : value.toFixed(2)}`;
+// AI text names fields as `field`; show those as code after escaping.
+const aiText = text => esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
 const SAMPLE = { event_name: 'search_submit', source: 'GA4', flow: 'Merchandise', description: 'Bắn khi người dùng bấm tìm kiếm ở trang listing. search_term là từ khoá người dùng nhập.', sample: { event: 'search_submit', service: 'merchandise', search_term: 'keychain', search_source: 'listing_searchbox' } };
+// How each rule operator reads to QC.
+const OP_TEXT = { eq: 'phải bằng', exists: 'phải có', not_exists: 'không được có', type: 'đúng kiểu', regex: 'đúng mẫu', one_of: 'là một trong', range: 'trong khoảng', ref: 'lấy từ giá trị đã nhập', subset: 'chứa', ignore: 'không kiểm' };
+const TYPE_TEXT = { string: 'chữ', number: 'số', integer: 'số nguyên', boolean: 'đúng/sai', array: 'danh sách', object: 'nhóm trường', null: 'rỗng' };
+const VERDICT_TEXT = { PASS: ['PASS', 'Khớp đặc tả'], FAIL: ['FAIL', 'Lệch đặc tả'], REVIEW: ['REVIEW', 'Cần người xem'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'],NOT_IN_SPECIFICATION: ['REVIEW', 'Ngoài đặc tả'], NO_SPECIFICATION_LOADED: ['', 'Chưa nhập file đặc tả'] };
+const aiCost = routing => routing?.model ? `Trả lời bởi ${esc(routing.model)} · chi phí ${usd(routing.actual_cost_usd ?? routing.estimated_cost_usd)}` : '';
+function ruleValueText(field) {
+  if (field.op === 'type') return [].concat(field.value).map(type => TYPE_TEXT[type] || type).join(' / ');
+  if (field.op === 'range') return [field.value?.min, field.value?.max].map(v => v ?? '…').join(' – ');
+  return field.value === undefined ? '' : short(field.value, 60);
+}
+function explanationHtml(result) {
+  if (!result) return '';
+  if (result.loading) return '<p class="hint">AI đang đọc event… (thường mất 5–20 giây)</p>';
+  if (!result.available) return `<p>${esc(reasonText(result.reason))}</p>`;
+  const x = result.explanation, [cls, label] = VERDICT_TEXT[result.verdict] || ['', result.verdict];
+  return `<div class="ai-answer-title">✦ AI giải thích ${label ? `<span class="pill ${cls}">${esc(label)}</span>` : ''}</div><p>${aiText(x.summary)}</p>
+    ${x.problems.length ? `<b>Vấn đề</b><ul>${x.problems.map(p => `<li>${aiText(p)}</li>`).join('')}</ul>` : ''}
+    ${x.next_steps.length ? `<b>Nên làm tiếp</b><ol>${x.next_steps.map(p => `<li>${aiText(p)}</li>`).join('')}</ol>` : ''}
+    <p class="hint">${aiCost(result.routing)}</p>`;
+}
+// The session review, section by section: correct / wrong / missing / problems / next steps.
+function reviewHtml(result) {
+  if (!result.available) return `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`;
+  const r = result.review;
+  const section = (title, cls, items, ordered = false) => items.length ? `<div class="ai-review-section"><b><span class="pill ${cls}">${items.length}</span> ${title}</b><${ordered ? 'ol' : 'ul'}>${items.map(item => `<li>${aiText(item)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}></div>` : '';
+  return `<div class="ai-answer"><div class="ai-answer-title">✦ AI kiểm tra phiên</div><p>${aiText(r.summary)}</p>
+    ${section('Đúng', 'PASS', r.correct)}${section('Sai', 'FAIL', r.wrong)}${section('Thiếu', 'REVIEW', r.missing)}${section('Đang có vấn đề', 'warn', r.problems)}${section('Nên làm tiếp', '', r.next_steps, true)}
+    <p class="hint">Đúng / sai theo kết quả công cụ tự kiểm ở tab Đối chiếu đặc tả. ${aiCost(result.routing)}</p></div>`;
+}
 
 function setAttach(value) {
   attach = value; targetId = '';
@@ -247,9 +312,16 @@ document.addEventListener('click', event => {
 function renderAi(ai) {
   const sig = JSON.stringify(ai); if (!ai || sig === aiSig) return; aiSig = sig;
   const ready = ai.enabled && ai.configured_key_count > 0 && !ai.closed;
-  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? `AI sẵn sàng · ${ai.routing}` : 'AI chưa sẵn sàng';
+  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? 'AI sẵn sàng' : 'AI chưa bật';
   const off = $('ai-off-banner'); off.classList.toggle('hidden', ready);
   off.querySelector('p').textContent = !ai.enabled ? reasonText('AI_DISABLED') + ' Thu thập và đối chiếu vẫn chạy bình thường.' : !ai.configured_key_count ? reasonText('API_KEY_MISSING') : '';
+  const status = $('ai-status'); status.classList.toggle('ready', ready);
+  status.innerHTML = ready
+    ? `<span class="ai-status-icon">✦</span><div><h3>AI đã sẵn sàng</h3><p>Bắt event như bản thường. Khi cần, bấm <b>✦ AI giải thích</b> trên một event để đọc giải thích bằng tiếng Việt.${ai.allow_paid ? ` AI thử model miễn phí trước; mỗi lần hỏi tốn tối đa khoảng ${usd(ai.request_budget_usd)}.` : ' Chỉ dùng model miễn phí.'}</p>
+      <details class="more"><summary>Đổi key OpenRouter</summary><div class="row" style="margin-top:8px"><input id="ai-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" aria-label="OpenRouter API key mới"><button type="button" class="btn shrink" data-action="ai-save-key">Lưu key mới</button></div></details></div>`
+    : `<span class="ai-status-icon">⚠</span><div><h3>AI chưa bật</h3><p>Công cụ vẫn bắt và đối chiếu event bình thường, chỉ thiếu phần giải thích của AI. Dán key OpenRouter (tạo miễn phí tại openrouter.ai → Keys) rồi bấm <b>Bật AI</b>:</p>
+      <div class="row" style="margin-top:8px"><input id="ai-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" aria-label="OpenRouter API key"><button type="button" class="btn primary shrink" data-action="ai-save-key">Bật AI</button></div>
+      <p class="hint">Key được lưu vào file <code>.env</code> trên máy này (không gửi đi đâu khác, không nằm trong Git). Không cần khởi động lại.</p></div>`;
   const items = [
     ['Trạng thái', ai.enabled ? 'Bật' : 'Tắt'], ['Key đã cấu hình', ai.configured_key_count], ['Định tuyến', ai.routing],
     ['Model đặc tả / giải thích', `${ai.model_spec} / ${ai.model_explain}`], ['Cho phép trả phí', ai.allow_paid ? 'Có' : 'Không (chỉ free)'],
@@ -267,41 +339,76 @@ function renderDraft(result) {
   if (!result.available) { $('ai-output').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }
   lastDraft = result.case;
   const rules = lastDraft.rules || [];
-  $('ai-output').innerHTML = `<div class="result REVIEW"><div class="result-head"><div class="name"><strong>${esc(lastDraft.name || lastDraft.id)}</strong><small>${esc(lastDraft.id)} · ${rules.length} rule · model ${esc(result.routing?.model || '')} · ${usd(result.routing?.actual_cost_usd ?? result.routing?.estimated_cost_usd)}</small></div><span class="pill REVIEW">Bản nháp</span></div>
-    <div class="table-scroll"><table class="checks"><thead><tr><th>Event</th><th>Tầng</th><th>Trường được kiểm</th></tr></thead><tbody>${rules.map(r => `<tr><td>${esc(r.event_name)}</td><td><span class="pill layer">${esc(r.layer)}</span></td><td>${Object.entries(r.fields || {}).map(([p, f]) => `<code>${esc(p)}</code> ${esc(f.op)}${f.value !== undefined ? ` <code>${esc(short(f.value, 50))}</code>` : ''}`).join('<br>')}</td></tr>`).join('')}</tbody></table></div></div>
-    <div class="row"><button type="button" class="btn primary" data-action="use-draft">Đưa vào trình sửa rule để duyệt</button></div>
-    <details class="more"><summary>JSON bản nháp</summary><pre>${esc(JSON.stringify(lastDraft, null, 2))}</pre></details>`;
+  const where = layer => layer === 'TRACKING_REQUEST' ? 'request gửi lên máy chủ' : 'dataLayer / InsiderQueue';
+  $('ai-output').innerHTML = `<div class="result REVIEW"><div class="result-head"><div class="name"><strong>${esc(lastDraft.name || lastDraft.id)}</strong><small>AI đề xuất ${rules.length} rule · ${aiCost(result.routing)}</small></div><span class="pill REVIEW">Bản nháp · cần bạn duyệt</span></div>
+    ${rules.map(r => `<p style="margin:8px 0 4px"><b>${esc(r.event_name)}</b> trong ${esc(where(r.layer))} · bắn ${r.count?.min === r.count?.max ? `đúng ${esc(r.count?.min)} lần` : `${esc(r.count?.min)}–${esc(r.count?.max)} lần`}</p>
+      <div class="table-scroll"><table class="checks rule-plain"><thead><tr><th>Trường</th><th>Kiểm thế nào</th></tr></thead><tbody>${Object.entries(r.fields || {}).map(([p, f]) => `<tr><td><code>${esc(p)}</code></td><td>${esc(OP_TEXT[f.op] || f.op)} ${f.value !== undefined ? `<code>${esc(ruleValueText(f))}</code>` : ''}${f.optional ? ' <span class="hint">(không bắt buộc)</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="2" class="hint">Chỉ kiểm event có bắn.</td></tr>'}</tbody></table></div>`).join('')}</div>
+    <div class="row"><button type="button" class="btn primary" data-action="use-draft">Dùng bản nháp này (mở để duyệt rồi lưu)</button></div>
+    <details class="more"><summary>Xem dạng JSON</summary><pre>${esc(JSON.stringify(lastDraft, null, 2))}</pre></details>`;
 }
 
-$('ai-input').value = JSON.stringify(SAMPLE, null, 2);
+function fillSample() {
+  $('ai-event-name').value = SAMPLE.event_name; $('ai-source').value = SAMPLE.source; $('ai-flow').value = SAMPLE.flow;
+  $('ai-description').value = SAMPLE.description; $('ai-sample-text').value = JSON.stringify(SAMPLE.sample, null, 2);
+  $('ai-sample-text').classList.remove('invalid'); $('ai-input-error').textContent = '';
+}
+// Samples pasted from Excel are often JavaScript, not JSON; the AI reads them as text then.
+function draftInput() {
+  const name = $('ai-event-name').value.trim(), text = $('ai-sample-text').value.trim();
+  if (!name && !text) throw new Error('Điền tên event hoặc dán payload mẫu trước.');
+  let sample; try { sample = text ? JSON.parse(text) : undefined; } catch { sample = undefined; }
+  return { event_name: name || undefined, source: $('ai-source').value, flow: $('ai-flow').value.trim() || undefined,
+    description: $('ai-description').value.trim() || undefined, ...(sample !== undefined ? { sample } : text ? { sample_text: text } : {}) };
+}
 EventQA.boot({ token, mode: 'cdp-ai', hooks: {
   startPayload: () => { if (attach && !targetId) throw new Error('Quét và chọn tab cần gắn trước.'); return attach ? { attach: true, targetId } : { attach: false }; },
   render: s => renderAi(s.ai),
+  eventExtras: e => `<div class="ai-explain" data-ai-for="${esc(e.evidence_id)}"><button type="button" class="btn small" data-action="ai-explain-event" data-event-id="${esc(e.evidence_id)}">✦ AI giải thích event này</button><div class="ai-answer">${explanationHtml(explanations.get(e.evidence_id))}</div></div>`,
   actions: {
+    'ai-explain-event': async button => {
+      const id = button.dataset.eventId;
+      const show = result => { explanations.set(id, result); for (const box of document.querySelectorAll(`[data-ai-for="${CSS.escape(id)}"] .ai-answer`)) box.innerHTML = explanationHtml(result); };
+      button.disabled = true;
+      try { show({ loading: true }); show(await EventQA.api('ai-explain-event', { id }, 'ai-explain')); }
+      catch (error) { explanations.delete(id); show({ available: false, reason: error.message }); }
+      finally { button.disabled = false; }
+    },
     'scan-targets': async () => {
       const { targets } = await EventQA.api('targets', { port: Number($('debug-port').value) }, 'scan');
       $('targets').innerHTML = targets.map(t => `<button type="button" class="case" data-target="${esc(t.id)}" data-tab-url="${esc(t.url)}" aria-pressed="false"><span class="case-main"><strong>${esc(t.title || '(không tiêu đề)')}</strong><small>${esc(short(t.url, 80))}</small></span></button>`).join('') || '<p class="hint">Không thấy tab nào trên cổng này.</p>';
       if (targets.length === 1) $('targets').querySelector('[data-target]').click();
     },
-    'open-ai': () => { EventQA.selectTab('ai'); $('ai-input').focus(); },
-    'ai-sample': () => { $('ai-input').value = JSON.stringify(SAMPLE, null, 2); $('ai-input').classList.remove('invalid'); $('ai-input-error').textContent = ''; },
+    'open-ai': () => { EventQA.selectTab('ai'); $('ai-event-name').focus(); },
+    'ai-sample': fillSample,
+    'ai-review': async () => {
+      $('ai-review-output').innerHTML = '<p class="hint">AI đang đọc yêu cầu, đặc tả và các event của phiên… (thường mất 10–40 giây)</p>';
+      $('ai-review-output').innerHTML = reviewHtml(await EventQA.api('ai-review', { requirement: $('ai-requirement').value }, 'ai-review'));
+    },
+    'ai-save-key': async () => {
+      const key = $('ai-key').value.trim();
+      if (!key) throw new Error('Dán key OpenRouter vào ô trước.');
+      await EventQA.api('ai-key', { key }, 'ai-key');
+      $('ai-key').value = '';
+      EventQA.toast('Đã bật AI. Đang kiểm tra kết nối…', 'ok');
+      document.querySelector('[data-action="ai-test"]').click();
+    },
     'ai-test': async () => {
-      $('ai-check').innerHTML = '<p class="hint">Đang gọi thử với dữ liệu demo…</p>';
+      $('ai-check').innerHTML = '<p class="hint">Đang hỏi thử AI…</p>';
       const result = await EventQA.api('ai-test', {}, 'ai-test');
       $('ai-check').innerHTML = result.available
-        ? `<div class="banner info"><p><b>Kết nối thành công</b> · model <code>${esc(result.routing?.model)}</code> · ${usd(result.routing?.actual_cost_usd ?? result.routing?.estimated_cost_usd)}\n${esc(short(result.note, 400))}</p></div>`
+        ? `<div class="banner info"><p><b>✓ AI trả lời bình thường.</b> ${aiCost(result.routing)}</p></div>`
         : `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`;
     },
     'ai-models': async () => {
-      $('ai-check').innerHTML = '<p class="hint">Đang tải danh sách model từ OpenRouter…</p>';
+      $('ai-models-list').innerHTML = '<p class="hint">Đang tải danh sách model từ OpenRouter…</p>';
       const result = await EventQA.api('ai-models', {}, 'ai-models');
-      if (!result.available) { $('ai-check').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }
-      $('ai-check').innerHTML = `<p class="hint">${result.candidates.length} model phù hợp, theo thứ tự sẽ thử (free trước, rồi rẻ nhất):</p><div class="table-scroll" style="max-height:320px;overflow:auto"><table class="checks"><thead><tr><th>#</th><th>Model</th><th>Loại</th><th>In / Out (USD/1M)</th><th>Ước tính / tác vụ</th></tr></thead><tbody>${result.candidates.slice(0, 40).map((m, i) => `<tr><td>${i + 1}</td><td><code>${esc(m.id)}</code></td><td>${m.free ? '<span class="pill PASS">Free</span>' : '<span class="pill">Trả phí</span>'}</td><td>${esc(m.prompt_usd_per_million.toFixed(3))} / ${esc(m.completion_usd_per_million.toFixed(3))}</td><td>${usd(m.estimated_cost_usd)}</td></tr>`).join('')}</tbody></table></div>`;
+      if (!result.available) { $('ai-models-list').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }
+      $('ai-models-list').innerHTML = `<p class="hint">${result.candidates.length} model phù hợp, theo thứ tự sẽ thử (free trước, rồi rẻ nhất):</p><div class="table-scroll" style="max-height:320px;overflow:auto"><table class="checks"><thead><tr><th>#</th><th>Model</th><th>Loại</th><th>In / Out (USD/1M)</th><th>Ước tính / tác vụ</th></tr></thead><tbody>${result.candidates.slice(0, 40).map((m, i) => `<tr><td>${i + 1}</td><td><code>${esc(m.id)}</code></td><td>${m.free ? '<span class="pill PASS">Free</span>' : '<span class="pill">Trả phí</span>'}</td><td>${esc(m.prompt_usd_per_million.toFixed(3))} / ${esc(m.completion_usd_per_million.toFixed(3))}</td><td>${usd(m.estimated_cost_usd)}</td></tr>`).join('')}</tbody></table></div>`;
     },
     'ai-draft': async () => {
-      let input; try { input = JSON.parse($('ai-input').value); $('ai-input').classList.remove('invalid'); $('ai-input-error').textContent = ''; }
-      catch (e) { $('ai-input').classList.add('invalid'); $('ai-input-error').textContent = `JSON chưa hợp lệ: ${e.message}`; return; }
-      $('ai-output').innerHTML = '<p class="hint">AI đang tạo bản nháp… (thử model free trước)</p>';
+      let input; try { input = draftInput(); $('ai-input-error').textContent = ''; }
+      catch (e) { $('ai-input-error').textContent = e.message; return; }
+      $('ai-output').innerHTML = '<p class="hint">AI đang đọc mô tả và đề xuất rule… (thường mất 5–20 giây)</p>';
       renderDraft(await EventQA.api('ai-draft', { input }, 'ai-draft'));
     },
     'use-draft': () => { if (lastDraft) { EventQA.loadIntoRuleEditor(lastDraft); EventQA.toast('Đã đưa bản nháp vào trình sửa rule. Duyệt rồi bấm Lưu rule.', 'ok'); } },

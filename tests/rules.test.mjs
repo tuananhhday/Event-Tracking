@@ -90,7 +90,7 @@ test('malformed rules/context are reviewable and do not crash', () => {
 test('optional absent event can pass a zero minimum', () => {
   assert.equal(validate({}, [], { count: { min: 0, max: 1 } }).verdict, 'PASS');
 });
-test('proxy cannot claim missing JS_QUEUE evidence as a failure', () => {
+test('request-only capture cannot claim missing JS_QUEUE evidence as a failure', () => {
   const result = validate({}, [], {}, { ...step, observed_layers: ['TRACKING_REQUEST'] });
   assert.equal(result.verdict, 'REVIEW');
   assert.deepEqual(result.results[0].issues, [{ code: 'LAYER_UNAVAILABLE', expected: 'JS_QUEUE', actual: ['TRACKING_REQUEST'], evidence_id: step.evidence_id, verdict: 'REVIEW' }]);

@@ -2,15 +2,18 @@ import { createHash } from 'node:crypto';
 import { ga4Items } from './ga4-parameters.mjs';
 import { redact, redactUrl } from './privacy.mjs';
 import { eventKind } from './event-kind.mjs';
+import { insiderPageEvent } from './insider-hit.mjs';
 
-export const DEFAULT_ENDPOINT_PATTERNS = ['(?:^|\\.)google-analytics\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)analytics\\.google\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)useinsider\\.com/'];
+// Insider event endpoints only; its other hosts (segment.api, ucd-web, falcon log-tracking,
+// <partner>.api/api/info) serve SDK files, segments, predictions and logs, not events.
+const INSIDER_EVENT_ENDPOINTS = ['(?:^|\\.)unification\\.useinsider\\.com/api/event/', '(?:^|\\.)hit\\.api\\.useinsider\\.com/hit$'];
+export const DEFAULT_ENDPOINT_PATTERNS = ['(?:^|\\.)google-analytics\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)analytics\\.google\\.com/(?:g/)?collect(?:$|/)', ...INSIDER_EVENT_ENDPOINTS];
 // Optional vendor allowlists offered by the UI. Each entry matches hostname + path.
 export const VENDOR_ENDPOINTS = {
   // Recent Google tags also send GA4 hits to /g/s/collect.
   ga4: { label: 'GA4 (Google)', patterns: [...DEFAULT_ENDPOINT_PATTERNS.slice(0, 2), '(?:^|\\.)(?:google-analytics|analytics\\.google)\\.com/g/s/collect$'] },
   ga4_server: { label: 'GA4 server-side (/g/collect mọi domain)', patterns: ['/g/(?:s/)?collect$'] },
-  // Insider event endpoints only; its other hosts serve SDK files, segments and predictions.
-  insider: { label: 'Insider', patterns: ['(?:^|\\.)unification\\.useinsider\\.com/api/event/', '(?:^|\\.)hit\\.api\\.useinsider\\.com/hit$'] },
+  insider: { label: 'Insider', patterns: INSIDER_EVENT_ENDPOINTS },
   meta: { label: 'Meta Pixel', patterns: ['(?:^|\\.)facebook\\.com/tr/?$'] },
   tiktok: { label: 'TikTok Pixel', patterns: ['(?:^|\\.)analytics\\.tiktok\\.com/api/v\\d+/pixel'] },
   google_ads: { label: 'Google Ads / Floodlight', patterns: ['(?:^|\\.)googleadservices\\.com/pagead/conversion', '(?:^|\\.)doubleclick\\.net/(?:pagead|activity)'] },
@@ -73,6 +76,9 @@ function ga4Payload(input) {
   }
   const items = ga4Items(input);
   if (items.length && !result.ecommerce) result.ecommerce = { items };
+  // GA4 receives the page URL, title and referrer of every event as dl / dt / dr: its page_location,
+  // page_title and page_referrer parameters.
+  for (const [wire, name] of [['dl', 'page_location'], ['dt', 'page_title'], ['dr', 'page_referrer']]) if (input[wire] !== undefined && result[name] === undefined) result[name] = input[wire];
   return result;
 }
 export function decodeRequest({ url, body = '', contentType = '', method = 'POST', requestId, status, source, capturedAt, pageUrl }) {
@@ -80,6 +86,9 @@ export function decodeRequest({ url, body = '', contentType = '', method = 'POST
   try { const u = new URL(url); query = flatQuery(u.search); host = u.hostname; pathname = u.pathname; } catch { /* unsupported URL kept as redacted evidence */ }
   const decoded = parsedBody(body, contentType);
   const ga = query.en || decoded.parts.some(p => p?.en);
+  // Google copies each GA4 hit to its ad servers (stats.g.doubleclick.net/g/collect for Google
+  // Signals). The copy carries no event name and is not something the website fired.
+  if (!ga && /\/g\/(?:s\/)?collect$/.test(pathname) && /(?:^|\.)(?:doubleclick\.net|google\.com(?:\.[a-z]{2})?)$/i.test(host)) return [];
   const vendor = (source || (/(?:^|\.)(?:google-analytics\.com|analytics\.google\.com)$/i.test(host) || ga ? 'GA4'
     : /(?:^|\.)useinsider\.com$/i.test(host) || /\/insider\//i.test(pathname) ? 'INSIDER'
     : /(?:^|\.)facebook\.com$/i.test(host) && /^\/tr\/?$/i.test(pathname) ? 'META'
@@ -101,7 +110,8 @@ export function decodeRequest({ url, body = '', contentType = '', method = 'POST
       if (opaque(payload)) payload = opaqueSummary(payload);
       if (vendor === 'GA4' || payload.en) payload = ga4Payload(payload);
       // `ev` is the Meta Pixel event parameter.
-      const eventName = payload.event || payload.event_name || payload.name || payload.type || payload.ev || (payload.decode_status === 'UNPARSED' ? 'UNPARSED' : 'tracking_request');
+      // An Insider pageView hit is the page event its page_type names (listing_page_view…), as Insider records it.
+      const eventName = (vendor === 'INSIDER' && insiderPageEvent(payload)) || payload.event || payload.event_name || payload.name || payload.type || payload.ev || (payload.decode_status === 'UNPARSED' ? 'UNPARSED' : 'tracking_request');
       const record = { schema_version: '1.0', source: vendor, layer: 'TRACKING_REQUEST',
         captured_at: capturedAt || new Date().toISOString(), event_name: typeof eventName === 'string' ? eventName : 'tracking_request',
         page: { url: redactUrl(pageUrl || payload.dl || payload.page_location || url) }, payload,

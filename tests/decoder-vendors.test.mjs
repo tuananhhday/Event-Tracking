@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeRequest, matchesEndpoint, looksLikeTracking, VENDOR_ENDPOINTS } from '../src/core/decoder.mjs';
 import { CDPCollector } from '../src/collectors/cdp.mjs';
-import { launchBrowser } from '../src/browser/launcher.mjs';
 
 test('vendor allowlists match real endpoints by host + path, including GA4 /g/s/collect and server-side tagging', () => {
   for (const pattern of Object.values(VENDOR_ENDPOINTS).flatMap(vendor => vendor.patterns)) new RegExp(pattern, 'i');
@@ -37,7 +36,3 @@ test('collector allowlist can change while running and drops suggestions it now 
   assert.deepEqual(collector.patterns, ['^ubt-sin\\.tripcdn\\.com/bee/collect$']);
 });
 
-test('the SPKI trust flag is accepted only with a local proxy and a SHA-256 hash', async () => {
-  await assert.rejects(launchBrowser({ port: 9599, trustSpki: `${'A'.repeat(43)}=`, profileDir: 'profiles/never-created' }), /trustSpki needs a local proxy/);
-  await assert.rejects(launchBrowser({ port: 9599, proxyServer: 'http://127.0.0.1:8080', trustSpki: 'not-a-hash', profileDir: 'profiles/never-created' }), /trustSpki/);
-});

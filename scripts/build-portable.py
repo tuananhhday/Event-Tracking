@@ -31,16 +31,16 @@ if list((root / "node_modules").rglob("*.node")):
     raise SystemExit("Native modules require a Windows-specific dependency build")
 
 commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip():
+    commit += " + thay doi chua commit"
 tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
 prefix = "EventQA-Windows-x64/"
 output.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as target:
     # Explicit source selection prevents recursive ZIPs and local credentials/data.
     for name in tracked:
-        if name.startswith("docs/archive/"):
-            continue
         if not name or not (name.startswith(("src/", "scripts/", "docs/", "examples/", "solutions/"))
-                            or name in {"package.json", "package-lock.json", "README.md", "PORTABLE_WINDOWS.md"}
+                            or name in {"package.json", "package-lock.json", "README.md", "PORTABLE_WINDOWS.md", ".env.example"}
                             or "/" not in name and name.endswith(".cmd")):
             continue
         content = (root / name).read_bytes()
@@ -81,21 +81,21 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
     target.writestr(prefix + "DOC_TRUOC_KHI_CHAY.txt", (
         "BAN WINDOWS X64 - GIAI NEN ROI BAM CHAY\n\n"
         "1. Giai nen TOAN BO ZIP ra thu muc co quyen ghi.\n"
-        "2. Bam dup CHAY_EVENT_QA.cmd.\n"
-        "3. Giao dien CDP tu mo. Giu cua so lenh dang chay.\n"
+        "2. Bam dup CHAY_EVENT_QA.cmd (ban thuong) hoac CHAY_EVENT_QA_AI.cmd (ban AI).\n"
+        "3. Giao dien tu mo trong trinh duyet. Giu cua so lenh dang chay.\n"
         "4. Dung STOP_EVENT_QA.cmd de dung ung dung.\n\n"
         "Khong can cai Node.js hay go lenh npm. Can Chrome hoac Edge tren may.\n"
         "Danh muc event JSON/Excel nam trong event-catalogue neu duoc dong kem.\n"
         "Mau App SDK can xac nhan mapping sang Web; khong tu dien tham so thieu.\n"
-        "AI can key rieng; Proxy can mitmproxy rieng. Mac dinh dung CDP khong AI.\n"
-        "Goi duoc build va kiem tra ung dung tren Linux, chua chay truc tiep Windows.\n"
+        "Ban AI: lan dau mo tab Tro ly AI, dan key OpenRouter (openrouter.ai -> Keys) roi bam Bat AI.\n"
+        "Goi da duoc chay thu tren Windows 11: ca ban thuong va ban AI.\n"
         f"Source commit: {commit}\n"
     ).replace("\n", "\r\n"))
 
 with zipfile.ZipFile(output) as built:
     if built.testzip() is not None:
         raise SystemExit("Corrupt output archive")
-    for name in ("CHAY_EVENT_QA.cmd", "scripts/run-eventqa.cmd", "runtime/node.exe",
+    for name in ("CHAY_EVENT_QA.cmd", "CHAY_EVENT_QA_AI.cmd", ".env.example", "scripts/run-eventqa.cmd", "runtime/node.exe",
                  "runtime/LICENSE", "node_modules/exceljs/package.json"):
         if prefix + name not in built.namelist():
             raise SystemExit(f"Missing required packaged file: {name}")

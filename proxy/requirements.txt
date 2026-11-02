@@ -1,2 +1,0 @@
-# Optional dependency for solution 3; tested with isolated Python 3.13.
-mitmproxy==12.3.1

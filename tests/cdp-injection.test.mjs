@@ -57,6 +57,26 @@ test('stop restores queue properties and allows a clean collector restart', () =
   assert.equal(f.events.length, 2);
 });
 
+test('Insider SDK replacing push without chaining loses no push before the next poll', () => {
+  const f = fixture('InsiderQueue=[{type:"currency",value:"VND"}];');
+  // The production SDK assigns this push; it never calls the push it replaced.
+  f.run('InsiderQueue.push=function(e){processedBySdk=(typeof processedBySdk==="number"?processedBySdk:0)+1;e.processed=true;return Array.prototype.push.call(this,e)}');
+  assert.equal(f.run('InsiderQueue.push({type:"init"})'), 2);
+  assert.equal(f.run('processedBySdk'), 1);
+  assert.deepEqual(f.events.map(event => event.item.type), ['currency', 'init']);
+  // Recorded after the SDK handled it, as F12 shows the queue, with its position in the array.
+  assert.equal(f.events[1].item.processed, true);
+  assert.deepEqual(f.events.map(event => event.index), [0, 1]);
+  [...f.timers.values()].forEach(fn => fn());
+  f.run('InsiderQueue.push({type:"home"})');
+  assert.deepEqual(f.events.map(event => event.item.type), ['currency', 'init', 'home']);
+  assert.equal(f.run('processedBySdk'), 2);
+  f.run("window[Symbol.for('eventqa.collector.v1')].stop()");
+  f.run('InsiderQueue.push({type:"after_stop"})');
+  assert.equal(f.run('processedBySdk'), 3);
+  assert.equal(f.events.length, 3);
+});
+
 test('vendor wrappers that call a previously hooked push do not duplicate evidence', () => {
   const f = fixture('dataLayer=[];');
   f.run('previous=dataLayer.push; dataLayer.push=function(...items){return previous.apply(this,items)}');
@@ -81,6 +101,13 @@ test('gtag Arguments and circular objects are safely snapshotted', () => {
   assert.deepEqual(f.events[2].item.second, { amount: 4 });
 });
 
+test('Insider SDK signals sent through dispatch are not recorded, website dispatches are', () => {
+  const f = fixture('Insider={eventManager:{dispatch(){ return true; }}};');
+  [...f.timers.values()].forEach(fn => fn());
+  f.run('Insider.eventManager.dispatch("userLocationSet",{});Insider.eventManager.dispatch("web-sdk:log",{});Insider.eventManager.dispatch("other_page_view",{taxonomy:"News"})');
+  assert.deepEqual(f.events.map(event => event.item.name), ['other_page_view']);
+});
+
 test('frozen queues and read-only window properties do not break page execution', () => {
   const f = fixture('Object.defineProperty(window,"dataLayer",{value:Object.freeze([]),writable:false,configurable:false});');
   assert.equal(f.events.length, 0);
@@ -92,7 +119,8 @@ test('SDK dispatch notifications cannot exhaust later business event capture or 
   [...f.timers.values()].forEach(fn => fn());
   f.run('for(let i=0;i<350;i++)Insider.eventManager.dispatch("sdk:ready",{index:i})');
   assert.equal(f.run('Insider.eventManager.dispatch("other_page_view",{taxonomy:"News"}).taxonomy'), 'News');
-  assert.equal(f.events.length, 351);
+  // SDK lifecycle signals (names with ':') are not tracking events.
+  assert.equal(f.events.length, 1);
   assert.equal(f.events.at(-1).queue, 'InsiderDispatch');
   assert.equal(f.events.at(-1).item.name, 'other_page_view');
   assert.deepEqual(f.events.at(-1).item.data, { taxonomy: 'News' });
@@ -107,6 +135,5 @@ test('SDK dispatch notifications cannot exhaust later business event capture or 
 test('browser launcher rejects unsafe inputs without starting any browser', async () => {
   await assert.rejects(launchBrowser({ port: 2 }), /port/);
   await assert.rejects(launchBrowser({ url: 'javascript:alert(1)' }), /HTTP/);
-  await assert.rejects(launchBrowser({ proxyServer: 'remote.example:8080' }), /localhost/);
   assert.throws(() => findBrowser('unknown'), /chrome or edge/);
 });

@@ -211,7 +211,10 @@ test('NDJSON decodes as records and unsupported binary emits a hash without raw 
 test('tracking endpoint matching rejects vendor strings in unrelated hosts, paths and query values', () => {
   assert.equal(matchesEndpoint('https://region1.google-analytics.com/g/collect?v=2'), true);
   assert.equal(matchesEndpoint('https://analytics.google.com/g/collect'), true);
-  assert.equal(matchesEndpoint('https://tracking.useinsider.com/event'), true);
+  assert.equal(matchesEndpoint('https://hit.api.useinsider.com/hit'), true);
+  assert.equal(matchesEndpoint('https://unification.useinsider.com/api/event/v1/insert'), true);
+  // Insider hosts that serve segments, user data and SDK logs are not events.
+  for (const url of ['https://segment.api.useinsider.com/v4/segments/1.d8', 'https://ucd-web.api.useinsider.com/v1/get', 'https://falcon.useinsider.com/api/v2/log-tracking/hit/votaprod', 'https://votaprod.api.useinsider.com/api/info/571.24']) assert.equal(matchesEndpoint(url), false, url);
   for (const url of ['https://evilgoogle-analytics.com/g/collect', 'https://example.test/path/google-analytics.com/g/collect', 'https://example.test/?url=google-analytics.com/g/collect', 'https://google-analytics.com.evil.test/g/collect', 'https://google-analytics.com/g/collective']) assert.equal(matchesEndpoint(url), false, url);
 });
 

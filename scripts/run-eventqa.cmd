@@ -4,7 +4,6 @@ cd /d "%~dp0.."
 set "EVENTQA_MODE=%~1"
 if /i "%EVENTQA_MODE%"=="cdp" goto runtime
 if /i "%EVENTQA_MODE%"=="cdp-ai" goto runtime
-if /i "%EVENTQA_MODE%"=="proxy" goto runtime
 if /i "%EVENTQA_MODE%"=="stop" goto runtime
 echo Khong nhan dien duoc che do chay EventQA.
 pause
