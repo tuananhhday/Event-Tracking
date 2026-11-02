@@ -8,13 +8,15 @@ import { SessionManager } from './core/session.mjs';
 import { redact } from './core/privacy.mjs';
 import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
-import { specCoverage, matchTracked } from './core/catalog.mjs';
+import { specCoverage, matchTracked, sessionRows } from './core/catalog.mjs';
 import { linkDeliveries, deliveryStatus, notForwarded, isRequest } from './core/delivery.mjs';
 import { eventKind } from './core/event-kind.mjs';
 import { firingChecks } from './core/firing.mjs';
 import { activityEvent, activityEntries } from './core/activity.mjs';
-import { importSpec, specSheets, validateTestCase } from './spec/import.mjs';
+import { priceChecks } from './core/api-prices.mjs';
+import { importSpec, specSheets, validateTestCase, manualCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
+import { eventReportRows } from './report/event-report.mjs';
 import { CDPCollector, listTargets } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
@@ -71,14 +73,14 @@ async function saveAiKey(envPath, key) {
   await fs.writeFile(envPath, `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
-export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo', envPath = path.join(rootDir, '.env') } = {}) {
+export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo', envPath = path.join(rootDir, '.env'), reviewedPath = reviewedSpecPath } = {}) {
   if (!['cdp', 'cdp-ai'].includes(mode)) throw new Error('Mode must be cdp or cdp-ai.');
   const csrf = randomBytes(24).toString('hex');
   // 'auto' (CLI) resumes reviewed rules or starts empty for a real site; tests keep the demo default.
   let specSource = 'demo', cases;
   if (Array.isArray(initialCases)) { cases = initialCases; specSource = initialCases.length ? 'file' : 'none'; }
   else if (initialCases === 'auto') {
-    try { cases = JSON.parse(await fs.readFile(reviewedSpecPath, 'utf8')).cases.map(validateTestCase); specSource = 'reviewed'; }
+    try { cases = JSON.parse(await fs.readFile(reviewedPath, 'utf8')).cases.map(validateTestCase); specSource = 'reviewed'; }
     catch { cases = []; specSource = 'none'; }
   } else cases = await loadDemoCases();
   const manager = new SessionManager({ mode, runsDir, cases });
@@ -108,6 +110,13 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     }
     return { ...counts, kinds: kinds.size };
   };
+  // Sent prices against the website's API prices (api-prices.mjs); recomputed only when either grows.
+  let priceCache = { key: '', result: null };
+  const prices = (events, api) => {
+    const key = `${events.length}|${api.length}`;
+    if (priceCache.key !== key) priceCache = { key, result: priceChecks(activityEntries(events, { links: deliveryLinks(events) }), api) };
+    return priceCache.result;
+  };
   // Event-to-specification matches, reset whenever the cases change.
   let coverageCases = null, coverageCache = new Map();
   const coverage = events => {
@@ -115,7 +124,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     if (coverageCases !== manager.cases) { coverageCases = manager.cases; coverageCache = new Map(); }
     return specCoverage(manager.cases, events, coverageCache, { links: deliveryLinks(events) });
   };
-  const statuses = []; let collector = null, browserHandle = null, exported = null, mutating = false;
+  const statuses = []; let collector = null, browserHandle = null, testPage = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let ai = aiClient ?? new OpenRouterClient();
@@ -123,14 +132,14 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [],
-      eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
+      eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), prices: prices(snapshot.events, snapshot.api).summary, specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   // One captured event with the specification row it matched (field-by-field outcome), its firing
   // checks, and its delivery: the website push, the vendor hit that sent it, and for GA4 the pushed
   // fields Google did not receive.
   function eventDetail(id) {
-    const events = manager.snapshot().events;
+    const snapshot = manager.snapshot(), events = snapshot.events;
     const event = events.find(candidate => candidate.evidence_id === id);
     if (!event) return null;
     const links = deliveryLinks(events);
@@ -140,7 +149,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const push = event.layer === 'JS_QUEUE' ? event : links.pushOf.get(event.evidence_id) ?? null;
     const hit = event.layer === 'TRACKING_REQUEST' ? event : links.sentBy.get(event.evidence_id) ?? null;
     const delivery = { status: deliveryStatus(push ?? event, links), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
-    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery };
+    const activity = activityEntries(events, { links }).find(row => row.evidence_ids.includes(event.evidence_id)) ?? activityEvent(event);
+    const priced = prices(events, snapshot.api).checks.filter(check => check.evidence_id === activity.evidence_id);
+    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
   }
   // What the AI reads to review a session: the QC's requirement, the specification rows the session is
   // about (rows with evidence and the unseen rows of the same flows), the tool's verdict per row, what
@@ -149,8 +160,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const links = deliveryLinks(events), now = Date.now();
     const rows = activityEntries(events, { links, now }).filter(row => row.event_kind === 'business');
     const covered = coverage(events);
-    const flows = new Set(covered?.rows.filter(row => row.seen || row.not_sent).map(row => row.flow));
-    const relevant = covered ? covered.rows.filter(row => row.status !== 'NOT_SEEN' || !flows.size || flows.has(row.flow)).slice(0, 80) : [];
+    const relevant = covered ? sessionRows(covered).slice(0, 80) : [];
     const caseById = new Map(manager.cases.map(testCase => [testCase.id, testCase]));
     const where = url => { try { const parsed = new URL(url); return parsed.pathname + parsed.search.slice(0, 80); } catch { return ''; } };
     return {
@@ -164,6 +174,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       not_sent: rows.filter(row => row.delivery === 'not_sent').slice(-40).map(row => ({ at: row.captured_at.slice(11, 19), vendor: row.source, event: row.event_name, page: where(row.page?.url) })),
       outside_spec: covered?.unmatched.slice(0, 30).map(item => ({ vendor: item.source, event: item.event_name, count: item.count })) ?? [],
       firing_problems: firingState(events).problems.slice(0, 40).map(problem => ({ rule: problem.rule, level: problem.status, event: problem.event_name, message: problem.message })),
+      // Prices sent that differ from the website's API for the same product.
+      price_mismatches: prices(events, manager.snapshot().api).checks.filter(check => check.status === 'MISMATCH').slice(-30).map(check => ({ at: check.at.slice(11, 19), vendor: check.source, event: check.event,
+        field: check.field, sent: check.sent, api: check.api?.value, api_field: check.api?.path, ...(check.stale ? { matches_older_api: true } : {}) })),
     };
   }
   // The AI writes the words; which rows are correct, wrong or missing is the tool's verdict. The three
@@ -184,6 +197,29 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       wrong: rows.filter(row => row.status === 'MISMATCH').map(row => sentence(review.wrong, row) ?? `${row.event} · ${row.flow}: ${issues(row)}`),
       missing: rows.filter(row => row.status === 'NOT_SEEN' || row.status === 'NOT_SENT')
         .map(row => sentence(review.missing, row) ?? `${row.event} · ${row.flow}: ${row.status === 'NOT_SENT' ? 'có push nhưng không gửi lên server' : 'chưa thấy'}`) };
+  }
+  // AI version: the comment column of the report sheet is written by AI from the tool's verdicts, 20 rows per
+  // request and at most 100 rows; rows it does not answer keep the tool's comment.
+  async function aiReportNotes(snapshot) {
+    const diagnostics = mode === 'cdp-ai' ? ai.diagnostics?.() : null;
+    if (!diagnostics?.enabled || !diagnostics.configured_key_count || diagnostics.closed) return null;
+    const clip = value => { const text = typeof value === 'string' ? value : JSON.stringify(value); return text && text.length > 120 ? `${text.slice(0, 120)}…` : text; };
+    const rows = eventReportRows({ cases: snapshot.cases, events: snapshot.events, api: snapshot.api }).slice(0, 100), notes = {};
+    let model;
+    for (let start = 0; start < rows.length; start += 20) {
+      const batch = rows.slice(start, start + 20);
+      const result = await ai.reportNotes(batch.map(row => ({ id: row.id, event: row.event_name, flow: row.flow, platform: row.platform, status: row.status, expected_fields: row.expected_fields.slice(0, 30),
+        issues: row.issues.slice(0, 8).map(issue => ({ code: issue.code, field: issue.path, expected: clip(issue.expected), actual: clip(issue.actual) })), times_sent: row.seen, not_sent: row.not_sent, price_mismatches: row.price_mismatches.slice(0, 3) })));
+      if (!result.available) { status(`AI chưa viết được nhận xét báo cáo (${result.reason}); các dòng còn lại giữ nhận xét của công cụ.`); break; }
+      model ??= result.routing?.model;
+      for (const row of batch) if (result.notes.get(row.id)) notes[row.key] = result.notes.get(row.id);
+    }
+    return Object.keys(notes).length ? { by: 'AI', model, notes } : null;
+  }
+  async function exportWithNotes(snapshot) {
+    const reportNotes = await bounded(aiReportNotes(snapshot), 150000).catch(() => null);
+    exported = await exportReports({ ...snapshot, ...(reportNotes ? { report_notes: reportNotes } : {}) }, manager.runDir);
+    return reportNotes;
   }
   async function bounded(promise, milliseconds) {
     let timer;
@@ -207,11 +243,13 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     try { targets = await listTargets(options.port); } catch { /* nothing listening */ }
     if (targets) {
       status(`Dùng lại cửa sổ trình duyệt test đang mở (cổng ${options.port}); app sẽ không tự đóng cửa sổ này.`);
-      return { reused: true, targetId: await createTestPage({ port: options.port, headless: options.headless }) };
+      // The previous session's test page loads the new website instead of another window opening.
+      return { reused: true, targetId: testPage = await createTestPage({ port: options.port, headless: options.headless, reuse: testPage ?? undefined }) };
     }
     try {
       browserHandle = await launchBrowser({ ...options, url: 'about:blank' });
-      return { reused: false, targetId: await createTestPage({ port: options.port, headless: options.headless }) };
+      // The website loads in the blank page the browser starts with: one window, one tab.
+      return { reused: false, targetId: testPage = await createTestPage({ port: options.port, headless: options.headless, reuse: 'startup' }) };
     }
     catch (error) {
       if (/exited before the debug endpoint was ready (code 21)/.test(error.message)) throw new Error('Cửa sổ trình duyệt test cũ vẫn đang mở với profile này nhưng không còn kết nối được. Đóng hết cửa sổ Chrome/Edge test rồi bấm lại.');
@@ -278,19 +316,25 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (req.method === 'GET' && url.pathname === '/') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
       if (req.method === 'GET' && ASSETS[url.pathname]) return send(res, 200, await readWeb(ASSETS[url.pathname][0]), ASSETS[url.pathname][1]);
       if (req.method === 'GET' && url.pathname === '/demo') return send(res, 200, await readWeb('demo.html'), 'text/html; charset=utf-8');
+      // The demo product API whose price the demo page's tracking is checked against.
+      if (req.method === 'GET' && url.pathname.startsWith('/demo/api/products/')) return send(res, 200, { data: { id: decodeURIComponent(url.pathname.slice('/demo/api/products/'.length)), name: 'Phòng Deluxe hướng biển', currency: 'VND', price: 1000000, originalPrice: 1200000 } });
       if (req.method === 'POST' && ['/demo/g/collect', '/demo/insider/events'].includes(url.pathname)) {
         await bodyForDiscard(req); res.writeHead(204); return res.end();
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
       if (req.method === 'GET' && url.pathname === '/api/activity') {
-        const events = manager.snapshot().events;
+        const snapshot = manager.snapshot(), events = snapshot.events;
         const entries = activityEntries(events, { links: deliveryLinks(events) });
+        // Each row shows its prices: the value sent and the value the website API gave for the product.
+        const priced = new Map();
+        for (const check of prices(events, snapshot.api).checks) priced.set(check.evidence_id, [...priced.get(check.evidence_id) ?? [], { field: check.field, sent: check.sent, api: check.api?.value ?? null, times: check.api?.times, status: check.status }]);
         const before = url.searchParams.get('before');
         const end = before ? entries.findIndex(e => e.evidence_ids.includes(before)) : entries.length;
         if (end < 0) return send(res, 400, { error: 'Mốc event không thuộc phiên hiện tại.' });
         const start = Math.max(0, end - 100);
-        const page = entries.slice(start, end).reverse().map(activity => url.searchParams.get('compact') === '1'
-          ? { ...activity, json: undefined, default_count: Object.keys(activity.json.default_parameters).length, custom_count: Object.keys(activity.json.custom_parameters).length } : activity);
+        const page = entries.slice(start, end).reverse().map(activity => ({ ...(url.searchParams.get('compact') === '1'
+          ? { ...activity, json: undefined, default_count: Object.keys(activity.json.default_parameters).length, custom_count: Object.keys(activity.json.custom_parameters).length } : activity),
+          ...(priced.has(activity.evidence_id) ? { prices: priced.get(activity.evidence_id) } : {}) }));
         return send(res, 200, { events: page, total: entries.length, next: start > 0 ? entries[start].evidence_id : null, session_id: manager.session?.id || null });
       }
       if (req.method === 'GET' && url.pathname === '/api/pushes') {
@@ -303,12 +347,19 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           event_kind: eventKind(event), historical: Boolean(event.historical), page: event.page, payload: event.queue_payload ?? event.payload,
           delivery: deliveryStatus(event, links, now), sent_by: links.sentBy.get(event.evidence_id)?.evidence_id ?? null })) });
       }
+      if (req.method === 'GET' && url.pathname === '/api/prices') {
+        const snapshot = manager.snapshot(), { checks, summary } = prices(snapshot.events, snapshot.api);
+        const order = { MISMATCH: 0, NO_API: 1, MATCH_PAGE: 2, MATCH: 3 };
+        // The prices the website API returned, newest response first, whether or not an event sent them.
+        const returned = snapshot.api.slice(-20).reverse().map(record => ({ captured_at: record.captured_at, url: record.url, method: record.method, total: record.prices.length,
+          prices: record.prices.slice(0, 80).map(entry => ({ path: entry.path, value: entry.value, name: entry.name, ids: entry.ids?.slice(0, 3), currency: entry.currency })) }));
+        return send(res, 200, { summary, session_id: manager.session?.id || null, checks: checks.slice(-400).reverse().sort((a, b) => order[a.status] - order[b.status]), api_prices: returned });
+      }
       if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
       if (req.method === 'GET' && url.pathname === '/api/event') {
         const detail = eventDetail(url.searchParams.get('id'));
         if (!detail) return send(res, 404, { error: 'Không có event này trong phiên.' });
-        const events = manager.snapshot().events;
-        return send(res, 200, { ...detail, activity: activityEntries(events, { links: deliveryLinks(events) }).find(row => row.evidence_ids.includes(detail.event.evidence_id)) ?? activityEvent(detail.event) });
+        return send(res, 200, detail);
       }
       if (req.method === 'GET' && url.pathname.startsWith('/download/')) {
         if (!exported || !manager.runDir) return send(res, 404, { error: 'Chưa có report.' });
@@ -357,7 +408,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           if (!['.xlsx', '.json'].includes(path.extname(String(data.path)).toLowerCase())) throw new Error('Chỉ nhận XLSX hoặc JSON.');
           const imported = await importSpec(path.resolve(String(data.path)), { sheet: data.sheet || undefined });
           if (!imported.cases.length) throw new Error('Không tìm thấy test case hợp lệ.');
-          manager.cases = imported.cases; specSource = 'file';
+          // Events typed in the app stay next to the imported file.
+          manager.cases = [...imported.cases, ...manager.cases.filter(testCase => testCase.provenance?.manual)]; specSource = 'file';
           if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
           status(`Đã nhập ${imported.cases.length} test case. ${imported.warnings.join(' ')}`);
           return send(res, 200, { ...state(), importWarnings: imported.warnings });
@@ -370,17 +422,27 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           const testCase = validateTestCase(data.case);
           const index = manager.cases.findIndex(c => c.id === testCase.id);
           manager.cases = index === -1 ? [...manager.cases, testCase] : manager.cases.map((c, i) => i === index ? testCase : c);
-          const specDir = path.join(rootDir, 'imports'); await fs.mkdir(specDir, { recursive: true });
-          await fs.writeFile(reviewedSpecPath, JSON.stringify({ cases: manager.cases }, null, 2)); specSource = 'reviewed';
+          await fs.mkdir(path.dirname(reviewedPath), { recursive: true });
+          await fs.writeFile(reviewedPath, JSON.stringify({ cases: manager.cases }, null, 2)); specSource = 'reviewed';
           if (manager.session?.status === 'RUNNING') { manager.store.saveExpected(sanitizeCases(manager.cases)); status(`Đã lưu ${testCase.id} giữa phiên; expected.json của phiên được cập nhật.`); }
           else status('Đã lưu specification vào imports/reviewed-cases.json.');
+        } else if (url.pathname === '/api/manual-case') {
+          // An expected event typed in the app (name, platform, flow, pasted sample) joins the specification like an Excel row.
+          if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi thêm event.');
+          const { testCase, warnings } = manualCase(data, manager.cases);
+          manager.cases = [...manager.cases, testCase];
+          await fs.mkdir(path.dirname(reviewedPath), { recursive: true });
+          await fs.writeFile(reviewedPath, JSON.stringify({ cases: manager.cases }, null, 2)); specSource = 'reviewed';
+          if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
+          status(`Đã thêm ${testCase.rules[0].event_name} (nhập tay) vào đặc tả.`);
+          return send(res, 200, { ...state(), manualCase: { id: testCase.id, event_name: testCase.rules[0].event_name, flow: testCase.flow, source: testCase.source, fields: Object.keys(testCase.rules[0].fields), warnings } });
         } else if (url.pathname === '/api/delete-case') {
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi xoá case.');
           const id = String(data.id);
           if (manager.steps.some(step => step.test_case_id === id)) throw new Error('Case đã có bước trong phiên này nên không xoá được; xoá sau khi kết thúc phiên.');
           manager.cases = manager.cases.filter(c => c.id !== id);
-          await fs.mkdir(path.dirname(reviewedSpecPath), { recursive: true });
-          await fs.writeFile(reviewedSpecPath, JSON.stringify({ cases: manager.cases }, null, 2));
+          await fs.mkdir(path.dirname(reviewedPath), { recursive: true });
+          await fs.writeFile(reviewedPath, JSON.stringify({ cases: manager.cases }, null, 2));
           if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
           status(`Đã xoá case ${id}.`);
         } else if (url.pathname === '/api/endpoints') {
@@ -408,13 +470,15 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
           }
           const captureQueues = data.captureQueues !== false;
-          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues }); exported = null;
+          const compareApi = data.compareApi !== false;
+          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi }); exported = null;
           const epoch = ++captureEpoch;
           const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
           try {
             const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
             if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
-            collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues });
+            collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues,
+              onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined });
             await collector.start(manager.session);
             if (!data.attach) {
               const page = collector.connections.get(opened.targetId);
@@ -445,10 +509,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname === '/api/finish') {
           if (!manager.session || manager.session.status !== 'RUNNING') throw new Error('Chưa có phiên đang chạy.');
           if (manager.currentStep) throw new Error('Hoàn tất bước hiện tại trước.');
-          await stopSession(); status(`Đã xuất report tại ${manager.runDir}`);
+          await stopSession();
+          if (mode === 'cdp-ai' && await exportWithNotes(manager.snapshot())) status('AI đã viết cột nhận xét của sheet Báo cáo event.');
+          status(`Đã xuất report tại ${manager.runDir}`);
         } else if (url.pathname === '/api/export') {
           if (!manager.session) throw new Error('Chưa có phiên.');
-          exported = await exportReports(manager.snapshot(), manager.runDir); status('Đã xuất report hiện tại.');
+          status(await exportWithNotes(manager.snapshot()) ? 'Đã xuất report hiện tại; AI đã viết cột nhận xét của sheet Báo cáo event.' : 'Đã xuất report hiện tại.');
         } else if (url.pathname === '/api/ai-key') {
           if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           const key = String(data.key ?? '').trim();

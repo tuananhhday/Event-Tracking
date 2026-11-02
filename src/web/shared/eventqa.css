@@ -503,3 +503,11 @@ label,.label { font-size:12px; }.stage-title strong { font-size:13px; }.stage-ti
 @media(max-width:640px) { #activity-content { padding:8px 14px 24px; }.activity-dialog { border-radius:0; }#activity-content .activity-json { padding:12px; font-size:12px; }.toolbar .segmented { max-width:100%; }.toolbar .segmented button { white-space:normal; } }
 
 .insider-event-title h2{margin-bottom:4px}.insider-event-details{padding:16px 0;border-bottom:1px solid var(--line,#dde5ef)}.insider-parameters td:first-child{width:36%}.parameter-key{display:block;font-size:11px;margin-top:3px}.parameter-value{white-space:pre-wrap;overflow-wrap:anywhere}.parameter-tree pre{max-height:400px;overflow:auto;white-space:pre-wrap}.event-page{overflow-wrap:anywhere}
+/* Prices against the website's API */
+.text-fail { color: var(--fail, #b42318); }
+.price-check { margin: 14px 0; }
+.price-check h3 { margin: 0 0 8px; }
+#prices-summary .kv { margin-bottom: 12px; }
+.price-line { display: inline-block; margin-top: 4px; }
+details.api-prices { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+details.api-prices summary { cursor: pointer; }

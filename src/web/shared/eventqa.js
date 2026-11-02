@@ -37,6 +37,9 @@
   const deliveryPill = (status, source) => DELIVERY_PILL[status] ? (([cls, label]) => `<span class="pill ${cls}">${esc(label)}</span>`)(DELIVERY_PILL[status](source)) : '';
   const VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', REVIEW: 'REVIEW', NOT_EXECUTED: 'Chưa chạy' };
   const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request' };
+  // Where a specification row comes from: Excel sheet!row, or "Nhập tay" for an event typed in the app.
+  const whereSpec = (sheet, row) => row == null || row === '' ? String(sheet ?? '') : `${sheet ?? ''}!${row}`;
+  const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
   const FILE_TEXT = { xlsx: ['Excel', '6 sheet đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
@@ -108,11 +111,16 @@
   const afterMarker = e => !ui.marker || Date.parse(e.captured_at) >= ui.marker;
 
   // ---- site configuration (URL, vendors, endpoints) -------------------------
+  // GA4 and Insider are what QC checks: they come first; GA4 server-side and other vendors sit under "Nâng cao".
+  const MAIN_VENDORS = ['ga4', 'insider'];
   function renderVendors(s) {
     const host = $('vendors'); if (!host || ui.vendorsRendered || !s.vendors) return;
     const saved = store.get(siteKey(), {});
     const chosen = new Set(saved.vendors || DEFAULT_VENDORS);
-    host.innerHTML = Object.entries(s.vendors).map(([key, vendor]) => `<label class="check"><input type="checkbox" data-vendor="${esc(key)}" ${chosen.has(key) ? 'checked' : ''}> ${esc(vendor.label)}</label>`).join('');
+    const box = ([key, vendor]) => `<label class="check"><input type="checkbox" data-vendor="${esc(key)}" ${chosen.has(key) ? 'checked' : ''}> ${esc(vendor.label)}</label>`;
+    const vendors = Object.entries(s.vendors);
+    host.innerHTML = vendors.filter(([key]) => MAIN_VENDORS.includes(key)).map(box).join('');
+    ($('vendors-more') || host).insertAdjacentHTML('beforeend', vendors.filter(([key]) => !MAIN_VENDORS.includes(key)).map(box).join(''));
     ui.vendorsRendered = true;
   }
   function endpointPatterns() {
@@ -126,7 +134,7 @@
     const saved = store.get(siteKey(), {});
     const url = $('url')?.value.trim();
     const recent = [url, ...(saved.recent || [])].filter((u, i, list) => u && !u.includes('/demo') && list.indexOf(u) === i).slice(0, 6);
-    store.set(siteKey(), { ...saved, url, recent, browser: $('browser')?.value, vendors: $$('[data-vendor]').filter(b => b.checked).map(b => b.dataset.vendor), custom: $('patterns')?.value || '' });
+    store.set(siteKey(), { ...saved, url, recent, browser: $('browser')?.value, vendors: $$('[data-vendor]').filter(b => b.checked).map(b => b.dataset.vendor), custom: $('patterns')?.value || '', compareApi: $('compare-api')?.checked ?? true });
     renderRecent();
   }
   function renderRecent() {
@@ -139,6 +147,7 @@
     const saved = store.get(siteKey(), {});
     if ($('url') && saved.url) $('url').value = saved.url;
     if ($('patterns') && saved.custom) $('patterns').value = saved.custom;
+    if ($('compare-api') && saved.compareApi === false) $('compare-api').checked = false;
     if (saved.browser) setBrowser(saved.browser);
     renderRecent();
   }
@@ -373,7 +382,7 @@
     const absent = spec ? spec.issues.filter(i => i.code === 'MISSING_FIELD' && !rows.some(row => full(row.path) === i.path) && !/\.0\./.test(i.path)) : [];
     const absentHtml = absent.length ? `<div class="list-title"><span class="pill FAIL">Thiếu so với đặc tả</span> ${absent.map(i => `<code>${esc(base && i.path.startsWith(`${base}.`) ? i.path.slice(base.length + 1) : i.path)}</code>`).join(', ')}</div>` : '';
     const note = spec?.notes ? `<p class="hint">Ghi chú đặc tả: ${esc(spec.notes)}</p>` : '';
-    const contract = spec ? `<p><b>Event Name trong đặc tả:</b> ${esc(spec.event_name)} · ${esc(spec.provenance?.sheet)}!${esc(spec.provenance?.row)}<br>${esc(spec.description)}</p><button type="button" class="btn small" data-spec-detail="${esc(spec.case_id)}">Xem chi tiết đặc tả</button>` : '';
+    const contract = spec ? `<p><b>Event Name trong đặc tả:</b> ${esc(spec.event_name)} · ${esc(whereSpec(spec.provenance?.sheet, spec.provenance?.row))}<br>${esc(spec.description)}</p><button type="button" class="btn small" data-spec-detail="${esc(spec.case_id)}">Xem chi tiết đặc tả</button>` : '';
     return `${head}${contract}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
       <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
       ${ui.hooks.eventExtras?.(e) || ''}
@@ -422,7 +431,7 @@
       ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activitySession = session;
     }
     // A pending push turns not_sent without new evidence: its count is part of the version.
-    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${ui.state.delivery?.pending ?? ''}:${ui.state.delivery?.not_sent ?? ''}`;
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${ui.state.delivery?.pending ?? ''}:${ui.state.delivery?.not_sent ?? ''}:${JSON.stringify(ui.state.prices || {})}`;
     if (!more && version === ui.activityVersion) return;
     ui.activityLoading = true;
     try {
@@ -462,7 +471,7 @@
         ? '<p><b>Phiên này không đọc dataLayer / InsiderQueue</b> (đã tick “Không đọc dataLayer / InsiderQueue” ở bước 1), nên chỉ thấy request gửi lên server và không so được với F12 Console. Bỏ tick rồi mở phiên mới để thấy đủ như F12.</p>'
         : `<p>${counts.not_sent ? `<b>${counts.not_sent} event website đã push vào dataLayer / InsiderQueue nhưng không có request gửi lên Google / Insider</b>, nên không được tính là đã bắn.` : ''}${counts.pending ? ` ${counts.pending} event vừa push, đang chờ GA4/Insider gửi đi.` : ''}${f.unsent ? '' : ' Tick “Hiện cả push chưa gửi lên server” để xem, hoặc mở chế độ xem “dataLayer · InsiderQueue (F12)”.'}</p>`;
     }
-    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} dòng đã ghi. Mỗi dòng là một event gửi lên Google/Insider: push trong dataLayer/InsiderQueue được ghép với request đã gửi nó; event GA4 hiển thị tham số Google nhận được. Request phát lặp vẫn giữ riêng.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button>${e.repeat ? ` <span class="pill warn" title="Cùng hệ thống, cùng event, cùng trang">⚠ Lặp lại sau ${esc((e.repeat.after_ms / 1000).toFixed(1))} s</span>` : ''}<br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(e.source)}</span> ${deliveryPill(e.delivery, e.source)}<br><small class="hint">${esc((e.layers || [e.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}${e.measurement_id ? ` · ${esc(e.measurement_id)}` : ''}</small></td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small></td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
+    $('activity-events').innerHTML = items.length ? `<div class="activity-caption">${items.length} event đang hiển thị · ${ui.activityTotal} dòng đã ghi. Mỗi dòng là một event Google / Insider đã nhận. Bấm <b>Xem chi tiết</b> để xem request gửi lên server và dữ liệu website push.</div><div class="table-scroll"><table class="checks activity-table"><thead><tr><th>Thời gian</th><th>Event / Action</th><th>Nguồn</th><th>Tham số</th><th></th></tr></thead><tbody>${items.map(e => `<tr><td>${esc(new Date(e.captured_at).toLocaleString('vi-VN', { hour12: false }))}${e.historical ? '<br><small class="hint">Trước khi thu thập</small>' : ''}</td><td><button type="button" class="ev-toggle" data-activity-id="${esc(e.evidence_id)}"><b>${esc(e.display_name)}</b></button>${e.repeat ? ` <span class="pill warn" title="Cùng hệ thống, cùng event, cùng trang">⚠ Lặp lại sau ${esc((e.repeat.after_ms / 1000).toFixed(1))} s</span>` : ''}<br><small class="hint">${esc(e.event_name)}${e.capture?.incomplete ? ' · Thu chưa đầy đủ' : ''}</small></td><td><span class="pill">${esc(SOURCE_TEXT[e.source] || e.source)}</span> ${deliveryPill(e.delivery, e.source)}${e.measurement_id ? `<br><small class="hint">${esc(e.measurement_id)}</small>` : ''}</td><td><small>${e.default_count ?? Object.keys(e.json?.default_parameters || {}).length} default · ${e.custom_count ?? Object.keys(e.json?.custom_parameters || {}).length} custom</small>${e.prices?.length ? `<br>${priceLines(e.prices)}` : ''}</td><td><button type="button" class="btn small primary" data-activity-id="${esc(e.evidence_id)}">Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>` : emptyHtml;
     $('activity-more').classList.toggle('hidden', !ui.activityNext);
   }
   async function openActivity(id) {
@@ -487,6 +496,7 @@
     $('activity-content').innerHTML = `<header class="insider-event-title"><h2>${esc(a.display_name)}</h2><code>${esc(a.event_name)}</code></header>
       <section class="insider-event-details"><h3>Event Details</h3><div class="kv"><div><span>Platform</span><b>Web</b></div><div><span>Date</span><b>${esc(date.toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Time (UTC)</span><b>${esc(date.toISOString().slice(11, 19))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc((a.layers || [a.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}</b></div></div>${e.page?.url ? `<p class="hint event-page">${esc(e.page.url)}</p>` : ''}</section>
       ${deliveryHtml}
+      ${detail.prices?.length ? `<section class="price-check"><h3>Giá so với API của website</h3><div class="table-scroll"><table class="params"><thead><tr><th>Trường giá</th><th>Đã gửi</th><th>Giá trong API</th><th>Kết quả</th></tr></thead><tbody>${detail.prices.map(check => `<tr><td><code>${esc(check.field)}</code></td><td><b>${esc(vnd(check.sent))}</b></td><td>${priceApiHtml(check)}</td><td>${pricePill(check)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
       ${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
       <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div>${ui.hooks.eventExtras?.(e) || ''}<div class="segmented"><button type="button" data-activity-view="params" aria-pressed="true">Event Details</button><button type="button" data-activity-view="json" aria-pressed="false">JSON tham số</button><button type="button" data-activity-view="hit" aria-pressed="false">Request gửi lên server</button><button type="button" data-activity-view="push" aria-pressed="false">Website push</button></div>
       <section data-activity-panel="params"><h3>Default Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.default_parameters)}</tbody></table><h3>Custom Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.custom_parameters)}</tbody></table></section>
@@ -538,6 +548,8 @@
       ${active ? '<button type="button" class="btn ghost small" data-action="events-clear">✕ Bỏ lọc</button>' : ''}`;
   }
   function renderEvents(s) {
+    const layer = $('ev-layer'), rawView = ui.view === 'groups' || ui.view === 'stream';
+    if (layer) { layer.classList.toggle('hidden', !rawView); if (!rawView) layer.value = ''; }
     if (ui.view === 'activity') void refreshActivity();
     if (ui.view === 'f12') void refreshPushes();
     renderSourceFilter(s);
@@ -652,7 +664,7 @@
       const verdict = !event ? 'Chưa có event' : issue ? (ISSUE_TEXT[issue.code] || issue.code) : field.op === 'ignore' ? 'Bỏ qua' : 'Đúng theo rule';
       return `<tr><td><code>${esc(path)}</code></td><td>${formatValue(valueAt(c.sample, path))}</td><td>${esc(field.op)}${field.value !== undefined ? ` · ${esc(short(field.value, 100))}` : ''}</td><td>${actual === undefined ? '<span class="hint">Chưa có / thiếu trường</span>' : formatValue(actual)}</td><td>${esc(verdict)}</td></tr>`;
     }).join('');
-    $('spec-detail-content').innerHTML = `<h2>${esc(rule?.event_name || c.name)}</h2><p><b>${esc(c.provenance?.sheet)}!${esc(c.provenance?.row)}</b> · ${esc(c.flow)} · ${esc(c.source)} · ${esc(LAYER_TEXT[rule?.layer] || rule?.layer)}</p><p style="white-space:pre-wrap">${esc(c.description)}</p>
+    $('spec-detail-content').innerHTML = `<h2>${esc(rule?.event_name || c.name)}</h2><p><b>${esc(whereSpec(c.provenance?.sheet, c.provenance?.row))}</b> · ${esc(c.flow)} · ${esc(c.source)} · ${esc(LAYER_TEXT[rule?.layer] || rule?.layer)}</p><p style="white-space:pre-wrap">${esc(c.description)}</p>
       <p class="hint">Mẫu giữ nguyên theo file. Các giá trị ví dụ không tự trở thành giá trị bắt buộc: cột Quy tắc cho biết đang kiểm kiểu, có mặt hay giá trị chính xác. Event thực tế giữ nguyên tên và payload đã thu thập.</p>
       ${event ? `<p><b>Event thực tế:</b> ${esc(event.event_name)} · ${esc(event.evidence_id)}</p>` : '<p class="banner info">Chưa thu được event đúng nguồn/tầng/tên cho dòng này. Payload mẫu bên dưới không phải bằng chứng đã bắn.</p>'}
       <div class="table-scroll"><table class="params"><thead><tr><th>Trường</th><th>Ví dụ trong đặc tả</th><th>Quy tắc hiện tại</th><th>Thực tế</th><th>Đối chiếu</th></tr></thead><tbody>${comparisons || '<tr><td colspan="5">Chưa có chi tiết payload để kiểm.</td></tr>'}</tbody></table></div>
@@ -684,7 +696,7 @@
     host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks"><thead><tr><th>STT</th><th>Nền tảng · Luồng</th><th>Event</th><th>Trạng thái</th><th>Số lần</th><th>Trường lệch</th><th>Ghi chú đặc tả</th></tr></thead><tbody>
       ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status]; const evidence = r.last_fail_evidence_id || r.last_evidence_id; return `<tr>
         <td>${esc(r.stt || r.row || '')}</td><td><span class="pill">${esc(r.source)}</span><br><small>${esc(r.flow)}</small></td>
-        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(r.sheet)}!${esc(r.row)} · ${esc(short(r.description, 70))}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button></td>
+        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(whereSpec(r.sheet, r.row))} · ${esc(short(r.description, 70))}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${r.seen ? `<b>${r.seen}</b>${r.fail ? `<br><small class="hint">${r.fail} lệch</small>` : ''}` : '—'}</td>
         <td>${issueText(r) || (r.seen ? '<span class="hint">Đủ trường theo sample</span>' : '')}${evidence ? `<button type="button" class="evlink" data-evidence="${esc(evidence)}">Xem event</button>` : ''}</td>
         <td><small>${esc(short(r.notes, 90))}</small></td></tr>`; }).join('')}
@@ -703,6 +715,52 @@
     const problems = s.firing.problems.filter(p => !status || p.status === status);
     host.innerHTML = problems.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Giờ</th><th>Event</th><th>Quy tắc</th><th>Chi tiết</th></tr></thead><tbody>${problems.map(p => { const [cls, icon] = FIRING_STATUS[p.status]; return `<tr><td><small>${esc(clock(p.at))}</small></td><td><b>${esc(p.event_name)}</b><br><small class="hint">${esc(p.source)} · ${esc(LAYER_TEXT[p.layer] || p.layer)}</small></td><td><span class="pill ${cls}">${icon} ${esc(RULE_TEXT[p.rule] || p.rule)}</span></td><td>${esc(p.message)}<br><button type="button" class="evlink" data-evidence="${esc(p.id)}">Xem event</button></td></tr>`; }).join('')}</tbody></table></div>${s.firing.problemCount > s.firing.problems.length ? `<p class="hint">Hiện 200 vấn đề gần nhất / ${s.firing.problemCount}. Đầy đủ trong sheet Firing Checks của báo cáo.</p>` : ''}`
       : `<div class="empty"><strong>${s.eventCount ? 'Không có vấn đề về cách bắn' : 'Chưa có event'}</strong>${s.eventCount ? 'Mọi event đã thu đều đạt các quy tắc.' : 'Thao tác trên website để thu event.'}</div>`;
+  }
+
+  // ---- prices against the website's API ------------------------------------
+  const PRICE_STATUS = { MISMATCH: ['FAIL', 'Lệch API'], NO_API: ['', 'Không thấy trong API'], MATCH_PAGE: ['PASS', 'Khớp giá trên API'], MATCH: ['PASS', 'Khớp API'] };
+  const vnd = value => typeof value === 'number' ? value.toLocaleString('vi-VN') : '—';
+  const apiWhere = url => { try { const parsed = new URL(url); return parsed.host + parsed.pathname; } catch { return url || ''; } };
+  const PRICE_MARK = { MATCH: ['PASS', '✓ khớp'], MATCH_PAGE: ['PASS', '✓ khớp'], MISMATCH: ['FAIL', '✗ lệch'], NO_API: ['', 'chưa thấy trong API'] };
+  // Under an event in the list: the price sent and the price the API gave, the ones that differ first.
+  const priceLines = list => [...list].sort((a, b) => (b.status === 'MISMATCH') - (a.status === 'MISMATCH')).slice(0, 2)
+    .map(p => `<small class="price-line"><code>${esc(p.field)}</code> gửi ${esc(vnd(p.sent))} · API ${p.api != null ? `<b>${esc(vnd(p.api))}</b>${p.times ? ` × ${p.times}` : ''}` : '—'} <span class="pill ${PRICE_MARK[p.status][0]}">${esc(PRICE_MARK[p.status][1])}</span></small>`).join('<br>')
+    + (list.length > 2 ? `<br><small class="hint">+${list.length - 2} giá khác · tab Giá vs API</small>` : '');
+  const pricePill = check => `<span class="pill ${PRICE_STATUS[check.status][0]}">${esc(PRICE_STATUS[check.status][1])}</span>${check.stale ? `<br><small class="hint">Khớp API cũ lúc ${esc(clock(check.stale.at))}: giá chưa cập nhật</small>` : ''}${check.status === 'MATCH_PAGE' ? '<br><small class="hint">Không xác định được sản phẩm trong API</small>' : ''}`;
+  const priceApiHtml = check => check.api
+    ? `<b>${esc(vnd(check.api.value))}</b>${check.api.times ? ` × ${check.api.times} (số lượng)` : ''}<br><small class="hint"><code>${esc(check.api.path)}</code><br>${esc(apiWhere(check.api.url))} · ${esc(clock(check.api.at))}</small>${check.status === 'MISMATCH' && check.candidates?.length > 1 ? `<br><small class="hint">Giá khác của sản phẩm trong API: ${check.candidates.slice(1).map(other => `${esc(vnd(other.value))} (<code>${esc(other.path.replace(/^.*[.]/, ''))}</code>)`).join(', ')}</small>` : ''}`
+    : check.candidates?.length ? `<small class="hint">Giá cùng loại trong API của trang: ${check.candidates.map(other => `${esc(vnd(other.value))} (<code>${esc(other.path)}</code>)`).join(', ')}</small>` : '<small class="hint">API không có giá loại này</small>';
+  async function refreshPrices() {
+    if (ui.priceLoading || !ui.state) return;
+    const version = `${ui.state.session?.id || ''}:${JSON.stringify(ui.state.prices || {})}`;
+    if (version === ui.priceVersion) return;
+    ui.priceLoading = true;
+    try {
+      const response = await fetch('/api/prices', { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Chưa tải được kết quả so giá.');
+      const result = await response.json();
+      ui.prices = result.checks; ui.apiPrices = result.api_prices || []; ui.priceVersion = version; ui.sig.prices = null; render();
+    } catch (error) { showError(error.message); }
+    finally { ui.priceLoading = false; }
+  }
+  function renderPrices(s) {
+    const summary = s.prices || {};
+    setText('prices-count', String(summary.mismatch || 0));
+    if (ui.tab !== 'prices') return;
+    void refreshPrices();
+    const host = $('prices-table'); if (!host) return;
+    const status = $('prices-status')?.value || '';
+    const sig = JSON.stringify([ui.priceVersion, status, s.session?.id]); if (sig === ui.sig.prices) return; ui.sig.prices = sig;
+    $('prices-summary').innerHTML = summary.total ? `<div class="kv"><div><span>Giá đã kiểm</span><b>${summary.total}</b></div><div><span>Khớp API</span><b>${summary.match + summary.match_page}</b></div><div><span>Lệch API</span><b class="${summary.mismatch ? 'text-fail' : ''}">${summary.mismatch}</b></div><div><span>Không thấy trong API</span><b>${summary.no_api}</b></div><div><span>Response API đã đọc</span><b>${summary.api_responses}</b></div></div>` : '';
+    const items = !status ? [...(ui.prices || [])].sort((a, b) => b.at.localeCompare(a.at))
+      : (ui.prices || []).filter(check => status === 'MISMATCH' ? check.status === 'MISMATCH' : ['MISMATCH', 'NO_API'].includes(check.status));
+    const off = s.session?.compare_api === false;
+    host.innerHTML = items.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Giờ</th><th>Event</th><th>Trường giá</th><th>Đã gửi</th><th>Giá trong API</th><th>Kết quả</th></tr></thead><tbody>${items.map(check => `<tr><td><small>${esc(clock(check.at))}</small></td><td><b>${esc(check.event)}</b><br><small class="hint">${esc(SOURCE_TEXT[check.source] || check.source)}${check.name ? ` · ${esc(short(check.name, 50))}` : ''}</small><br><button type="button" class="evlink" data-activity-id="${esc(check.evidence_id)}">Xem event</button></td><td><code>${esc(check.field)}</code></td><td><b>${esc(vnd(check.sent))}</b>${check.currency ? ` <small class="hint">${esc(check.currency)}</small>` : ''}</td><td>${priceApiHtml(check)}</td><td>${pricePill(check)}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty"><strong>${off ? 'Phiên này đã tắt So giá với API' : summary.total ? 'Không có giá lệch API' : summary.api_responses ? 'Chưa có event nào gửi giá' : 'Chưa đọc được API nào có giá'}</strong>${off ? 'Bật lại ở bước 1 → Nâng cao rồi mở phiên mới.' : summary.total ? 'Chọn “Tất cả giá” để xem cả giá khớp.' : 'Mở trang sản phẩm / tìm kiếm / giỏ hàng trên website test: khi website gọi API có giá, giá hiện ở đây.'}</div>`;
+    // What the API returned, per response: product, field, price.
+    const responses = ui.apiPrices || [];
+    $('prices-api').innerHTML = responses.length ? responses.map((response, index) => `<details class="api-prices"${index === 0 ? ' open' : ''}><summary><b>${esc(response.method || 'GET')} ${esc(apiWhere(response.url))}</b> · ${esc(clock(response.captured_at))} · ${response.total} giá</summary><div class="table-scroll"><table class="params"><thead><tr><th>Sản phẩm</th><th>Trường trong API</th><th>Giá</th></tr></thead><tbody>${response.prices.map(entry => `<tr><td>${esc(entry.name || '—')}${entry.ids?.length ? `<br><small class="hint">${esc(entry.ids.join(' · '))}</small>` : ''}</td><td><code>${esc(entry.path)}</code></td><td><b>${esc(vnd(entry.value))}</b>${entry.currency ? ` <small class="hint">${esc(entry.currency)}</small>` : ''}</td></tr>`).join('')}</tbody></table></div>${response.total > response.prices.length ? `<p class="hint">Hiện ${response.prices.length} / ${response.total} giá của response này.</p>` : ''}</details>`).join('')
+      : `<p class="hint">${off ? 'Phiên này không đọc API của website.' : 'Chưa có response API nào chứa giá.'}</p>`;
   }
 
   // ---- endpoints ----------------------------------------------------------
@@ -880,7 +938,7 @@
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
     if (Date.now() < ui.holdUntil) { clearTimeout(ui.holdTimer); ui.holdTimer = setTimeout(render, ui.holdUntil - Date.now() + 50); }
-    else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderEndpoints(s); }
+    else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderPrices(s); renderEndpoints(s); }
     renderLog(s); renderReports(s);
     ui.hooks.render?.(s, phase, ui);
   }
@@ -890,12 +948,13 @@
     ui.tab = name;
     for (const tab of $$('.tab')) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
     for (const panel of $$('.tabpanel')) panel.classList.toggle('hidden', panel.dataset.panel !== name);
-    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
+    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', prices: 'Giá so với API', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
     setText('board-title', names[name] || 'Event trực tiếp');
     for (const link of $$('[data-workspace-tab]')) {
       if (link.dataset.workspaceTab === name) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
+    if (name === 'prices') { ui.sig.prices = null; render(); }
   }
 
   function toggleSetup(collapsed = !document.body.classList.contains('setup-collapsed')) {
@@ -918,7 +977,7 @@
     let parsed; try { parsed = new URL(url); } catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
     $('url').value = parsed.toString();
     if (!/^https?:$/.test(parsed.protocol)) throw new Error('URL cần dùng http hoặc https.');
-    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
+    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, compareApi: $('compare-api')?.checked ?? true, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
   }
   const actions = {
     start: async () => {
@@ -953,8 +1012,22 @@
       if (!ui.state?.running) await api('demo-spec', {}, 'demo-spec');
       resetSelection(); setStage('session', true); toast('Đã chọn trang demo nội bộ và 3 case mẫu.', 'ok');
     },
-    finish: async () => { await api('finish', {}, 'finish'); toast('Đã kết thúc phiên và xuất báo cáo.', 'ok'); },
-    export: async () => { await api('export', {}, 'export'); toast('Đã xuất báo cáo hiện tại.', 'ok'); },
+    finish: async () => {
+      if (ui.state?.ai?.enabled) toast('Đang kết thúc phiên; AI viết cột nhận xét cho báo cáo (thường 10–60 giây)…');
+      await api('finish', {}, 'finish'); toast('Đã kết thúc phiên và xuất báo cáo.', 'ok');
+    },
+    // An expected event typed by hand: the server reads the pasted sample like an Excel row.
+    'manual-case': async () => {
+      const result = await api('manual-case', { event_name: $('manual-event').value, source: $('manual-source').value, flow: $('manual-flow').value, description: $('manual-description').value, sample: $('manual-sample').value }, 'manual-case');
+      const added = result.manualCase; if (!added) return;
+      $('manual-result').innerHTML = `<div class="banner info"><p><b>Đã thêm ${esc(added.event_name)}</b>${added.flow ? ` · ${esc(added.flow)}` : ''} (${esc(SOURCE_TEXT[added.source] || added.source)}): sẽ kiểm ${added.fields.length} trường ${added.fields.slice(0, 8).map(field => `<code>${esc(field)}</code>`).join(', ')}${added.fields.length > 8 ? '…' : ''}. Sửa cách kiểm ở “Xem / sửa rule” nếu cần.</p>${added.warnings.length ? `<p class="hint">${added.warnings.map(esc).join('<br>')}</p>` : ''}</div>`;
+      $('manual-sample').value = ''; $('manual-event').value = '';
+      toast(`Đã thêm ${added.event_name} vào đặc tả. Event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
+    },
+    export: async () => {
+      if (ui.state?.ai?.enabled) toast('AI đang viết cột nhận xét cho báo cáo (thường 10–60 giây)…');
+      await api('export', {}, 'export'); toast('Đã xuất báo cáo hiện tại.', 'ok');
+    },
     'stop-session': async () => {
       if (ui.state?.currentStep && !confirm('Bước đang ghi sẽ được giữ REVIEW. Dừng phiên?')) return;
       await api('stop-session', {}, 'stop-session'); toast('Đã dừng phiên và lưu bằng chứng.');
@@ -1055,6 +1128,7 @@
     for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system', 'ev-unsent']) $(id)?.addEventListener('input', () => { if (!['ev-marked', 'ev-system', 'ev-unsent'].includes(id)) ui.groupFilter = null; ui.sig.events = null; render(); });
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
     $('firing-status')?.addEventListener('input', () => { ui.sig.firing = null; render(); });
+    $('prices-status')?.addEventListener('input', () => { ui.sig.prices = null; render(); });
     $('events')?.addEventListener('toggle', event => {
       const id = event.target.dataset?.ev; if (!id) return;
       if (event.target.open) { ui.openEvents.add(id); const host = event.target.querySelector(`[data-detail="${CSS.escape(id)}"]`); if (host && !host.innerHTML.trim()) host.innerHTML = detailContent(id); }
@@ -1064,6 +1138,8 @@
     $('url')?.addEventListener('keydown', event => { if (event.key === 'Enter' && !ui.state?.running) run(actions.start)(); });
     $('url')?.addEventListener('input', () => ui.hooks.urlChanged?.());
     $('vendors')?.addEventListener('change', saveSite);
+    $('vendors-more')?.addEventListener('change', saveSite);
+    $('compare-api')?.addEventListener('change', saveSite);
     $('patterns')?.addEventListener('change', saveSite);
   }
 

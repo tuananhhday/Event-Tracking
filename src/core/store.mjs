@@ -42,12 +42,15 @@ export class EvidenceStore {
     fs.mkdirSync(this.runDir, { recursive: true });
     this.eventPath = path.join(this.runDir, 'events.jsonl');
     this.stepPath = path.join(this.runDir, 'steps.jsonl');
+    // Prices read from the website's API (api-prices.mjs); not events, kept beside them.
+    this.apiPath = path.join(this.runDir, 'api.jsonl');
     this.db = new DatabaseSync(path.join(this.runDir, 'eventqa.db'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(evidence_id TEXT PRIMARY KEY,session_id TEXT,test_case_id TEXT,step_id TEXT,captured_at TEXT,source TEXT,layer TEXT,event_name TEXT,page_url TEXT,record_json TEXT); CREATE INDEX IF NOT EXISTS event_scope ON events(test_case_id,step_id,layer,event_name);');
     this.insert = this.db.prepare('INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?,?,?)');
     this.recover();
     this.fd = fs.openSync(this.eventPath, 'a');
     this.stepsFd = fs.openSync(this.stepPath, 'a');
+    this.apiFd = fs.openSync(this.apiPath, 'a');
   }
   recover() {
     // Never return an index row that is absent from the durable source.
@@ -56,6 +59,8 @@ export class EvidenceStore {
     const latest = new Map();
     recoverJsonl(this.stepPath, step => latest.set(step.id, step));
     this.recoveredSteps = [...latest.values()];
+    this.apiList = [];
+    recoverJsonl(this.apiPath, record => this.apiList.push(record));
   }
   index(event) {
     this.eventsCache = null;
@@ -71,6 +76,14 @@ export class EvidenceStore {
     this.index(safe);
     return safe;
   }
+  appendApi(record) {
+    const safe = redact(record);
+    safe.session_id = record.session_id;
+    fs.writeFileSync(this.apiFd, JSON.stringify(safe) + '\n');
+    this.apiList.push(safe);
+    return safe;
+  }
+  apiRecords() { return this.apiList.slice(); }
   appendStep(step) { fs.writeFileSync(this.stepsFd, JSON.stringify(redact(step)) + '\n'); fs.fsyncSync(this.stepsFd); }
   saveSession(session) {
     const safe = redact(session);
@@ -82,5 +95,5 @@ export class EvidenceStore {
     this.eventsCache ??= this.db.prepare('SELECT record_json FROM events ORDER BY rowid').all().map(r => JSON.parse(r.record_json));
     return this.eventsCache.slice();
   }
-  close() { if (this.closed) return; this.closed = true; fs.closeSync(this.fd); fs.closeSync(this.stepsFd); this.db.close(); }
+  close() { if (this.closed) return; this.closed = true; fs.closeSync(this.fd); fs.closeSync(this.stepsFd); fs.closeSync(this.apiFd); this.db.close(); }
 }

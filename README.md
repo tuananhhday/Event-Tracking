@@ -10,7 +10,7 @@ Muốn chọn bản, mở [scripts/choose-mode.cmd](scripts/choose-mode.cmd) (ho
 
 | Bản | File chạy | Giao diện | Dùng khi |
 |---|---|---|---|
-| 1. Bản thường | [CHAY_EVENT_QA.cmd](CHAY_EVENT_QA.cmd) | http://127.0.0.1:4173 | Mặc định: đọc `dataLayer`/`InsiderQueue` và request GA4/Insider, đối chiếu file đặc tả. |
+| 1. Bản thường | [CHAY_EVENT_QA.cmd](CHAY_EVENT_QA.cmd) | http://127.0.0.1:4173 | Mặc định: đọc `dataLayer`/`InsiderQueue` và request GA4/Insider, đối chiếu file đặc tả, so giá đã gửi với API của website. |
 | 2. Bản AI | [CHAY_EVENT_QA_AI.cmd](CHAY_EVENT_QA_AI.cmd) | http://127.0.0.1:4174 | Như bản thường, thêm **✦ AI kiểm tra cả phiên** (đọc yêu cầu của bạn, file đặc tả và các event đã gửi lên server rồi chỉ ra đúng / sai / thiếu / đang có vấn đề), **✦ AI giải thích** từng event/lỗi bằng tiếng Việt và tạo rule từ mô tả. Xem [hướng dẫn bản AI](docs/AI.md). |
 
 Mã giao diện: [src/web/cdp.html](src/web/cdp.html), [src/web/cdp-ai.html](src/web/cdp-ai.html); CSS và JS dùng chung trong [src/web/shared/](src/web/shared/).
@@ -32,12 +32,26 @@ Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `n
 
 Không cần file đặc tả để bắt đầu.
 
-1. **Website & trình duyệt test.** Nhập URL thật, chọn vendor cần bắt (GA4, GA4 server-side, Insider, Meta Pixel, TikTok, Google Ads, Clarity), bấm **Mở trình duyệt test**. Cửa sổ test dùng profile riêng và giữ đăng nhập; website cần đăng nhập thì đăng nhập trong cửa sổ này. URL và vendor được nhớ cho lần sau.
+1. **Website & trình duyệt test.** Nhập URL thật, tick **GA4 (Google)** / **Insider**, bấm **Mở trình duyệt test**. Website mở trong đúng một tab của cửa sổ test (không có tab trống thừa); phiên sau dùng lại tab đó. Cửa sổ test dùng profile riêng và giữ đăng nhập; website cần đăng nhập thì đăng nhập trong cửa sổ này. URL và lựa chọn được nhớ cho lần sau. Mục **Nâng cao** (bấm mới mở) có: bật/tắt so giá với API, **Không đọc dataLayer / InsiderQueue** (chỉ khi website lag; khi đó chỉ thấy request), hệ thống tracking khác (GA4 server-side, Meta Pixel, TikTok, Google Ads, Clarity), endpoint riêng của website và CDP port.
 2. **Thu thập tự do.** Tab **Event trực tiếp** có bốn cách xem: **Đã gửi lên server** (mặc định: mỗi dòng là một event Google/Insider đã nhận, kèm mã GA4 `G-…`; event gửi lặp có nhãn **⚠ Lặp lại sau X s**), **dataLayer · InsiderQueue (F12)** (từng phần tử theo đúng thứ tự như gõ `dataLayer` / `InsiderQueue` trong F12 Console, kèm đã gửi lên server hay chưa), **Gộp theo event** (số lần, trang, request lỗi) và **Dòng thời gian** (payload từng event). Bấm **⚑ Đặt mốc** trước một thao tác để chỉ xem event phát ra sau đó.
 3. **Không thấy request?** Tab **Endpoint** liệt kê request trông giống tracking nhưng chưa nằm trong allowlist (chỉ host + path, không lưu payload). Bấm **Theo dõi** để ghi từ request tiếp theo mà không cần mở lại phiên.
 4. **Tạo rule từ event thật.** Bấm **Tạo rule** trên một event: app liệt kê từng trường với giá trị thực tế và đề xuất cách kiểm (bằng / có mặt / kiểu / regex / lấy từ context). Tham số giao thức GA4 và giá trị thay đổi mỗi lần được bỏ tick; trường đã che chỉ kiểm có mặt. Đổi sang **lấy từ context** cho giá trị phụ thuộc thao tác (từ khoá, mã sản phẩm). Lưu được ngay khi phiên đang chạy.
 5. **Kiểm từng thao tác.** Chọn case, điền context, **▶ Bắt đầu bước**, thao tác trên website, **■ Hoàn tất bước** để nhận PASS/FAIL từng tầng.
 6. **Kết thúc & xuất** XLSX/HTML/JSON/bug. Chưa có rule vẫn xuất được toàn bộ event.
+
+### Báo cáo Excel: sheet "Báo cáo event"
+
+Sheet đầu tiên của `report.xlsx` là bảng báo cáo:
+
+| STT | Nền tảng | Luồng | Tên event | Event mong muốn | Event thực tế (GA4) | Event thực tế (Insider) | Nhận xét của AI |
+|---|---|---|---|---|---|---|---|
+| 1 | Insider | Golf | listing_page_view | mẫu event trong file đặc tả | | event Insider đã nhận, cùng dạng với mẫu | [Lệch] Taxonomy gửi 'Golf' thay vì 'golf'; thiếu breadcrumb… |
+| 2 | GA4 | Golf | view_item | `dataLayer.push({event: 'view_item', ecommerce: …})` | dữ liệu Google đã nhận, viết theo dạng mẫu | | [Lệch] Thiếu: service. |
+
+- **Dòng nào có mặt:** các dòng đặc tả của luồng đã test (dòng đã bắn và dòng chưa thấy của cùng luồng), rồi các event gửi lên nhưng đặc tả không có. Chưa nhập file đặc tả thì mỗi tên event là một dòng, hiện cả những gì GA4 và Insider đã nhận.
+- **Event thực tế theo payload mong muốn:** mẫu viết cho GA4 (`dataLayer.push`) thì event thực tế nằm ở cột **GA4**, mẫu viết cho Insider (`InsiderQueue.push`, dạng R1511…) thì ở cột **Insider**; dòng không có mẫu thì hiện cả hai cột. Event thực tế là lần bắn dùng để kết luận (lần lệch nếu có), viết cùng dạng và cùng thứ tự trường với mẫu để đọc song song: event GA4 là dữ liệu Google nhận được (chỉ tham số nghiệp vụ, không có tham số kỹ thuật như `v`, `tid`, `gtm`; trường nằm trong `ecommerce` nếu mẫu để trong `ecommerce`; `uid` của GA4 là `user_id`), event Insider là `{event, default_parameters, custom_parameters}`. Có push nhưng không gửi lên server thì ghi rõ.
+- **[Đã gửi, chưa so được]:** nền tảng đã nhận event nhưng mẫu đặc tả là dữ liệu website push (vào dataLayer / InsiderQueue) mà phiên chỉ thấy request, nên chưa so từng trường; event đã nhận vẫn hiện ở cột của nền tảng. Mở phiên có đọc dataLayer / InsiderQueue để so đủ.
+- **Nhận xét:** mở đầu bằng kết luận của công cụ ([Đủ], [Lệch], [Chưa thấy], [Không gửi lên server], [Ngoài đặc tả]…) và tô màu theo kết luận. Bản AI: khi bấm **Kết thúc & xuất** hoặc **Xuất báo cáo**, AI viết phần nhận xét (đủ gì, thiếu gì, sai gì, ai cần làm gì) từ kết luận của công cụ, mất khoảng 10–60 giây; cột có tên **Nhận xét của AI**. Bản thường, hoặc khi AI chưa bật / lỗi, công cụ tự viết (cột **Nhận xét**). Dòng có giá lệch API ghi thêm giá đã gửi và giá API.
 
 Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp khi mở app lần sau. **Mỗi lần chạy lại một case cần bắt đầu bước mới**; `within_ms` tính từ lúc bắt đầu bước.
 
@@ -51,6 +65,8 @@ Rule tạo từ một lần quan sát chỉ phản ánh hành vi hiện tại c�
 - **kiểm từng trường trên dữ liệu đã gửi lên server**: event GA4 được kiểm trên hit Google nhận được (kể cả `ecommerce.items[0]`), event Insider kiểm trên dữ liệu push vào InsiderQueue (`value[0].event_parameters.custom`…) khi Insider đã gửi nó đi. Trường website có push nhưng Google không nhận được báo riêng là **Google không nhận** (lỗi cấu hình tag GA4 trong GTM, không phải lỗi Dev website);
 - hiện kết quả ở tab **Đối chiếu đặc tả**: Khớp / Lệch / **Có push, không gửi lên server** / Chưa thấy / Ngoài đặc tả, kèm trường lệch, ghi chú của đặc tả và link tới event;
 - xuất sheet **Spec Coverage** trong `report.xlsx`; mỗi dòng lệch hoặc có push nhưng không gửi thành một bug trong `bugs.md`.
+
+**Nhập tay, không cần file Excel:** ở bước 2 mở **Nhập tay event mong muốn (dán payload mẫu)**, điền tên event (để trống nếu mẫu đã có `event`), chọn GA4 / Insider, luồng, khi nào bắn, rồi dán payload mẫu (ô DataLayer Sample, JSON, `dataLayer.push(...)`, `InsiderQueue.push(...)` hoặc dạng `{event, default_parameters, custom_parameters}` của R1511) và bấm **Thêm vào đặc tả**. App đọc mẫu giống hệt khi nhập một dòng Excel, cho biết sẽ kiểm những trường nào, lưu lại cho lần sau và đối chiếu ngay với event bắt được. Nhập file Excel sau đó vẫn giữ các event nhập tay; sửa cách kiểm từng trường ở **Xem / sửa rule**.
 
 Mọi sheet có cột Event Name + cột mẫu đều nhập được (chọn sheet ở bước 2), không chỉ sheet tổng hợp. Cách các file Martech được soạn đều đọc được:
 
@@ -103,9 +119,35 @@ Tab **Kiểm tra cách bắn** và mục **Cách bắn** trong chi tiết từng
 
 Ngoài `dataLayer` và `InsiderQueue`, app còn ghi nhận event Insider bắn qua `Insider.eventManager.dispatch(name, data)` (ví dụ `other_page_view`) và qua đối tượng `window.insider_object` (`page.type` Listing/Product/…, `transaction` → `confirmation_page_view`). Hàm gốc của Insider vẫn chạy bình thường. Báo cáo Excel có sheet **Firing Checks** liệt kê mọi kết quả.
 
+## So giá đã gửi với API của website
+
+App lấy giá từ API của website và đặt cạnh giá đã gửi lên Google / Insider, để QC luôn thấy giá thật của sản phẩm và biết giá gửi đi có đúng không (ví dụ gửi `500.000` trong khi API trả `1.000.000`). Không cần cấu hình gì; tắt được ở bước 1 → **Nâng cao**.
+
+- **Danh sách event**: dưới mỗi event có giá là dòng `items[0].price gửi 500.000 · API 1.000.000 ✗ lệch` (hoặc ✓ khớp).
+- **Tab Giá vs API**: mặc định hiện tất cả giá (mới nhất trước) với giá đã gửi, giá trong API, trường trong API và API đã gọi; lọc được chỉ giá lệch. Phía dưới là **Giá trong API của website**: từng response API với tên sản phẩm, mã, trường và giá, kể cả khi chưa event nào gửi giá đó.
+- **Chi tiết event**: mục **Giá so với API của website**.
+
+Cách app lấy giá từ API:
+
+- **App đọc API nào.** Các response JSON mà website gọi bằng XHR/fetch tới chính website của nó (cùng tên miền gốc, ví dụ `api.vinpearlota.com` cho `vinpearlota.com`), giống tab Network trong F12. App chỉ giữ các trường tiền (`price`, `salePrice`, `totalAmount`, `price.value`…) cùng mã và tên sản phẩm của từng giá, không lưu phần còn lại của response. API đăng nhập, tài khoản, hồ sơ người dùng không được đọc.
+- **Giá nào được so.** Mọi trường tiền của event đã gửi lên server: GA4 `value`, `items[].price`; Insider `unit_price`, `unit_sale_price`, tổng giỏ hàng, các khoản phí (`green_fee`…).
+- **Ghép đúng sản phẩm.** App tìm sản phẩm trong API theo mã của event (`item_id`, `product_id`, mã phụ như `golf_club_id`; mã ghép như `vinpearl-hp-golf_18_A_1_05:30` được tách thành `vinpearl-hp-golf`, `18`, `A`…) và chọn mục khớp cụ thể nhất: sân A không bị lấy giá của sân B dù cùng câu lạc bộ. Chỉ dùng API mà trang đã nhận trên cùng tab trước lúc website push event (GA4 gửi request trễ vài giây nên không tính theo giờ request), trong 30 phút.
+- **So cùng loại giá.** Giá đơn vị so với giá, tổng tiền so với tổng tiền; tổng tiền của event chỉ có một sản phẩm được so với giá × số lượng. Khoản phí chỉ so với phí cùng loại (`green_fee` ↔ `greenFee`, không so với `caddieFee`).
+
+| Kết quả | Ý nghĩa |
+|---|---|
+| **Lệch API** | API trả giá khác cho đúng sản phẩm đó. Có ghi chú **Khớp API cũ** khi giá đã gửi bằng giá của lần gọi API trước: website chưa cập nhật giá sau khi người dùng đổi ngày / lựa chọn. |
+| **Khớp API** | Giá đã gửi bằng giá API của sản phẩm (hoặc giá × số lượng). |
+| **Khớp giá trên API** | Không xác định được sản phẩm trong API, nhưng API của trang có đúng giá này. |
+| **Không thấy trong API** | API không có giá cùng loại cho sản phẩm (ví dụ API không trả các khoản phí), hoặc website không gọi API có giá. |
+
+Báo cáo Excel có sheet **Giá vs API**; mỗi giá lệch thành một bug trong `bugs.md`. Bản AI đưa giá lệch vào phần **AI kiểm tra cả phiên** và **AI giải thích event này**.
+
+Giới hạn: giá website viết sẵn trong HTML (không qua API) thì app không thấy; mỗi phiên đọc tối đa 3000 response API, mỗi response tối đa 3 MB. Kết quả so giá là bằng chứng để QC xem lại; API có nhiều mức giá (giá gốc, giá khuyến mãi) được liệt kê đủ để chọn đúng.
+
 ## Chạy thử với trang demo
 
-Bấm **Chưa có website? Chạy thử với trang demo** ở bước 1: app chọn trang demo nội bộ và nạp 3 case mẫu Hotel, Merchandise, Insider. Trên demo, tick **Bỏ destination_id** để có FAIL/MISSING_FIELD ở tầng queue; tick **Bỏ request** ở Insider để có FAIL ở tầng request.
+Bấm **Chưa có website? Chạy thử với trang demo** ở bước 1: app chọn trang demo nội bộ và nạp 3 case mẫu Hotel, Merchandise, Insider. Trên demo, tick **Bỏ destination_id** để có FAIL/MISSING_FIELD ở tầng queue; tick **Bỏ request** ở Insider để có FAIL ở tầng request. Mục **Giá so với API** của demo gọi API sản phẩm (giá 1.000.000) rồi gửi `view_item`; tick **Gửi sai giá (500.000)** để thấy **Lệch API** ở tab **Giá vs API**.
 
 ## Specification của bạn
 
@@ -130,8 +172,10 @@ runs/<session-id>/
   events.jsonl       # ghi append + fsync trước khi cập nhật SQLite
   steps.jsonl        # vòng đời bước; bằng chứng cho event bị thiếu
   eventqa.db         # SQLite WAL, index có thể dựng lại từ JSONL
-  report.xlsx       # Run Summary / Test Cases / Expected Events /
-                    # Actual Events / Comparison / Bug Reports
+  report.xlsx       # Báo cáo event / Run Summary / Spec Coverage / Firing Checks /
+                    # Giá vs API / Test Cases / Expected Events / Actual Events /
+                    # Comparison / Bug Reports
+  api.jsonl          # giá đọc từ API của website (chỉ trường tiền + mã, tên sản phẩm)
   report.html
   comparison.json
   bugs.md

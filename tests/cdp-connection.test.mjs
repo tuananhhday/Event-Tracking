@@ -195,3 +195,32 @@ test('closing a WebSocket during handshake rejects connect immediately and clear
   assert.equal(connection.closed, true);
   assert.equal(connection.pending.size, 0);
 });
+
+test('the collector reads prices from the JSON responses of the website API only: not other sites, account APIs or non-JSON', async t => {
+  const bodies = { room: JSON.stringify({ data: { id: 'ROOM-1', name: 'Deluxe', price: 1000000 } }), other: JSON.stringify({ price: 5 }), account: JSON.stringify({ totalSpent: 1 }), text: 'price=1' };
+  const read = [];
+  const mock = await mockCDP((command, send) => {
+    if (command.method === 'Network.getResponseBody') read.push(command.params.requestId);
+    send({ id: command.id, result: command.method === 'Network.getResponseBody' ? { body: bodies[command.params.requestId], base64Encoded: false } : command.method === 'Page.addScriptToEvaluateOnNewDocument' ? { identifier: 'script1' } : {} });
+  });
+  t.after(() => mock.close());
+  const apis = [];
+  const collector = new CDPCollector({ port: mock.port, onEvent: () => {}, onApi: record => apis.push(record) });
+  await collector.start({}); t.after(() => collector.stop());
+  const load = (requestId, url, mimeType = 'application/json') => {
+    mock.send({ method: 'Network.requestWillBeSent', params: { requestId, type: 'Fetch', documentURL: 'https://example.test/vi/hotel', request: { url, method: 'GET', headers: {} } } });
+    mock.send({ method: 'Network.responseReceived', params: { requestId, type: 'Fetch', response: { status: 200, mimeType } } });
+    mock.send({ method: 'Network.loadingFinished', params: { requestId, encodedDataLength: 120 } });
+  };
+  load('other', 'https://other.test/prices');
+  load('account', 'https://api.example.test/account/summary');
+  load('text', 'https://api.example.test/prices.txt', 'text/plain');
+  load('room', 'https://api.example.test/rooms/ROOM-1');
+  for (let retry = 0; retry < 50 && !apis.length; retry++) await delay(10);
+  await delay(30);
+  assert.deepEqual(read, ['room'], 'only the website API response body is read');
+  assert.equal(apis.length, 1);
+  assert.equal(apis[0].url, 'https://api.example.test/rooms/ROOM-1');
+  assert.equal(apis[0].page.url, 'https://example.test/vi/hotel');
+  assert.deepEqual(apis[0].prices, [{ path: 'data.price', value: 1000000, ids: ['ROOM-1'], name: 'Deluxe' }]);
+});

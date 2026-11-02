@@ -49,6 +49,11 @@ export class SessionManager {
     }
     return event;
   }
+  // Prices the website's API returned during the session (api-prices.mjs), capped per session.
+  emitApi(partial) {
+    if (this.session?.status !== 'RUNNING' || this.store.apiList.length >= 3000) return null;
+    return this.store.appendApi({ ...partial, schema_version: '1.0', evidence_id: `API-${randomUUID()}`, session_id: this.session.id });
+  }
   completeStep() {
     const step = this.currentStep; if (!step) throw new Error('Chưa có bước đang chạy.');
     step.completed_at = new Date().toISOString(); step.status = 'COMPLETED'; this.currentStep = null;
@@ -56,7 +61,8 @@ export class SessionManager {
     this.results.push(result); this.persist(); return result;
   }
   snapshot() {
-    const events = this.store && !this.store.closed ? this.store.events() : this.lastEvents || [];
+    const live = this.store && !this.store.closed;
+    const events = live ? this.store.events() : this.lastEvents || [], api = live ? this.store.apiRecords() : this.lastApi || [];
     const results = [];
     for (const step of this.steps) {
       const testCase = this.cases.find(candidate => candidate.id === step.test_case_id);
@@ -66,18 +72,18 @@ export class SessionManager {
     for (const testCase of this.cases) {
       if (!this.steps.some(s => s.test_case_id === testCase.id)) results.push(validateCase(testCase, [], { id: null, evidence_id: `NOT-EXECUTED-${testCase.id}`, test_case_id: testCase.id, status: 'NOT_EXECUTED', context: {} }));
     }
-    return { session: this.session, cases: this.cases, steps: this.steps, events, results };
+    return { session: this.session, cases: this.cases, steps: this.steps, events, api, results };
   }
   finish() {
     if (!this.session || this.session.status !== 'RUNNING') return this.snapshot();
     if (this.currentStep) throw new Error('Hoàn tất bước hiện tại trước khi kết thúc phiên.');
     this.session.status = 'COMPLETED'; this.session.completed_at = new Date().toISOString(); this.persist();
-    this.lastEvents = this.store.events(); this.store.close(); return this.snapshot();
+    this.lastEvents = this.store.events(); this.lastApi = this.store.apiRecords(); this.store.close(); return this.snapshot();
   }
   abort() {
     if (!this.session || this.session.status !== 'RUNNING') return;
     if (this.currentStep) { this.currentStep.status = 'INTERRUPTED'; this.currentStep.completed_at = new Date().toISOString(); this.store.appendStep(this.currentStep); this.currentStep = null; }
-    this.session.status = 'INTERRUPTED'; this.persist(); this.lastEvents = this.store.events(); this.store.close();
+    this.session.status = 'INTERRUPTED'; this.persist(); this.lastEvents = this.store.events(); this.lastApi = this.store.apiRecords(); this.store.close();
   }
 }
 
@@ -89,7 +95,7 @@ export function loadRun(runDir) {
     for (const step of store.recoveredSteps || []) latest.set(step.id, step);
     const expectedPath = path.join(dir, 'expected.json');
     const cases = fs.existsSync(expectedPath) ? JSON.parse(fs.readFileSync(expectedPath, 'utf8')).cases || [] : [];
-    return { session: saved, cases, steps: [...latest.values()], results: saved.results || [], events: store.events() };
+    return { session: saved, cases, steps: [...latest.values()], results: saved.results || [], events: store.events(), api: store.apiRecords() };
   }
   finally { store.close(); }
 }

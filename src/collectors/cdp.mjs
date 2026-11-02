@@ -3,12 +3,30 @@ import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
 import { redactUrl } from '../core/privacy.mjs';
+import { apiPrices } from '../core/api-prices.mjs';
 
 // A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
 // between the events of one request.
 const hitPage = (event, page) => { const url = event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
 
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
+
+// The website's own API (same site as the page, e.g. api.vinpearlota.com for vinpearlota.com): its JSON
+// responses are read for the prices they return. Login, account and profile APIs describe the person and
+// are never read.
+const API_MAX_BYTES = 3 * 1024 * 1024;
+const PERSONAL_API = /(?:^|[/._-])(?:auth|login|logout|oauth|token|iam|otp|password|profiles?|accounts?|users?|sessions?)(?:$|[/._-])/i;
+const siteOf = host => {
+  if (/^[\d.]+$|^\[|^localhost$/i.test(host)) return host;
+  const labels = host.split('.');
+  return labels.slice(labels.length > 2 && /^(?:com|net|org|gov|edu|co|ac)$/i.test(labels.at(-2)) && labels.at(-1).length === 2 ? -3 : -2).join('.');
+};
+function websiteApi(url, pageUrl) {
+  try {
+    const target = new URL(url), page = new URL(pageUrl);
+    return /^https?:$/.test(target.protocol) && siteOf(target.hostname) === siteOf(page.hostname) && !PERSONAL_API.test(target.pathname);
+  } catch { return false; }
+}
 
 function localWebSocket(url) {
   const parsed = new URL(url);
@@ -138,10 +156,10 @@ export function queueEvents(record) {
 }
 
 export class CDPCollector {
-  constructor({ port = 9222, targetId, urlFilter, onEvent, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
+  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
     if (typeof onEvent !== 'function') throw new Error('CDPCollector requires onEvent.');
     this.port = Number(port); this.targetId = targetId; this.urlFilter = urlFilter;
-    this.onEvent = onEvent; this.onStatus = onStatus;
+    this.onEvent = onEvent; this.onApi = typeof onApi === 'function' ? onApi : null; this.onStatus = onStatus;
     this.captureQueues = captureQueues;
     this.patterns = endpointPatterns; this.discovered = new Map();
     this.connections = new Map(); this.attaching = new Map(); this.activeConnections = new Set(); this.jobs = new Set(); this.running = false; this.generation = 0;
@@ -200,7 +218,7 @@ export class CDPCollector {
     const connection = new CDPConnection(target.webSocketDebuggerUrl);
     this.activeConnections.add(connection);
     connection.on('closed', () => this.activeConnections.delete(connection));
-    const state = { connection, target, requests: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
+    const state = { connection, target, requests: new Map(), api: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
     try {
       await connection.connect();
       if (!this.running || generation !== this.generation) { connection.close(); return; }
@@ -278,7 +296,7 @@ export class CDPCollector {
       const request = params.request || {};
       // CORS preflight asks permission to send an event; it is not the event itself.
       if (request.method?.toUpperCase() === 'OPTIONS') return;
-      if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); return; }
+      if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); this.#apiRequest(state, sessionId, params); return; }
       const key = `${sessionId || ''}:${params.requestId}`;
       const capturedAt = new Date((params.wallTime || Date.now() / 1000) * 1000).toISOString();
       const pending = { requestId: params.requestId, capturedAt, url: request.url, method: request.method,
@@ -298,6 +316,19 @@ export class CDPCollector {
       await pending.ready;
     } else if (['Network.responseReceived', 'Network.loadingFailed', 'Network.loadingFinished'].includes(method)) {
       const key = `${sessionId || ''}:${params.requestId}`;
+      const api = state.api.get(key);
+      if (api) {
+        if (method === 'Network.responseReceived') {
+          const response = params.response || {};
+          // When the response reached the page (wall time of the request + monotonic delay): the data the website had from then on.
+          api.at = Number.isFinite(params.timestamp) && Number.isFinite(api.monotonic) ? api.wall + (params.timestamp - api.monotonic) * 1000 : Date.now();
+          if (response.status >= 200 && response.status < 300 && /json/i.test(response.mimeType || '')) api.ok = true; else state.api.delete(key);
+        } else {
+          state.api.delete(key);
+          if (method === 'Network.loadingFinished' && api.ok && !(params.encodedDataLength > API_MAX_BYTES)) await this.#apiPrices(api, send, params.requestId, generation);
+        }
+        return;
+      }
       const pending = state.requests.get(key);
       if (!pending) return;
       await pending.ready;
@@ -313,6 +344,24 @@ export class CDPCollector {
       }
       if (method !== 'Network.responseReceived') state.requests.delete(key);
     }
+  }
+  // XHR/fetch calls of the website's own API, remembered until their JSON response has loaded.
+  #apiRequest(state, sessionId, params) {
+    const request = params.request || {}, pageUrl = params.documentURL || state.target.url;
+    if (!this.onApi || !['XHR', 'Fetch'].includes(params.type) || !websiteApi(request.url, pageUrl)) return;
+    state.api.set(`${sessionId || ''}:${params.requestId}`, { url: request.url, method: request.method, page: { url: redactUrl(pageUrl), frame_id: params.frameId, target_id: state.target.id },
+      wall: (params.wallTime || Date.now() / 1000) * 1000, monotonic: params.timestamp });
+    if (state.api.size > 200) state.api.delete(state.api.keys().next().value);
+  }
+  async #apiPrices(api, send, requestId, generation) {
+    let text;
+    try { const { body, base64Encoded } = await send('Network.getResponseBody', { requestId }); text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body; }
+    catch { return; }
+    if (!text || text.length > API_MAX_BYTES) return;
+    let json;
+    try { json = JSON.parse(text); } catch { return; }
+    const prices = apiPrices(json);
+    if (prices.length && this.running && generation === this.generation) await this.onApi({ captured_at: new Date(api.at ?? Date.now()).toISOString(), url: redactUrl(api.url), method: api.method, page: api.page, prices });
   }
   #deactivate() {
     this.running = false;

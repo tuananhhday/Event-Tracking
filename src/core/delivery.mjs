@@ -72,6 +72,8 @@ export function deliveryStatus(event, links, now = Date.now()) {
 // GA4 sends a push's ecommerce fields at event level (value, item_list_id, result_count…, currency
 // as `cu`) and items as pr1, pr2…; read a hit the way the dataLayer push it stands for is written.
 export function ga4HitAsPush(payload = {}) {
+  // The GA4 tag sends the dataLayer's user_id as `uid`.
+  if (payload.uid !== undefined && payload.user_id === undefined) { const { uid, ...rest } = payload; payload = { ...rest, user_id: uid }; }
   const ecommerce = { ...(payload.ecommerce ?? {}) };
   for (const [key, value] of Object.entries(payload)) if (key !== 'event' && key !== 'ecommerce' && !isGa4Transport(key) && ecommerce[key] === undefined) ecommerce[key] = value;
   if (payload.cu !== undefined && ecommerce.currency === undefined) ecommerce.currency = payload.cu;

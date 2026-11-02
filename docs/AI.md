@@ -6,10 +6,11 @@ Bản AI bắt event giống hệt **bản thường** (đọc `dataLayer`, `Ins
 
 | Việc | Cách dùng | AI trả lời |
 |---|---|---|
+| **Viết nhận xét cho báo cáo** | Không cần bấm thêm: khi bấm **Kết thúc & xuất** hoặc **Xuất báo cáo** | Cột **Nhận xét của AI** trong sheet **Báo cáo event** của `report.xlsx`: mỗi event đủ gì, thiếu gì, sai gì và ai cần làm gì (mất khoảng 10–60 giây) |
 | **Kiểm tra cả phiên** | Nhập file đặc tả (ví dụ sheet R1511), thao tác trên website, rồi mở tab **✦ Trợ lý AI** → ghi yêu cầu kiểm tra (không bắt buộc) → **✦ AI kiểm tra phiên này** | Event nào **đúng**, **sai** (sai trường nào), **thiếu**, đang có **vấn đề** gì (gửi lặp, ngoài đặc tả, có push nhưng không gửi lên server) và ai cần làm gì tiếp |
-| **Giải thích một event** | Tab **Event trực tiếp** → **Xem chi tiết** một event → **✦ AI giải thích event này** | Event là gì, người dùng làm gì thì bắn, có khớp file đặc tả không, vấn đề cụ thể và việc Dev/QC cần làm |
+| **Giải thích một event** | Tab **Event trực tiếp** → **Xem chi tiết** một event → **✦ AI giải thích event này** | Event là gì, người dùng làm gì thì bắn, có khớp file đặc tả không, giá gửi có lệch API của website không, vấn đề cụ thể và việc Dev/QC cần làm |
 | **Giải thích lỗi tự động** | Không cần bấm: khi một bước ra **Cần sửa** | Nguyên nhân và việc cần làm, hiện ngay dưới kết quả bước |
-| **Tạo rule từ mô tả** | Tab **✦ Trợ lý AI** → điền tên event, gửi cho GA4/Insider, mô tả, dán payload mẫu từ Excel → **✦ Tạo rule bằng AI** | Danh sách trường cần kiểm và cách kiểm (bằng tiếng Việt); bạn xem lại rồi lưu |
+| **Tạo rule từ mô tả** | Tab **✦ Trợ lý AI** → điền tên event, gửi cho GA4/Insider, mô tả, dán payload mẫu từ Excel → **✦ Tạo rule bằng AI** | Danh sách trường cần kiểm và cách kiểm (bằng tiếng Việt); bạn xem lại rồi lưu. Không cần AI: bước 2 → **Nhập tay event mong muốn** đọc payload mẫu giống file Excel |
 
 **AI không quyết định đúng/sai.** Kết luận khớp/lệch đặc tả luôn do công cụ tự kiểm theo file Excel; AI chỉ diễn giải kết luận đó và không được nói ngược lại. Rule AI tạo luôn là bản nháp, cần bạn duyệt trước khi dùng. Email, số điện thoại, token… được che trước khi gửi cho AI.
 
@@ -19,7 +20,7 @@ Bản AI bắt event giống hệt **bản thường** (đọc `dataLayer`, `Ins
 2. **Các dòng đặc tả của luồng đang test**: dòng đã có event và các dòng chưa thấy của cùng luồng (tên event, khi nào bắn, các trường cần có, ô Excel).
 3. **Kết quả công cụ tự kiểm** từng dòng: Khớp / Lệch (trường nào, mong đợi gì, thực tế gì) / Có push nhưng không gửi lên server / Chưa thấy.
 4. **Các event đã gửi lên Google / Insider**: giờ, hệ thống, tên event, trang, mã GA4, có phải gửi lặp không.
-5. Push không gửi lên server, event ngoài đặc tả và lỗi cách bắn.
+5. Push không gửi lên server, event ngoài đặc tả, lỗi cách bắn và **giá gửi lệch API của website** (tab Giá vs API).
 
 Danh sách **Đúng / Sai / Thiếu** luôn khớp kết quả ở tab **Đối chiếu đặc tả**: app dựng lại ba danh sách này từ kết quả công cụ và chỉ giữ câu AI viết khi câu đó nói đúng event đó. AI viết phần tóm tắt, **Đang có vấn đề** và **Nên làm tiếp**. Chưa nhập file đặc tả thì AI chỉ nhận xét các event đã gửi.
 
@@ -65,7 +66,7 @@ Giá catalog là USD/token; `provider.max_price` dùng USD/triệu token. Gatewa
 
 Khóa chính và các khóa dự phòng được loại trùng, tối đa 8 khóa. HTTP 401 loại khóa sai, HTTP 402 chuyển khóa dự phòng cho cùng model và đánh khóa thiếu credit chỉ với model trả phí; khóa vẫn có thể dùng model free ở thao tác sau. Khóa cùng tài khoản có thể dùng chung số dư. HTTP 403 dừng thao tác, tránh đổi model để vượt giới hạn tài khoản/workspace. Lỗi HTTP 200 có `body.error` cũng được xử lý theo mã lỗi; không đưa body lỗi provider ra log. Số HTTP completion thực tế có trần riêng `OPENROUTER_MAX_COMPLETION_REQUESTS` (mặc định tổng số model cộng số khóa dự phòng), nên key rotation không tạo vòng lặp.
 
-Có thể thay `auto` bằng một ID model để chọn cố định; kiểm tra giá, schema, ngân sách và key dự phòng vẫn áp dụng. Catalog được cache tối đa một giờ; kết quả hợp lệ được cache trong tiến trình theo hash model, input đã che dữ liệu và schema. Chỉ gọi AI khi cần tạo nháp, giải thích một event, giải thích lỗi hoặc kiểm tra cả phiên. Nếu toàn bộ ứng viên/khóa không dùng được, tính năng AI trả unavailable và báo cáo deterministic vẫn xuất được. `diagnostics()` và `listRoutingCandidates()` chỉ hiển thị model, giá, nhãn `key_1`… và mã trạng thái; không chứa API key.
+Có thể thay `auto` bằng một ID model để chọn cố định; kiểm tra giá, schema, ngân sách và key dự phòng vẫn áp dụng. Catalog được cache tối đa một giờ; kết quả hợp lệ được cache trong tiến trình theo hash model, input đã che dữ liệu và schema. Chỉ gọi AI khi cần tạo nháp, giải thích một event, giải thích lỗi, kiểm tra cả phiên hoặc viết nhận xét cho báo cáo (20 dòng mỗi lần, tối đa 100 dòng; dòng AI không trả lời giữ nhận xét của công cụ). Nếu toàn bộ ứng viên/khóa không dùng được, tính năng AI trả unavailable và báo cáo deterministic vẫn xuất được. `diagnostics()` và `listRoutingCandidates()` chỉ hiển thị model, giá, nhãn `key_1`… và mã trạng thái; không chứa API key.
 
 Input gửi đi được che token, thông tin đăng nhập và PII trước khi gọi API. Không ghi API key hoặc body lỗi provider vào log. Request đặt `provider.data_collection=deny`; hãy chọn model/provider phù hợp chính sách dữ liệu của môi trường kiểm thử. Việc truyền dữ liệu ra OpenRouter chỉ diễn ra sau khi đã bật AI và gọi chức năng AI.
 

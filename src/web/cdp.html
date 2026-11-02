@@ -40,10 +40,13 @@
           <button type="button" class="btn" data-action="scan-targets" data-lock-running>Quét tab trên cổng debug</button>
           <div id="targets" class="cases" style="margin-top:8px"></div>
         </div>
-        <label class="check"><input id="request-only" type="checkbox" data-lock-running> Không đọc dataLayer / InsiderQueue (chỉ khi website bị lag)</label><p class="hint">Để trống để thấy đủ như F12: dataLayer, InsiderQueue và request gửi lên Google/Insider. Chỉ tick khi website lag hoặc không thao tác được; khi đó app chỉ thấy request và không so được với F12 Console. Áp dụng khi mở phiên mới.</p>
         <span class="label">Tracking cần bắt</span>
         <div id="vendors" class="vendor-list"></div>
-        <details class="more"><summary>Endpoint bổ sung &amp; nâng cao</summary>
+        <details class="more"><summary>Nâng cao: so giá với API, request, hệ thống khác</summary>
+          <label class="check"><input id="compare-api" type="checkbox" checked data-lock-running> So giá đã gửi với API của website</label><p class="hint">App đọc các API JSON website gọi (như tab Network trong F12) và so với giá đã gửi lên Google/Insider. Kết quả ở tab <b>Giá vs API</b>.</p>
+          <span class="label">Hệ thống tracking khác</span>
+          <div id="vendors-more" class="vendor-list"></div>
+          <label class="check"><input id="request-only" type="checkbox" data-lock-running> Không đọc dataLayer / InsiderQueue (chỉ khi website bị lag)</label><p class="hint">Để trống để thấy đủ như F12: dataLayer, InsiderQueue và request gửi lên Google/Insider. Chỉ tick khi website lag hoặc không thao tác được; khi đó app chỉ thấy request và không so được với F12 Console. Áp dụng khi mở phiên mới.</p>
           <label for="patterns">Endpoint riêng của website <span class="hint">(mỗi dòng một regex, so với host + path)</span></label>
           <textarea id="patterns" class="code" rows="3" placeholder="^tracking\.website\.vn/collect$"></textarea>
           <p class="hint">Không biết endpoint? Mở phiên rồi xem tab <b>Endpoint</b>: app gợi ý các request giống tracking.</p>
@@ -69,7 +72,21 @@
         <input id="sheet" list="sheet-list" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
 </details>
         <button type="button" class="btn primary" id="import" data-action="import" style="margin-top:12px">Nhập file</button>
-        <p class="hint">Nhập file thay toàn bộ case hiện có. Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+        <p class="hint">Nhập file thay toàn bộ case hiện có (giữ các event nhập tay). Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+        <details class="more manual-event"><summary>Nhập tay event mong muốn (dán payload mẫu)</summary>
+          <p class="hint" style="margin-top:6px">Không có file Excel, hoặc cần thêm một event? Điền tên event và dán payload mẫu (như ô DataLayer Sample trong Excel, JSON, <code>dataLayer.push(...)</code> hoặc <code>InsiderQueue.push(...)</code>). App đọc mẫu giống khi nhập file Excel; event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.</p>
+          <div class="ai-form-grid">
+            <div><label for="manual-event">Tên event <span class="hint">(để trống nếu mẫu có event)</span></label><input id="manual-event" placeholder="view_item" autocomplete="off"></div>
+            <div><label for="manual-source">Nền tảng</label><select id="manual-source"><option value="GA4">GA4 (dataLayer)</option><option value="INSIDER">Insider</option></select></div>
+            <div><label for="manual-flow">Luồng <span class="hint">(không bắt buộc)</span></label><input id="manual-flow" placeholder="Khách sạn, Golf…" autocomplete="off"></div>
+          </div>
+          <label for="manual-description">Event bắn khi nào? <span class="hint">(không bắt buộc)</span></label>
+          <input id="manual-description" placeholder="Ví dụ: khi bấm Xem phòng ở trang chi tiết khách sạn" autocomplete="off">
+          <label for="manual-sample">Payload mẫu</label>
+          <textarea id="manual-sample" class="code" rows="7" spellcheck="false" placeholder="dataLayer.push({ event: 'view_item', ecommerce: { currency: 'VND', value: 1000000, items: [{ item_id: 'ROOM-1', price: 1000000 }] } })"></textarea>
+          <button type="button" class="btn primary" data-action="manual-case" style="margin-top:8px">Thêm vào đặc tả</button>
+          <div id="manual-result" role="status"></div>
+        </details>
       </div>
     </li>
 
@@ -138,6 +155,7 @@
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="prices">Giá vs API <span id="prices-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
@@ -182,6 +200,14 @@
         <div id="firing-summary"></div>
         <div class="toolbar"><select id="firing-status" aria-label="Lọc theo mức"><option value="">Lỗi + cảnh báo</option><option value="FAIL">Chỉ lỗi</option><option value="WARN">Chỉ cảnh báo</option></select></div>
         <div id="firing-table"></div>
+      </div>
+      <div class="tabpanel hidden" data-panel="prices">
+        <p class="hint" style="margin-top:0">Giá lấy từ API của website (các response JSON website gọi, như tab Network trong F12), đặt cạnh giá đã gửi lên Google / Insider. App tìm sản phẩm trong API theo mã (item_id, product_id, slug…) và lấy đúng loại giá: giá đơn vị với giá, tổng tiền với tổng tiền (hoặc giá × số lượng khi chỉ có một sản phẩm).</p>
+        <div id="prices-summary"></div>
+        <div class="toolbar"><select id="prices-status" aria-label="Lọc kết quả so giá"><option value="">Tất cả giá</option><option value="MISMATCH">Chỉ giá lệch API</option><option value="problems">Lệch + không thấy trong API</option></select></div>
+        <div id="prices-table"></div>
+        <h3 class="section-title">Giá trong API của website <span class="hint">(mới nhất trước)</span></h3>
+        <div id="prices-api"></div>
       </div>
       <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>

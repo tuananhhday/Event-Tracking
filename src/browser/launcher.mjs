@@ -95,8 +95,10 @@ export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'ab
 }
 
 /** Create a known top-level page rather than navigating the first discovered
- * target, which can be an Edge onboarding/sign-in dialog on a fresh profile. */
-export async function createTestPage({ port, headless = false } = {}) {
+ * target, which can be an Edge onboarding/sign-in dialog on a fresh profile.
+ * `reuse` avoids a second window: 'startup' takes the about:blank page a browser
+ * launched by this app opens with; a target id takes the previous session's test page. */
+export async function createTestPage({ port, headless = false, reuse } = {}) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid browser debug port.');
   const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(4000) });
   if (!response.ok) throw new Error('Cannot read test browser identity.');
@@ -105,7 +107,14 @@ export async function createTestPage({ port, headless = false } = {}) {
   const connection = new CDPConnection(endpoint);
   try {
     await connection.connect();
-    const { targetId } = await connection.send('Target.createTarget', { url: 'about:blank', newWindow: !headless, background: false });
+    let targetId;
+    // The startup page can appear just after the debug endpoint: wait for it briefly.
+    for (let attempt = 0; reuse && !targetId && attempt < (reuse === 'startup' ? 20 : 1); attempt++) {
+      if (attempt) await delay(100);
+      const { targetInfos = [] } = await connection.send('Target.getTargets');
+      targetId = targetInfos.find(target => target.type === 'page' && (reuse === 'startup' ? target.url === 'about:blank' : target.targetId === reuse))?.targetId;
+    }
+    targetId ??= (await connection.send('Target.createTarget', { url: 'about:blank', newWindow: !headless, background: false })).targetId;
     if (!targetId) throw new Error('Browser did not create a test page.');
     if (!headless) {
       // Some window managers do not implement bounds changes; page identity is

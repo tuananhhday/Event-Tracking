@@ -1,6 +1,7 @@
 // Redact before persistence, reporting and external AI calls.
 const sensitive = /^(authorization|proxy[-_]?authorization|cookies?|set[-_]?cookie|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|secret|session([-_]?id|[-_]?token)?|visitor[-_]?id|device[-_]?id|sid|vid|email|e[-_]?mail|phone|phone[-_]?number|mobile|telephone|full[-_]?name|first[-_]?name|last[-_]?name|address|credit[-_]?card|card[-_]?number|cvv|user[-_]?id|client[-_]?id|cid|uid|_ga|gclid|fbclid)$/i;
 const MASK = '[REDACTED]';
+export const isSensitiveKey = key => sensitive.test(String(key).replace(/^(epn?|upn?)\./i, ''));
 function cleanText(value) {
   return value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${MASK}`)

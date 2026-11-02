@@ -13,7 +13,7 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
   } else if (prefix && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')) out.set(prefix, value);
   return out;
 }
-const APP_ONLY_FIELD = /^custom_parameters\.(?:app_version|device_manufacturer|device_model|os_version|platform)$/;
+export const APP_ONLY_FIELD = /^custom_parameters\.(?:app_version|device_manufacturer|device_model|os_version|platform)$/;
 // Which row an event belongs to (its flow) is told by everything observed, including the push behind
 // a GA4 hit (page_type, service…); whether its fields are right is judged on the hit alone.
 const observedLeaves = event => event.pushed ? new Map([...leaves(event.pushed), ...leaves(event.payload)]) : leaves(event.payload);
@@ -70,9 +70,11 @@ const FLOW_PATHS = [
   [/\/golf(?:\/|$)/i, /golf/i], [/\/(?:event|su-kien)(?:\/|$)/i, /^event$|sự kiện/i], [/\/train(?:\/|$)/i, /train|tàu/i],
   [/\/voucher(?:\/|$)/i, /voucher/i], [/\/(?:merchandise|shop)(?:\/|$)/i, /merchandise/i],
 ];
+/** A flow name of a booking flow (Golf, Khách sạn…), not one for every flow such as "All". */
+export const specificFlow = flow => FLOW_PATHS.some(([, name]) => name.test(String(flow ?? '')));
 // The page path and the payload's own words (breadcrumb "Khách sạn", taxonomy "golf", service "hotel")
 // name the flow; rows of the same event in other flows, or in "All", score lower.
-function flowHint(flow, event) {
+export function flowHint(flow, event) {
   if (!flow) return 0;
   let pathname = ''; try { pathname = new URL(event.page?.url).pathname; } catch { /* no page URL */ }
   const page = FLOW_PATHS.find(([path]) => path.test(pathname));
@@ -131,6 +133,19 @@ export function matchTracked(cases, event, { links = linkDeliveries([event]), no
     return matchEvent(cases, { ...event, aliases: [view.event], insider_view: view }, index);
   }
   return matchEvent(cases, event, index);
+}
+
+// The event a specification row is judged on, in the shape of its sample: what Google received as a
+// dataLayer push, a web Insider hit as the event Insider records, a push or app event as it is.
+export function trackedView(event) {
+  if (event.layer === 'TRACKING_REQUEST' && event.source === 'GA4') return ga4HitAsPush(event.payload);
+  if (event.layer === 'TRACKING_REQUEST' && event.source === 'INSIDER' && !event.payload?.default_parameters && !event.payload?.custom_parameters) return insiderHitView(event.event_name, event.payload);
+  return event.payload;
+}
+/** The rows a session is about: rows with evidence and the unseen rows of the flows it touched (every row when it touched none). */
+export function sessionRows(coverage, touched = []) {
+  const flows = new Set([...touched, ...coverage.rows.filter(row => row.seen || row.not_sent || row.pending).map(row => row.flow)]);
+  return coverage.rows.filter(row => row.status !== 'NOT_SEEN' || !flows.size || flows.has(row.flow));
 }
 
 export function indexCases(cases) {
