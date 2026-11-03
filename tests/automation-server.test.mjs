@@ -102,6 +102,7 @@ test('AI drafting validates generated actions, disables schedules and ignores fa
   assert.equal(result.body.available, true);
   assert.equal(result.body.workflow.schedule.enabled, false);
   assert.equal(input.page, null);
+  assert.deepEqual(input.catalogue[0].context_refs, [{ field: 'search_term', ref: 'context.search.term' }]);
   assert.equal(result.body.workflow.name, 'My test');
 });
 
