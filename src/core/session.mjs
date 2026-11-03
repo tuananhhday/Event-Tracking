@@ -75,6 +75,13 @@ export class SessionManager {
     this.store.appendStep(step); const result = validateCase(this.cases.find(c => c.id === step.test_case_id), this.store.events(), step);
     this.results.push(result); this.persist(); return result;
   }
+  interruptStep() {
+    const step = this.currentStep; if (!step) return null;
+    step.completed_at = new Date().toISOString(); step.status = 'INTERRUPTED'; this.currentStep = null;
+    this.store.appendStep(step);
+    const result = validateCase(this.cases.find(testCase => testCase.id === step.test_case_id), this.store.events(), step);
+    this.results.push(result); this.persist(); return result;
+  }
   snapshot() {
     const live = this.store && !this.store.closed;
     const events = live ? this.store.events() : this.lastEvents || [], api = live ? this.store.apiRecords() : this.lastApi || [];

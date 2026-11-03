@@ -19,6 +19,8 @@ for (const name of ['exceljs', 'ajv', 'json5', 'jszip']) {
   await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ name, version: original.version, main: 'index.cjs', license: original.license }));
 }
 const licenses = [];
+// Playwright loads its driver and assets by relative paths; preserve its package layout.
+await fs.cp(path.join(root, 'node_modules', 'playwright-core'), path.join(output, 'playwright-core'), { recursive: true });
 async function walk(directory) {
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     if (entry.name === '.bin' || entry.isSymbolicLink()) continue;

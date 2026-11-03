@@ -4,8 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import ExcelJS from 'exceljs';
-import { importSpec, parseSample, validateTestCase } from '../src/spec/import.mjs';
-import { exportReports } from '../src/report/export.mjs';
+import { importSpec, manualCase, parseSample, validateTestCase } from '../src/spec/import.mjs';
+import { exportReports, prepareReportData } from '../src/report/export.mjs';
+import { eventReportRows } from '../src/report/event-report.mjs';
+import { decodeRequest } from '../src/core/decoder.mjs';
+import { apiPrices } from '../src/core/api-prices.mjs';
 
 const temp = () => fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-core-'));
 test('JSON5 wrapped sample parses as data and dotted GTM key is preserved', () => {
@@ -97,4 +100,46 @@ test('long evidence remains complete in JSON and fits Excel cell/row limits with
   assert.ok(sheet.getRow(2).height > 45 && sheet.getRow(2).height <= 409);
   const full = JSON.parse(await fs.readFile(paths.json, 'utf8'));
   assert.equal(full.events[0].payload.large, payload.large);
+});
+
+test('prepared analysis reused after AI notes preserves every sheet, verdict, price and evidence', async t => {
+  const directory = await temp();
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const page = { target_id: 'TAB', url: 'https://example.test/hotel/' };
+  const hit = (id, body, ms) => ({ ...decodeRequest({ url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-TEST', contentType: 'text/plain', body })[0], evidence_id: id, captured_at: new Date(Date.UTC(2020, 0, 1) + ms).toISOString(), page });
+  const matched = manualCase({ source: 'GA4', flow: 'Hotel', sample: "dataLayer.push({event:'view_item',service:'hotel',ecommerce:{items:[{item_id:'ROOM',item_name:'Room',price:1000}]}})" }).testCase;
+  const missing = manualCase({ source: 'GA4', flow: 'Hotel', sample: "dataLayer.push({event:'begin_checkout',service:'hotel'})" }, [matched]).testCase;
+  const snapshot = {
+    session: { id: 'S-PREPARED' }, cases: [matched, missing],
+    events: [hit('EV-MATCHED', 'en=view_item&ep.service=incorrect&pr1=idROOM~nmRoom~pr500~qt1', 1000), hit('EV-OUTSIDE', 'en=login&ep.method=account', 2000)],
+    api: [{ captured_at: new Date(Date.UTC(2020, 0, 1)).toISOString(), page, url: 'https://api.example.test/rooms', prices: apiPrices({ products: [{ id: 'ROOM', name: 'Room', price: 1000 }] }) }],
+  };
+  const prepared = prepareReportData(snapshot);
+  assert.deepEqual(prepared.report, eventReportRows({ ...snapshot, links: prepared.links, now: prepared.now }));
+  assert.ok(prepared.report.some(row => row.status === 'MISMATCH'));
+  assert.ok(prepared.report.some(row => row.status === 'NOT_SEEN'));
+  assert.ok(prepared.report.some(row => row.status === 'OUTSIDE'));
+  assert.ok(prepared.priced.checks.some(check => check.status === 'MISMATCH'));
+  snapshot.report_notes = { model: 'test/ai', notes: { [matched.id]: 'Giá gửi lệch đặc tả và API.' } };
+  const reused = await exportReports(snapshot, path.join(directory, 'reused'), { prepared });
+  const fresh = await exportReports(snapshot, path.join(directory, 'fresh'));
+  for (const key of ['json', 'html', 'bugs']) assert.equal(await fs.readFile(reused[key], 'utf8'), await fs.readFile(fresh[key], 'utf8'), key);
+  const load = async file => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(file);
+    return workbook.worksheets.map(sheet => ({ name: sheet.name, rows: sheet.getSheetValues(), heights: Array.from({ length: sheet.rowCount }, (_, index) => sheet.getRow(index + 1).height) }));
+  };
+  assert.deepEqual(await load(reused.xlsx), await load(fresh.xlsx));
+});
+
+test('wrapped report rows count Unicode and CRLF correctly while capping long rows', async t => {
+  const directory = await temp();
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const names = ['😀'.repeat(38), '😀'.repeat(39) + '\r\n' + 'ế'.repeat(20), '\n\n', '🧭'.repeat(5000)];
+  const paths = await exportReports({ cases: names.map((name, index) => ({ id: `TC-${index}`, name, rules: [] })) }, directory);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(paths.xlsx);
+  const sheet = workbook.getWorksheet('Test Cases');
+  assert.deepEqual(names.map((_, index) => sheet.getRow(index + 2).height), [30, 55, 55, 409]);
+  for (let index = 0; index < names.length; index++) assert.equal(sheet.getRow(index + 2).getCell(2).value, names[index].replace(/\r\n/g, '\n'), `name ${index}`);
 });

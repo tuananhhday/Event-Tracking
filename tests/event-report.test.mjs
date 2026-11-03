@@ -118,9 +118,9 @@ test('AI report notes answer the rows they were given and reject an unknown row 
 
 test('exporting in the AI version asks AI for the comment column of the report sheet', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-report-app-'));
-  let asked;
+  let asked, calls = 0;
   const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }), close() {},
-    async reportNotes(rows) { asked = rows; return { available: true, routing: { model: 'stub/free' }, notes: new Map(rows.map(row => [row.id, `AI: ${row.event} ${row.status}`])) }; } };
+    async reportNotes(rows) { calls++; asked = rows; return { available: true, routing: { model: 'stub/free' }, notes: new Map(rows.map(row => [row.id, `AI: ${row.event} ${row.status}`])) }; } };
   const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: await golfSpec(dir) });
   const base = await app.listen();
   t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
@@ -133,4 +133,69 @@ test('exporting in the AI version asks AI for the comment column of the report s
   const sheet = await reportSheet(path.join(app.manager.runDir, 'report.xlsx'));
   assert.equal(rowValues(sheet, 1)[7], 'Nhận xét của AI');
   assert.equal(rowValues(sheet, 3)[7], '[Lệch] AI: listing_page_view MISMATCH');
+  const post = () => fetch(`${base}/api/export`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: '{}' });
+  const repeated = await post();
+  assert.equal(repeated.status, 200); await repeated.arrayBuffer();
+  assert.equal(calls, 1, 'An unchanged report reuses accepted AI notes instead of another paid request');
+  app.manager.cases = structuredClone(app.manager.cases);
+  const listing = app.manager.cases.find(testCase => testCase.rules[0].event_name === 'listing_page_view');
+  const taxonomy = listing.rules[0].fields['default_parameters.taxonomy'];
+  taxonomy.value = ['Golf'];
+  const changed = await post();
+  assert.equal(changed.status, 200); await changed.arrayBuffer();
+  assert.equal(calls, 2, 'Changing a rule invalidates notes even when the event count is unchanged');
+  assert.ok(!asked[1].issues.some(issue => issue.field === 'default_parameters.taxonomy'));
+});
+
+test('report AI uses at most two concurrent batches and retries unavailable notes on a later export', { timeout: 10000 }, async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-report-batches-'));
+  let calls = 0, active = 0, peak = 0, unavailable = true;
+  const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }), close() {},
+    async reportNotes(rows) {
+      calls++; active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 10)); active--;
+      if (unavailable) return { available: false, reason: 'TEST_UNAVAILABLE' };
+      return { available: true, notes: new Map(rows.map(row => [row.id, `AI: ${row.event}`])) };
+    } };
+  const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: [] });
+  const base = await app.listen();
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  app.manager.start({ environment: 'MOCK_ONLY' });
+  for (let index = 0; index < 45; index++) app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: `report_event_${index}`, payload: { event: `report_event_${index}` }, network: { phase: 'request' } });
+  const post = async () => {
+    const response = await fetch(`${base}/api/export`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: '{}' });
+    assert.equal(response.status, 200, await response.text());
+  };
+  await post();
+  assert.equal(calls, 2, 'Stop scheduling later batches after unavailability');
+  assert.equal(rowValues(await reportSheet(path.join(app.manager.runDir, 'report.xlsx')), 1)[7], 'Nhận xét');
+  unavailable = false;
+  await post();
+  assert.equal(calls, 5, 'A temporary failure must not cache unavailable notes');
+  assert.equal(peak, 2);
+  await post();
+  assert.equal(calls, 5, 'All successful batches are reused for the same report');
+  assert.equal((await reportSheet(path.join(app.manager.runDir, 'report.xlsx'))).rowCount, 46);
+});
+
+test('finish keeps automatic AI notes, and aiNotes false skips AI on either export route', { timeout: 10000 }, async t => {
+  for (const [route, aiNotes] of [['finish', true], ['export', false], ['finish', false]]) await t.test(`${route} aiNotes=${aiNotes}`, async subtest => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-report-choice-'));
+    let calls = 0;
+    const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }), close() {},
+      async reportNotes(rows) { calls++; return { available: true, notes: new Map(rows.map(row => [row.id, 'AI note'])) }; } };
+    const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: [] });
+    const base = await app.listen();
+    subtest.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+    app.manager.start({ environment: 'MOCK_ONLY' });
+    app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'choice_event', payload: { event: 'choice_event' }, network: { phase: 'request' } });
+    const response = await fetch(`${base}/api/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: JSON.stringify(aiNotes ? {} : { aiNotes: false }) });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(calls, aiNotes ? 1 : 0);
+    const sheet = await reportSheet(path.join(app.manager.runDir, 'report.xlsx'));
+    assert.equal(rowValues(sheet, 1)[7], aiNotes ? 'Nhận xét của AI' : 'Nhận xét');
+    assert.equal(rowValues(sheet, 2)[3], 'choice_event');
+    if (!aiNotes) assert.doesNotMatch(rowValues(sheet, 2)[7], /AI note/);
+    if (route === 'finish') assert.equal(app.manager.session.status, 'COMPLETED');
+  });
 });

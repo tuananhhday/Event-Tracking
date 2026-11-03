@@ -40,7 +40,7 @@
   // Where a specification row comes from: Excel sheet!row, or "Nhập tay" for an event typed in the app.
   const whereSpec = (sheet, row) => row == null || row === '' ? String(sheet ?? '') : `${sheet ?? ''}!${row}`;
   const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
-  const FILE_TEXT = { xlsx: ['Excel', '6 sheet đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'] };
+  const FILE_TEXT = { xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
@@ -1090,8 +1090,9 @@
       resetSelection(); setStage('session', true); toast('Đã chọn trang demo nội bộ và 3 case mẫu.', 'ok');
     },
     finish: async () => {
-      if (ui.state?.ai?.enabled) toast('Đang kết thúc phiên; AI viết cột nhận xét cho báo cáo (thường 10–60 giây)…');
-      await api('finish', {}, 'finish'); toast('Đã kết thúc phiên và xuất báo cáo.', 'ok');
+      const aiNotes = $('report-ai-notes')?.checked !== false;
+      toast(aiNotes && ui.state?.ai?.enabled ? 'Đang kết thúc phiên và tạo báo cáo kèm nhận xét AI…' : 'Đang kết thúc phiên và xuất báo cáo…');
+      await api('finish', { aiNotes }, 'finish'); toast('Đã kết thúc phiên và xuất báo cáo.', 'ok');
     },
     // An expected event typed by hand: the server reads the pasted sample like an Excel row.
     'manual-case': async () => {
@@ -1102,8 +1103,9 @@
       toast(`Đã thêm ${added.event_name} vào đặc tả. Event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
     },
     export: async () => {
-      if (ui.state?.ai?.enabled) toast('AI đang viết cột nhận xét cho báo cáo (thường 10–60 giây)…');
-      await api('export', {}, 'export'); toast('Đã xuất báo cáo hiện tại.', 'ok');
+      const aiNotes = $('report-ai-notes')?.checked !== false;
+      toast(aiNotes && ui.state?.ai?.enabled ? 'Đang tạo báo cáo kèm nhận xét AI…' : 'Đang xuất báo cáo…');
+      await api('export', { aiNotes }, 'export'); toast('Đã xuất báo cáo hiện tại.', 'ok');
     },
     'stop-session': async () => {
       if (ui.state?.currentStep && !confirm('Bước đang ghi sẽ được giữ REVIEW. Dừng phiên?')) return;

@@ -22,6 +22,7 @@ if errorlevel 1 goto missing_runtime
 if not exist "node_modules\exceljs\package.json" goto missing_dependencies
 if not exist "node_modules\ajv\package.json" goto missing_dependencies
 if not exist "node_modules\json5\package.json" goto missing_dependencies
+if not exist "node_modules\playwright-core\package.json" goto missing_dependencies
 if /i "%EVENTQA_MODE%"=="stop" goto stop
 if /i "%EVENTQA_MODE%"=="cdp-ai" goto ai
 "%EVENTQA_NODE%" src\cli.mjs serve --mode "%EVENTQA_MODE%" --open

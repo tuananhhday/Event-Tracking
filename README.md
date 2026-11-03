@@ -53,6 +53,8 @@ Sheet đầu tiên của `report.xlsx` là bảng báo cáo:
 - **[Đã gửi, chưa so được]:** nền tảng đã nhận event nhưng mẫu đặc tả là dữ liệu website push (vào dataLayer / InsiderQueue) mà phiên chỉ thấy request, nên chưa so từng trường; event đã nhận vẫn hiện ở cột của nền tảng. Mở phiên có đọc dataLayer / InsiderQueue để so đủ.
 - **Nhận xét:** mở đầu bằng kết luận của công cụ ([Đủ], [Lệch], [Chưa thấy], [Không gửi lên server], [Ngoài đặc tả]…) và tô màu theo kết luận. Bản AI: khi bấm **Kết thúc & xuất** hoặc **Xuất báo cáo**, AI viết phần nhận xét (đủ gì, thiếu gì, sai gì, ai cần làm gì) từ kết luận của công cụ, mất khoảng 10–60 giây; cột có tên **Nhận xét của AI**. Bản thường, hoặc khi AI chưa bật / lỗi, công cụ tự viết (cột **Nhận xét**). Dòng có giá lệch API ghi thêm giá đã gửi và giá API.
 
+Ở bản AI, bỏ chọn **Kèm nhận xét AI khi xuất** trong phần **Kết thúc & báo cáo** để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo. Các event, kết quả đối chiếu và sheet bằng chứng vẫn được xuất đầy đủ. Khi bật nhận xét AI, các lô được xử lý tối đa hai lô cùng lúc; xuất lại cùng nội dung dùng lại nhận xét đã có.
+
 Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp khi mở app lần sau. **Mỗi lần chạy lại một case cần bắt đầu bước mới**; `within_ms` tính từ lúc bắt đầu bước.
 
 Rule tạo từ một lần quan sát chỉ phản ánh hành vi hiện tại của website, không thay thế đặc tả nghiệp vụ. HTTP 200 không xác nhận vendor ingestion.
@@ -205,6 +207,8 @@ node src/cli.mjs report --run "runs\S-..."
 CLI dùng `expected.json` của phiên; có thể cung cấp `--spec` khi muốn dùng specification khác hoặc với phiên cũ. SQLite được dựng lại từ JSONL khi đọc phiên; dòng cuối bị ghi dở được tách vào `events.torn-tail`, giữ các dòng hoàn chỉnh. Không sửa/xóa evidence trong phiên đang chạy.
 
 ## Bản AI (OpenRouter)
+
+Tab **Luồng tự động** nhận hướng dẫn TXT/Markdown hoặc kịch bản JSON, tạo kịch bản bằng AI một lần, rồi dùng Playwright thao tác Chrome/Edge và collector hiện có để kiểm event. Chọn một hoặc nhiều luồng chạy lần lượt; app xuất báo cáo vào phần **Kết thúc & báo cáo**. Có tiến độ, dừng luồng, lịch chạy theo giờ Việt Nam và lịch sử lưu trên máy. Các lần chạy đã lưu không gọi AI; xem [hướng dẫn và mẫu chạy thử](docs/AUTOMATION.md).
 
 - Bật AI: chạy `CHAY_EVENT_QA_AI.cmd`, mở tab **✦ Trợ lý AI**, dán key OpenRouter, bấm **Bật AI** (key lưu vào `.env`, không cần khởi động lại). Hướng dẫn đầy đủ bằng lời thường: [docs/AI.md](docs/AI.md).
 - **✦ AI kiểm tra cả phiên** (tab **✦ Trợ lý AI**): ghi yêu cầu kiểm tra (không bắt buộc), bấm **✦ AI kiểm tra phiên này**. AI đọc yêu cầu, các dòng đặc tả của luồng đang test, kết quả công cụ tự kiểm và các event đã gửi lên Google/Insider, rồi trả về **Đúng / Sai / Thiếu / Đang có vấn đề / Nên làm tiếp**. Ba danh sách Đúng / Sai / Thiếu luôn theo kết quả công cụ; AI chỉ viết lời giải thích.

@@ -75,11 +75,11 @@ function destinationCheck(payload) {
 }
 
 /** Checks for every captured event, keyed by evidence ID, plus a per-rule summary. */
-export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindowMs = 1000 } = {}) {
+export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindowMs = 1000, links } = {}) {
   const ordered = events.filter(event => Number.isFinite(time(event))).sort((a, b) => time(a) - time(b));
   const queue = ordered.filter(event => event.layer === 'JS_QUEUE' && !event.historical);
   const requests = ordered.filter(isRequest);
-  const { sentBy } = linkDeliveries(events, { windowMs: deliveryWindowMs });
+  const { sentBy } = links ?? linkDeliveries(events, { windowMs: deliveryWindowMs });
   const results = new Map();
   const add = (event, check) => { if (!check) return; if (!results.has(event.evidence_id)) results.set(event.evidence_id, []); results.get(event.evidence_id).push(check); };
 

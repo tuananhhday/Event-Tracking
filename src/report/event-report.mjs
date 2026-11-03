@@ -75,18 +75,27 @@ function toolComment(row) {
  * and the event it was judged on (the failing one if any), then the events sent outside the
  * specification; without a specification, each event sent to Google/Insider at its last occurrence.
  */
-export function eventReportRows({ cases = [], events = [], api = [], links = linkDeliveries(events), now = Date.now() } = {}) {
+export function eventReportRows({ cases = [], events = [], api = [], links = linkDeliveries(events), now = Date.now(), entries, priced: priceAnalysis, coverage: suppliedCoverage } = {}) {
   const byId = new Map(events.map(event => [event.evidence_id, event]));
   const caseById = new Map(cases.map(testCase => [testCase.id, testCase]));
   // A price check belongs to an event-list row (push + hit): reach it from either evidence id.
-  const activity = activityEntries(events, { links, now });
-  const rowOf = new Map(activity.flatMap(row => row.evidence_ids.map(id => [id, row.evidence_id])));
+  const activity = entries ?? activityEntries(events, { links, now });
+  const rowOf = new Map();
+  for (const row of activity) for (const id of row.evidence_ids) rowOf.set(id, row.evidence_id);
   const priced = new Map();
-  for (const check of priceChecks(activity, api).checks) if (check.status === 'MISMATCH') priced.set(check.evidence_id, [...priced.get(check.evidence_id) ?? [], { field: check.field, sent: check.sent, api: check.api?.value }]);
+  for (const check of (priceAnalysis ?? priceChecks(activity, api)).checks) if (check.status === 'MISMATCH') {
+    const mismatches = priced.get(check.evidence_id) ?? [];
+    mismatches.push({ field: check.field, sent: check.sent, api: check.api?.value });
+    priced.set(check.evidence_id, mismatches);
+  }
   const pricesOf = id => priced.get(rowOf.get(id)) ?? [];
   // Every event each platform received, by name (oldest first), to fill the GA4 / Insider columns.
   const received = new Map();
-  for (const row of activity) if (row.delivery === 'sent' && row.event_kind === 'business') received.set(`${row.source}|${row.event_name}`, [...received.get(`${row.source}|${row.event_name}`) ?? [], row.sent_by ?? row.evidence_id]);
+  for (const row of activity) if (row.delivery === 'sent' && row.event_kind === 'business') {
+    const key = `${row.source}|${row.event_name}`, ids = received.get(key) ?? [];
+    ids.push(row.sent_by ?? row.evidence_id);
+    received.set(key, ids);
+  }
   const latest = key => received.get(key)?.at(-1);
   const viewOf = (id, sample) => {
     const event = byId.get(id);
@@ -104,7 +113,7 @@ export function eventReportRows({ cases = [], events = [], api = [], links = lin
     return { actual_ga4: actual.GA4, actual_insider: actual.INSIDER };
   };
   const rows = [];
-  const coverage = cases.length ? specCoverage(cases, events, new Map(), { links, now }) : null;
+  const coverage = suppliedCoverage === undefined ? (cases.length ? specCoverage(cases, events, new Map(), { links, now }) : null) : suppliedCoverage;
   if (coverage) {
     const platformOf = row => payloadPlatform(caseById.get(row.case_id)?.sample, caseById.get(row.case_id)?.sample_text);
     // A row written as an InsiderQueue push matches no hit of a session that saw requests only. What Insider

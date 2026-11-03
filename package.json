@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Local Event Tracking QA: CDP capture of dataLayer/InsiderQueue, with an optional OpenRouter AI assistant",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node src/cli.mjs serve",
     "cdp": "node src/cli.mjs serve --mode cdp",
@@ -13,12 +15,15 @@
     "smoke:local": "node scripts/local-smoke.mjs",
     "smoke:checkout": "node scripts/checkout-smoke.mjs",
     "smoke:ai": "node --env-file=.env scripts/ai-smoke.mjs",
+    "smoke:automation": "node scripts/automation-smoke.mjs",
+    "smoke:automation-app": "node scripts/automation-app-smoke.mjs",
     "test": "node --test",
     "check": "node scripts/check.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "exceljs": "^4.4.0",
-    "json5": "^2.2.3"
+    "json5": "^2.2.3",
+    "playwright-core": "^1.64.1"
   }
 }

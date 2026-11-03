@@ -69,6 +69,29 @@ function sanitizeSnapshot(snapshot) {
   };
 }
 
+// Excel caps a row at 409 points, so counting past 27 wrapped lines cannot
+// affect its height. Count Unicode code points without allocating [...line].
+function wrappedLineCount(value, width) {
+  const text = String(value ?? ''), limit = 27;
+  let lines = 0, length = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 13 && text.charCodeAt(index + 1) === 10) continue;
+    if (code === 10) {
+      lines += Math.max(1, Math.ceil(length / width));
+      if (lines >= limit) return limit;
+      length = 0;
+      continue;
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index++;
+    }
+    if (++length > (limit - lines - 1) * width) return limit;
+  }
+  return Math.min(limit, lines + Math.max(1, Math.ceil(length / width)));
+}
+
 function addSheet(workbook, name, headers, rows, widths = []) {
   const worksheet = workbook.addWorksheet(name);
   worksheet.columns = headers.map((header, index) => ({ header, key: `c${index}`, width: widths[index] ?? 24 }));
@@ -78,8 +101,12 @@ function addSheet(workbook, name, headers, rows, widths = []) {
   worksheet.getRow(1).eachCell(cell => { cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFFFFF' }, size: 11 }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '17365D' } }; cell.alignment = { vertical: 'middle', wrapText: true }; });
   for (const values of rows) {
     const row = worksheet.addRow(values.map(value => safe(value)));
-    const wrappedLines = row.values.slice(1).map((value, index) => String(value ?? '').split(/\r?\n/).reduce((count, line) => count + Math.max(1, Math.ceil([...line].length / Math.max(8, (widths[index] ?? 24) - 2))), 0));
-    row.height = Math.min(409, Math.max(30, Math.max(...wrappedLines, 1) * 15 + 10));
+    let wrappedLines = 1;
+    row.values.slice(1).some((value, index) => {
+      wrappedLines = Math.max(wrappedLines, wrappedLineCount(value, Math.max(8, (widths[index] ?? 24) - 2)));
+      return wrappedLines >= 27;
+    });
+    row.height = Math.min(409, Math.max(30, wrappedLines * 15 + 10));
     row.eachCell(cell => {
       cell.font = { name: 'Calibri', size: 11 };
       cell.alignment = { vertical: 'top', wrapText: true };
@@ -90,14 +117,20 @@ function addSheet(workbook, name, headers, rows, widths = []) {
   return worksheet;
 }
 
-export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir) {
+export function prepareReportData({ cases = [], events = [], api = [] } = {}) {
   // Matched on the unsanitized spec so sample values can still identify each flow.
   const links = linkDeliveries(events), now = Date.now();
   const coverage = cases.length ? specCoverage(cases, events, new Map(), { links, now }) : null;
-  const firing = firingChecks(events);
-  const priced = priceChecks(activityEntries(events, { links, now }), api);
+  const firing = firingChecks(events, { links });
+  const entries = activityEntries(events, { links, now });
+  const priced = priceChecks(entries, api);
   // STT, platform, flow, event, expected event, actual event, comment (written by AI in the AI version).
-  const report = eventReportRows({ cases, events, api, links, now });
+  const report = eventReportRows({ cases, events, api, links, now, coverage, entries, priced });
+  return { links, now, coverage, firing, entries, priced, report };
+}
+
+export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir, { prepared } = {}) {
+  const { links, now, coverage, firing, priced, report } = prepared ?? prepareReportData({ cases, events, api });
   const notes = reportNotes?.notes ?? {}, byAi = report.some(row => notes[row.key]);
   const delivery = new Map(events.map(event => [event.evidence_id, DELIVERY_LABEL[deliveryStatus(event, links, now)] ?? '']));
   ({ session, cases, events, steps, results } = sanitizeSnapshot({ session, cases, events, steps, results }));

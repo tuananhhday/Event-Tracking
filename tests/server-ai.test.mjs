@@ -115,3 +115,55 @@ test('the AI screen saves a pasted OpenRouter key into .env, keeps other setting
   assert.equal((await post(`${plainBase}/api/ai-key`, plain.csrf, { key })).status, 400);
   assert.equal((await post(`${base}/api/ai-key`, 'wrong-token', { key })).status, 403);
 });
+
+test('stopping a live export cancels a stuck AI wait and keeps final evidence in the report', { timeout: 10000 }, async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-report-stop-'));
+  let started, release, cancelled = false;
+  const notesStarted = new Promise(resolve => { started = resolve; });
+  const notes = new Promise(resolve => { release = resolve; });
+  const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }),
+    async reportNotes() { started(); return notes; }, close() { cancelled = true; } };
+  const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: [] });
+  const base = await app.listen();
+  let pending;
+  t.after(async () => { release({ available: false, reason: 'TEST_CLEANUP' }); await pending?.catch(() => {}); await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const emit = name => app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: name, payload: { event: name }, network: { phase: 'request' } });
+  const post = route => fetch(`${base}/api/${route}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: '{}' });
+  app.manager.start({ environment: 'MOCK_ONLY' });
+  emit('before_export');
+  pending = post('export').then(async response => { assert.equal(response.status, 200); await response.arrayBuffer(); });
+  await notesStarted;
+  const late = emit('during_export');
+  const stopped = await post('stop-session');
+  assert.equal(stopped.status, 200, await stopped.text());
+  await pending;
+  assert.equal(cancelled, true);
+  const comparison = JSON.parse(await fs.readFile(path.join(app.manager.runDir, 'comparison.json'), 'utf8'));
+  assert.equal(comparison.session.status, 'COMPLETED');
+  assert.ok(comparison.events.some(event => event.evidence_id === late.evidence_id), 'An earlier export must not overwrite final evidence after stop');
+});
+
+test('shutdown releases an AI report wait and writes the completed report without waiting for the provider', { timeout: 10000 }, async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-report-close-'));
+  let started, release, cancelled = false;
+  const notesStarted = new Promise(resolve => { started = resolve; });
+  const notes = new Promise(resolve => { release = resolve; });
+  const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }),
+    async reportNotes() { started(); return notes; }, close() { cancelled = true; } };
+  const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: [] });
+  const base = await app.listen();
+  let pending;
+  t.after(async () => { release({ available: false, reason: 'TEST_CLEANUP' }); await pending?.catch(() => {}); await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  app.manager.start({ environment: 'MOCK_ONLY' });
+  const event = app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'finish_event', payload: { event: 'finish_event' }, network: { phase: 'request' } });
+  pending = fetch(`${base}/api/finish`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: '{}' }).then(response => response.arrayBuffer()).catch(() => {});
+  await notesStarted;
+  const closed = await Promise.race([app.close().then(() => true), new Promise(resolve => { const timer = setTimeout(() => resolve(false), 5000); timer.unref(); })]);
+  assert.equal(closed, true, 'Shutdown must not depend on the provider resolving its promise');
+  assert.equal(cancelled, true);
+  await pending;
+  const comparison = JSON.parse(await fs.readFile(path.join(app.manager.runDir, 'comparison.json'), 'utf8'));
+  assert.equal(comparison.session.status, 'COMPLETED');
+  assert.ok(comparison.events.some(record => record.evidence_id === event.evidence_id));
+  assert.ok((await fs.stat(path.join(app.manager.runDir, 'report.xlsx'))).size > 1000);
+});

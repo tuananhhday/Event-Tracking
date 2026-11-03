@@ -24,7 +24,7 @@ matches = [line.split()[0] for line in checksums.read_text().splitlines()
            if line.split()[-1] == archive_name]
 if len(matches) != 1 or hashlib.sha256(node_zip.read_bytes()).hexdigest() != matches[0]:
     raise SystemExit("Node runtime checksum mismatch")
-for name in ("exceljs", "ajv", "json5"):
+for name in ("exceljs", "ajv", "json5", "playwright-core"):
     if not (root / "node_modules" / name / "package.json").is_file():
         raise SystemExit("Install the locked dependencies before building")
 if list((root / "node_modules").rglob("*.node")):

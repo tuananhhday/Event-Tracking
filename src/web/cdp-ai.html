@@ -5,6 +5,7 @@
 <title>EventQA · 02 Bản AI</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d4fd8'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,sans-serif' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3E02%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/assets/eventqa.css">
+<link rel="stylesheet" href="/assets/automation.css">
 </head>
 <body data-mode="cdp-ai">
 <nav class="app-rail" aria-label="Điều hướng chính"><a class="rail-logo" href="http://127.0.0.1:4172/" title="Chọn chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 13 4-7 4 12 4-12 4 7"/></svg></a><span class="rail-divider"></span><button type="button" data-workspace-tab="events" title="Event trực tiếp" aria-label="Event trực tiếp" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Event</span></button><button type="button" data-workspace-tab="spec" title="Đối chiếu đặc tả" aria-label="Đối chiếu đặc tả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>Đặc tả</span></button><button type="button" data-workspace-tab="results" title="Kết quả" aria-label="Kết quả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg><span>Kết quả</span></button><button type="button" data-setup-stage="report" title="Xuất báo cáo" aria-label="Xuất báo cáo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><span>Xuất</span></button><div class="rail-bottom"><button type="button" data-setup-stage="session" title="Thiết lập phiên" aria-label="Thiết lập phiên"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button><a href="http://127.0.0.1:4172/" title="Đổi chế độ" aria-label="Đổi chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a></div></nav>
@@ -136,6 +137,8 @@
     <li class="stage" data-stage="report">
       <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>4</span></span><span class="stage-title"><strong>Kết thúc &amp; báo cáo</strong><small id="sum-report">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
+        <label class="check"><input id="report-ai-notes" type="checkbox" checked> Kèm nhận xét AI khi xuất</label>
+        <p class="hint">Bỏ chọn để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo.</p>
         <div class="row"><button type="button" class="btn primary" id="finish" data-action="finish">Kết thúc &amp; xuất</button><button type="button" class="btn" id="export" data-action="export">Xuất bản hiện tại</button></div>
         <button type="button" class="btn ghost" id="stop-session" data-action="stop-session" style="margin-top:6px">Dừng phiên ngay (giữ bước đang ghi là REVIEW)</button>
         <div id="downloads" class="downloads"></div>
@@ -160,6 +163,7 @@
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="events">Event trực tiếp <span id="events-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="ai">✦ Trợ lý AI</button>
+        <button type="button" class="tab" role="tab" data-tab="automation">Luồng tự động</button>
         <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="prices">Giá vs API <span id="prices-count" class="count">0</span></button>
@@ -267,6 +271,39 @@
           <div id="ai-models-list" style="margin-top:8px"></div>
           <div id="ai-trace" style="margin-top:8px"></div>
         </details>
+      </div>
+      <div class="tabpanel hidden" data-panel="automation" id="automation-panel">
+        <div class="automation-intro"><div><span class="eyebrow">THỰC HIỆN &amp; THU THẬP</span><h3>Chạy lại công việc theo hướng dẫn của bạn</h3><p>Đưa hướng dẫn vào, xem lại các bước rồi lưu. Những lần chạy sau dùng kịch bản đã lưu để thao tác và thu thập event.</p></div><span class="pill">AI chỉ dùng khi tạo kịch bản</span></div>
+        <div id="automation-error" class="banner error hidden" role="alert"></div>
+        <div id="automation-message" class="banner info hidden" role="status"></div>
+        <div class="automation-layout">
+          <aside class="automation-library" aria-label="Danh sách luồng tự động">
+            <div class="automation-section-head"><h3>Luồng đã lưu <span id="automation-count" class="count">0</span></h3><button type="button" class="btn small" id="automation-new">Tạo mới</button></div>
+            <label class="check automation-select-all"><input type="checkbox" id="automation-select-all"> Chọn tất cả</label>
+            <div id="automation-workflows" class="automation-workflows"><p class="hint">Đang tải danh sách…</p></div>
+            <details class="more automation-run-options"><summary>Giá trị dùng cho lượt chạy này</summary><p class="hint">Để trống nếu dùng giá trị đã lưu trong từng luồng.</p><label for="automation-run-variables">Giá trị bổ sung (JSON)</label><textarea id="automation-run-variables" class="code" rows="3" spellcheck="false" placeholder='{"destination":"Phú Quốc"}'></textarea></details>
+            <button type="button" class="btn primary automation-run-selected" id="automation-run-selected" data-auto-idle disabled>Chạy các luồng đã chọn</button>
+            <p id="automation-session-hint" class="hint">Các luồng trong cùng lượt chạy lần lượt, dùng cùng một trình duyệt.</p>
+            <p class="hint">Lượt chạy tự động dùng nhận xét của công cụ, không gọi AI. Muốn thêm nhận xét AI, xuất lại từ phần báo cáo.</p>
+          </aside>
+          <div class="automation-editor">
+            <div class="automation-section-head"><h3 id="automation-editor-title">Tạo luồng mới</h3><span id="automation-draft-badge" class="pill REVIEW hidden">Chưa lưu</span></div>
+            <div class="automation-fields"><div><label for="automation-name">Tên luồng</label><input id="automation-name" placeholder="Ví dụ: Tìm khách sạn Phú Quốc" maxlength="200" autocomplete="off"></div><div><label for="automation-browser">Trình duyệt</label><select id="automation-browser"><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option></select></div></div>
+            <label for="automation-url">Website bắt đầu</label><input id="automation-url" type="url" placeholder="https://website-cua-ban.vn" autocomplete="url">
+            <div class="automation-file-row"><label class="btn small automation-file-label" for="automation-file">Chọn file hướng dẫn<input id="automation-file" type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json"></label><span id="automation-file-name" class="hint">TXT, Markdown hoặc JSON · tối đa 1 MB</span></div>
+            <label for="automation-instructions">Bạn muốn thực hiện những gì?</label><textarea id="automation-instructions" rows="7" placeholder="1. Mở trang tìm khách sạn.&#10;2. Nhập điểm đến Phú Quốc, ngày đến sau 7 ngày, ở 2 đêm.&#10;3. Bấm Tìm kiếm và chờ danh sách xuất hiện.&#10;4. Mong đợi event search_submit với destination đúng dữ liệu đã nhập."></textarea>
+            <div class="automation-actions"><button type="button" class="btn" id="automation-inspect" data-auto-idle>1. Quan sát trang</button><button type="button" class="btn primary" id="automation-draft" data-auto-idle>2. AI tạo kịch bản</button><button type="button" class="btn ghost" id="automation-load-json" data-auto-idle>Nạp JSON</button></div>
+            <p id="automation-inspect-status" class="hint">Quan sát trang để AI nhận diện đúng các ô nhập và nút bấm trên website.</p>
+            <details class="more hidden" id="automation-page-details"><summary>Thông tin trang đã quan sát</summary><pre id="automation-page-preview" class="automation-page-preview"></pre></details>
+            <div class="automation-preview-card"><div class="automation-section-head"><h3>Các bước sẽ thực hiện</h3><span id="automation-step-count" class="hint"></span></div><div id="automation-preview"><p class="hint">Kịch bản xuất hiện ở đây sau khi tạo bằng AI hoặc nạp JSON.</p></div></div>
+            <details class="more automation-advanced" id="automation-advanced"><summary>Xem / chỉnh kịch bản JSON</summary><label for="automation-json">Kịch bản</label><textarea id="automation-json" class="code" rows="12" spellcheck="false" placeholder='{"name":"Luồng của tôi","url":"https://...","steps":[]}'></textarea><label for="automation-variables">Giá trị dùng lại trong luồng (JSON)</label><textarea id="automation-variables" class="code" rows="3" spellcheck="false">{}</textarea><p class="hint">Trong các bước, dùng {{destination}} để lấy giá trị destination, hoặc {{date:+7}} để lấy ngày sau 7 ngày.</p></details>
+            <div class="automation-schedule"><label class="check"><input type="checkbox" id="automation-schedule-enabled"> Bật lịch tự chạy</label><div><label for="automation-schedule-time">Giờ chạy tại Việt Nam</label><input id="automation-schedule-time" type="time" value="07:00"></div></div>
+            <p class="hint automation-schedule-hint">Mặc định chạy hằng ngày. Lịch chỉ bật khi bạn chọn và lưu. Giữ ứng dụng mở và máy hoạt động vào giờ chạy.</p>
+            <div class="automation-actions automation-save-actions"><button type="button" class="btn primary" id="automation-save" data-auto-idle disabled>Lưu luồng</button><button type="button" class="btn" id="automation-run-current" data-auto-idle disabled>Chạy luồng này</button><span id="automation-save-state" class="hint">Xem lại các bước trước khi lưu.</span></div>
+          </div>
+        </div>
+        <section class="automation-run-section" aria-labelledby="automation-run-heading"><div class="automation-section-head"><h3 id="automation-run-heading">Tiến độ lượt chạy</h3><button type="button" class="btn small hidden" id="automation-cancel">Dừng lượt chạy</button></div><div id="automation-run" aria-live="polite"><p class="hint">Chưa có lượt chạy tự động.</p></div></section>
+        <section class="automation-history-section" aria-labelledby="automation-history-heading"><div class="automation-section-head"><h3 id="automation-history-heading">Lịch sử chạy</h3><button type="button" class="btn small ghost" id="automation-refresh">Làm mới</button></div><div id="automation-history"><p class="hint">Chưa có lịch sử.</p></div></section>
       </div>
       <div class="tabpanel hidden" data-panel="log"><ul id="log" class="log"></ul></div>
     </div>
@@ -453,6 +490,7 @@ EventQA.boot({ token, mode: 'cdp-ai', hooks: {
   },
 } });
 </script>
+<script src="/assets/automation.js"></script>
 
 </body>
 </html>

@@ -16,18 +16,19 @@ import { activityEvent, activityEntries } from './core/activity.mjs';
 import { priceChecks } from './core/api-prices.mjs';
 import { apiLogPatterns, DEFAULT_API_LOG_PATTERNS } from './core/api-log.mjs';
 import { importSpec, specSheets, validateTestCase, manualCase } from './spec/import.mjs';
-import { exportReports } from './report/export.mjs';
-import { eventReportRows } from './report/event-report.mjs';
+import { exportReports, prepareReportData } from './report/export.mjs';
 import { CDPCollector, listTargets } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
+import { AutomationController } from './automation/controller.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), 'utf8');
 // Each mode has its own screen; styling and client logic are shared assets.
 const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html' };
-const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'] };
+const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'],
+  '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Smoke tests only: run the test browser without a window.
@@ -74,7 +75,7 @@ async function saveAiKey(envPath, key) {
   await fs.writeFile(envPath, `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
-export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo', envPath = path.join(rootDir, '.env'), reviewedPath = reviewedSpecPath } = {}) {
+export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'runs'), port = 4173, aiClient, initialCases = 'demo', envPath = path.join(rootDir, '.env'), reviewedPath = reviewedSpecPath, automationDir, automationOptions = {} } = {}) {
   if (!['cdp', 'cdp-ai'].includes(mode)) throw new Error('Mode must be cdp or cdp-ai.');
   const csrf = randomBytes(24).toString('hex');
   // 'auto' (CLI) resumes reviewed rules or starts empty for a real site; tests keep the demo default.
@@ -127,6 +128,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   };
   const statuses = []; let collector = null, browserHandle = null, testPage = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
+  let reportNotesCache = null, reportNotesController = null, reportExportTask = null, reportWriteTask = null;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let ai = aiClient ?? new OpenRouterClient();
   const state = ({ compact = false } = {}) => {
@@ -201,26 +203,76 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   }
   // AI version: the comment column of the report sheet is written by AI from the tool's verdicts, 20 rows per
   // request and at most 100 rows; rows it does not answer keep the tool's comment.
-  async function aiReportNotes(snapshot) {
-    const diagnostics = mode === 'cdp-ai' ? ai.diagnostics?.() : null;
+  async function aiReportNotes(snapshot, report, signal) {
+    const client = ai;
+    const diagnostics = mode === 'cdp-ai' ? client.diagnostics?.() : null;
     if (!diagnostics?.enabled || !diagnostics.configured_key_count || diagnostics.closed) return null;
     const clip = value => { const text = typeof value === 'string' ? value : JSON.stringify(value); return text && text.length > 120 ? `${text.slice(0, 120)}…` : text; };
-    const rows = eventReportRows({ cases: snapshot.cases, events: snapshot.events, api: snapshot.api }).slice(0, 100), notes = {};
-    let model;
-    for (let start = 0; start < rows.length; start += 20) {
-      const batch = rows.slice(start, start + 20);
-      const result = await ai.reportNotes(batch.map(row => ({ id: row.id, event: row.event_name, flow: row.flow, platform: row.platform, status: row.status, expected_fields: row.expected_fields.slice(0, 30),
-        issues: row.issues.slice(0, 8).map(issue => ({ code: issue.code, field: issue.path, expected: clip(issue.expected), actual: clip(issue.actual) })), times_sent: row.seen, not_sent: row.not_sent, price_mismatches: row.price_mismatches.slice(0, 3) })));
-      if (!result.available) { status(`AI chưa viết được nhận xét báo cáo (${result.reason}); các dòng còn lại giữ nhận xét của công cụ.`); break; }
-      model ??= result.routing?.model;
-      for (const row of batch) if (result.notes.get(row.id)) notes[row.key] = result.notes.get(row.id);
+    const rows = report.slice(0, 100), notes = {};
+    const input = rows.map(row => ({ id: row.id, event: row.event_name, flow: row.flow, platform: row.platform, status: row.status, expected_fields: row.expected_fields.slice(0, 30),
+      issues: row.issues.slice(0, 8).map(issue => ({ code: issue.code, field: issue.path, expected: clip(issue.expected), actual: clip(issue.actual) })), times_sent: row.seen, not_sent: row.not_sent, price_mismatches: row.price_mismatches.slice(0, 3) }));
+    const key = JSON.stringify({ session: snapshot.session?.id ?? snapshot.session?.session_id, keys: rows.map(row => row.key), rows: input });
+    if (reportNotesCache?.client === client && reportNotesCache.key === key) return reportNotesCache.value;
+    let model, complete = true;
+    // Keep at most two requests in flight, while preserving the existing 20-row/100-row limits.
+    for (let start = 0; start < rows.length; start += 40) {
+      if (signal.aborted) return null;
+      const starts = [start, start + 20].filter(index => index < rows.length);
+      const results = await Promise.all(starts.map(async index => {
+        try { return await client.reportNotes(input.slice(index, index + 20)); }
+        catch { return { available: false, reason: 'AI_UNAVAILABLE' }; }
+      }));
+      if (signal.aborted) return null;
+      for (let index = 0; index < starts.length; index++) {
+        const result = results[index], batch = rows.slice(starts[index], starts[index] + 20);
+        if (!result.available) { complete = false; status(`AI chưa viết được nhận xét báo cáo (${result.reason}); các dòng còn lại giữ nhận xét của công cụ.`); continue; }
+        model ??= result.routing?.model;
+        for (const row of batch) if (result.notes.get(row.id)) notes[row.key] = result.notes.get(row.id);
+      }
+      if (!complete) break;
     }
-    return Object.keys(notes).length ? { by: 'AI', model, notes } : null;
+    const value = Object.keys(notes).length ? { by: 'AI', model, notes } : null;
+    // An unavailable or cancelled request can be retried on the next export.
+    if (complete && value) reportNotesCache = { client, key, value };
+    return value;
   }
-  async function exportWithNotes(snapshot) {
-    const reportNotes = await bounded(aiReportNotes(snapshot), 150000).catch(() => null);
-    exported = await exportReports({ ...snapshot, api_calls: manager.apiCallRecords(), ...(reportNotes ? { report_notes: reportNotes } : {}) }, manager.runDir);
-    return reportNotes;
+  async function exportWithNotes(snapshot, { aiNotes = true } = {}) {
+    const epoch = captureEpoch, controller = new AbortController();
+    const pending = (async () => {
+      const prepared = prepareReportData(snapshot);
+      reportNotesController = controller;
+      let onAbort;
+      const cancelled = new Promise(resolve => { onAbort = () => resolve(null); controller.signal.addEventListener('abort', onAbort, { once: true }); });
+      let reportNotes;
+      try { reportNotes = aiNotes ? await bounded(Promise.race([aiReportNotes(snapshot, prepared.report, controller.signal), cancelled]), 150000).catch(() => null) : null; }
+      finally {
+        controller.signal.removeEventListener('abort', onAbort);
+        controller.abort();
+        if (reportNotesController === controller) reportNotesController = null;
+      }
+      // A stopped live export must not overwrite the final report with its earlier snapshot.
+      if (epoch !== captureEpoch) return null;
+      await writeReports({ ...snapshot, api_calls: manager.apiCallRecords(), ...(reportNotes ? { report_notes: reportNotes } : {}) }, { prepared });
+      return reportNotes;
+    })();
+    reportExportTask = pending;
+    try { return await pending; }
+    finally { if (reportExportTask === pending) reportExportTask = null; }
+  }
+  async function writeReports(snapshot, options) {
+    const previous = reportWriteTask, outputDir = manager.runDir;
+    const pending = (async () => {
+      // Stop can bypass an active export request; finish writing that snapshot before the final one.
+      if (previous) await previous.catch(() => {});
+      const files = await exportReports(snapshot, outputDir, options);
+      const workflowResults = path.join(outputDir, 'workflow-results.json');
+      if (await fs.stat(workflowResults).then(stat => stat.isFile()).catch(() => false)) files.automation = workflowResults;
+      exported = files;
+      return files;
+    })();
+    reportWriteTask = pending;
+    try { return await pending; }
+    finally { if (reportWriteTask === pending) reportWriteTask = null; }
   }
   async function bounded(promise, milliseconds) {
     let timer;
@@ -258,13 +310,59 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       throw error;
     }
   }
+  async function startCapture(data, { navigate = true, profileDir } = {}) {
+    if (manager.session?.status === 'RUNNING') throw new Error('Đã có phiên đang chạy.');
+    const rawUrl = String(data.url || `http://127.0.0.1:${port}/demo`).trim();
+    let targetUrl;
+    try { targetUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`); }
+    catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
+    if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new Error('URL cần dùng http hoặc https.');
+    const browser = data.browser === 'edge' ? 'edge' : 'chrome';
+    const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223 }[mode]));
+    const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(pattern => typeof pattern === 'string' && pattern.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
+    if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
+    activePatterns = endpointPatterns;
+    navigationError = null;
+    if (!['127.0.0.1', 'localhost'].includes(targetUrl.hostname)) {
+      try { await dns.lookup(targetUrl.hostname); }
+      catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
+    }
+    const captureQueues = data.captureQueues !== false, compareApi = data.compareApi !== false, logApi = data.logApi !== false;
+    const logPatterns = logApi ? apiLogPatterns(data.apiLogPatterns) : [];
+    manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi, api_log: logApi, api_log_patterns: logPatterns }); exported = null;
+    firingCache = { count: -1, result: null }; linkCache = { count: -1, links: null }; priceCache = { key: '', result: null }; coverageCases = null; coverageCache.clear();
+    const epoch = ++captureEpoch, emit = event => epoch === captureEpoch ? manager.emit(event) : null;
+    try {
+      const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: profileDir ?? path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
+      if (closing || epoch !== captureEpoch) { await releaseBrowser(); throw new Error('Phiên đã dừng trước khi mở trình duyệt.'); }
+      collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues,
+        onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined,
+        ...(logApi ? { apiLogPatterns: logPatterns, onApiCall: record => epoch === captureEpoch ? manager.emitApiCall(record) : null } : {}) });
+      await collector.start(manager.session);
+      if (!data.attach && navigate) {
+        const page = collector.connections.get(opened.targetId);
+        if (!page) throw new Error('Không kết nối được tab test vừa mở.');
+        const { frameTree } = await page.connection.send('Page.getFrameTree');
+        const navigation = await page.connection.send('Page.navigate', { url: targetUrl.toString(), frameId: frameTree.frame.id });
+        if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
+      }
+      status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
+      if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
+      if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); throw new Error('Phiên đã dừng.'); }
+      return { port: debugPort, targetId: opened?.targetId ?? data.targetId };
+    } catch (error) { await stopCapture(); manager.abort(); throw error; }
+  }
   async function releaseBrowser() {
     const current = browserHandle; browserHandle = null;
     if (!current) return;
     try { await bounded(closeOwnedBrowser(current), 2000); }
     catch { status('Đã ngừng thu thập; có thể đóng cửa sổ trình duyệt test còn lại.'); }
   }
-  async function stopSession() {
+  async function stopSession({ exportReport = true } = {}) {
+    if (reportNotesController) {
+      reportNotesController.abort(); ai.close?.();
+      if (!closing && !aiClient) ai = new OpenRouterClient();
+    }
     if (stoppingSession) return stoppingSession;
     if (!manager.session || manager.session.status !== 'RUNNING') return { snapshot: manager.snapshot(), files: exported, interrupted: manager.session?.status === 'INTERRUPTED' };
     const pending = (async () => {
@@ -278,10 +376,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const interrupted = Boolean(manager.currentStep);
       if (interrupted) manager.abort(); else manager.finish();
       const snapshot = manager.snapshot();
-      try { exported = await exportReports({ ...snapshot, api_calls: manager.apiCallRecords() }, manager.runDir); }
-      catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
+      if (exportReport) {
+        try { await writeReports({ ...snapshot, api_calls: manager.apiCallRecords() }); }
+        catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
+      }
       await releaseBrowser();
-      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : 'Đã kết thúc và lưu báo cáo.');
+      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : exportReport ? 'Đã kết thúc và lưu báo cáo.' : 'Đã kết thúc phiên; đang xuất báo cáo.');
       return { snapshot, files: exported, interrupted };
     })();
     stoppingSession = pending;
@@ -291,10 +391,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   function close() {
     if (closePromise) return closePromise;
     closing = true;
+    reportNotesController?.abort();
     ai.close?.();
     closePromise = (async () => {
-      try { await stopSession(); }
+      try { await automation?.close(); await stopSession(); }
       finally {
+        if (reportExportTask) await bounded(reportExportTask, 5000).catch(() => {});
         await stopCapture(); await releaseBrowser();
         if (server.listening) {
           const closed = new Promise(resolve => server.close(resolve));
@@ -312,6 +414,20 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     for await (const chunk of req) { size += chunk.length; if (size > 5 * 1024 * 1024) throw new Error('Request vượt 5 MB.'); chunks.push(chunk); }
     const raw = Buffer.concat(chunks).toString('utf8'); return raw ? JSON.parse(raw) : {};
   }
+  const automation = mode === 'cdp-ai' ? new AutomationController({ directory: automationDir ?? path.join(runsDir, '.automation'), manager,
+    getAi: () => ai, onStatus: status, isAvailable: () => !mutating && !closing && !stoppingSession,
+    capture: automationOptions.capture ?? (workflow => startCapture({ url: workflow.url, browser: workflow.browser,
+      debugPort: automationOptions.debugPort ?? (workflow.browser === 'edge' ? 9225 : 9223) }, { navigate: false, profileDir: automationOptions.profileDir })),
+    openInspection: async ({ browser }) => {
+      const debugPort = automationOptions.debugPort ?? (browser === 'edge' ? 9225 : 9223);
+      const opened = await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: automationOptions.profileDir ?? path.join(rootDir, 'profiles', `${mode}-${browser}`) });
+      return { port: debugPort, targetId: opened.targetId };
+    },
+    finish: () => stopSession({ exportReport: false }),
+    exportReport: async options => { await exportWithNotes(manager.snapshot(), options); return Object.fromEntries(Object.entries(exported ?? {}).map(([key, file]) => [key, `/download/${path.basename(file)}`])); },
+    ...(automationOptions.connectDriver ? { connectDriver: automationOptions.connectDriver } : {}),
+    ...(automationOptions.now ? { now: automationOptions.now } : {}), ...(automationOptions.intervalMs ? { intervalMs: automationOptions.intervalMs } : {}) }) : null;
+  await automation?.load();
   const server = http.createServer(async (req, res) => {
     try {
       const addresses = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -326,6 +442,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         await bodyForDiscard(req); res.writeHead(204); return res.end();
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
+      if (req.method === 'GET' && url.pathname === '/api/automation/state') return automation
+        ? send(res, 200, automation.state()) : send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
       if (req.method === 'GET' && url.pathname === '/api/activity') {
         const snapshot = manager.snapshot(), events = snapshot.events;
         const entries = activityEntries(events, { links: deliveryLinks(events) });
@@ -402,15 +520,32 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       }
       if (url.pathname === '/api/stop-session') {
         req.resume();
+        if (automation?.busy) { automation.cancel(); reportNotesController?.abort(); await automation.wait(); }
         const result = await stopSession();
         return send(res, 200, { ...state(), stopped: true, interrupted: result.interrupted });
       }
+      if (url.pathname === '/api/automation/cancel') {
+        req.resume();
+        if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
+        automation.cancel(); reportNotesController?.abort();
+        return send(res, 200, automation.state());
+      }
       if (closing || stoppingSession) return send(res, 503, { error: 'Ứng dụng đang dừng; bằng chứng đang được lưu.' });
+      if (automation?.busy && !['/api/export', '/api/ai-review', '/api/ai-explain-event'].includes(url.pathname)) return send(res, 409, { error: 'Luồng tự động đang chạy. Dừng luồng trước khi thay đổi phiên hoặc kịch bản.' });
       if (mutating) return send(res, 409, { error: 'Đang xử lý thao tác trước.' });
       mutating = true;
       try {
         const data = await body(req);
-        if (url.pathname === '/api/spec-upload') {
+        if (url.pathname.startsWith('/api/automation/')) {
+          if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
+          const action = url.pathname.slice('/api/automation/'.length);
+          if (action === 'inspect') return send(res, 200, await automation.inspect(data));
+          if (action === 'draft') return send(res, 200, await automation.draft(data));
+          if (action === 'save') return send(res, 200, await automation.save(data.workflow));
+          if (action === 'delete') return send(res, 200, await automation.delete(data.id));
+          if (action === 'run') return send(res, 202, await automation.enqueue(data.ids, { variables: data.variables ?? {}, aiNotes: data.aiNotes === true }));
+          throw new Error('Không có thao tác luồng tự động này.');
+        } else if (url.pathname === '/api/spec-upload') {
           if (manager.currentStep) throw new Error('Hoàn tất bước trước khi chọn file.');
           const ext = path.extname(String(data.name)).toLowerCase();
           if (!['.xlsx', '.json'].includes(ext) || typeof data.content !== 'string') throw new Error('Chỉ nhận XLSX hoặc JSON.');
@@ -474,49 +609,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           activePatterns = patterns; collector?.setPatterns?.(patterns);
           status(`Allowlist: ${patterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
         } else if (url.pathname === '/api/start') {
-          if (manager.session?.status === 'RUNNING') throw new Error('Đã có phiên đang chạy.');
-          const rawUrl = String(data.url || `http://127.0.0.1:${port}/demo`).trim();
-          let targetUrl;
-          try { targetUrl = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`); }
-          catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
-          if (!['http:', 'https:'].includes(targetUrl.protocol)) throw new Error('URL cần dùng http hoặc https.');
-          const browser = data.browser === 'edge' ? 'edge' : 'chrome';
-          const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223 }[mode]));
-          const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(p => typeof p === 'string' && p.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
-          if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
-          activePatterns = endpointPatterns;
-          // A failed lookup is a warning only: the test browser may still reach it through a system proxy.
-          navigationError = null;
-          if (!['127.0.0.1', 'localhost'].includes(targetUrl.hostname)) {
-            try { await dns.lookup(targetUrl.hostname); }
-            catch (error) { navigationError = navigationHint(targetUrl.hostname, error.code || 'ENOTFOUND'); }
-          }
-          const captureQueues = data.captureQueues !== false;
-          const compareApi = data.compareApi !== false;
-          // API Request/Response log: on by default for the UAT/PROD API hosts; the QC can change the hosts.
-          const logApi = data.logApi !== false;
-          const logPatterns = logApi ? apiLogPatterns(data.apiLogPatterns) : [];
-          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi, api_log: logApi, api_log_patterns: logPatterns }); exported = null;
-          const epoch = ++captureEpoch;
-          const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
-          try {
-            const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
-            if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
-            collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues,
-              onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined,
-              ...(logApi ? { apiLogPatterns: logPatterns, onApiCall: record => epoch === captureEpoch ? manager.emitApiCall(record) : null } : {}) });
-            await collector.start(manager.session);
-            if (!data.attach) {
-              const page = collector.connections.get(opened.targetId);
-              if (!page) throw new Error('Không kết nối được tab test vừa mở.');
-              const { frameTree } = await page.connection.send('Page.getFrameTree');
-              const navigation = await page.connection.send('Page.navigate', { url: targetUrl.toString(), frameId: frameTree.frame.id });
-              if (navigation.errorText) navigationError = navigationHint(targetUrl.hostname, navigation.errorText);
-            }
-            status(navigationError || 'Collector đã sẵn sàng. Chọn test case và bắt đầu bước trước khi thao tác.');
-            if (!captureQueues) status('Đang chỉ bắt request: không gắn hook JavaScript vào website. Tầng JS queue không được quan sát.');
-            if (closing || epoch !== captureEpoch) { await stopCapture(); await releaseBrowser(); }
-          } catch (error) { await stopCapture(); manager.abort(); throw error; }
+          await startCapture(data);
         } else if (url.pathname === '/api/step/start') {
           manager.startStep(String(data.testCaseId), data.context || {}); status('Đang ghi nhận bước. Hãy thao tác trên trình duyệt test.');
         } else if (url.pathname === '/api/step/complete') {
@@ -535,12 +628,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname === '/api/finish') {
           if (!manager.session || manager.session.status !== 'RUNNING') throw new Error('Chưa có phiên đang chạy.');
           if (manager.currentStep) throw new Error('Hoàn tất bước hiện tại trước.');
-          await stopSession();
-          if (mode === 'cdp-ai' && await exportWithNotes(manager.snapshot())) status('AI đã viết cột nhận xét của sheet Báo cáo event.');
+          await stopSession({ exportReport: false });
+          if (await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false })) status('AI đã viết cột nhận xét của sheet Báo cáo event.');
           status(`Đã xuất report tại ${manager.runDir}`);
         } else if (url.pathname === '/api/export') {
           if (!manager.session) throw new Error('Chưa có phiên.');
-          status(await exportWithNotes(manager.snapshot()) ? 'Đã xuất report hiện tại; AI đã viết cột nhận xét của sheet Báo cáo event.' : 'Đã xuất report hiện tại.');
+          status(await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false }) ? 'Đã xuất report hiện tại; AI đã viết cột nhận xét của sheet Báo cáo event.' : 'Đã xuất report hiện tại.');
         } else if (url.pathname === '/api/ai-key') {
           if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           const key = String(data.key ?? '').trim();
@@ -580,7 +673,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     } catch (error) { status(error.message); send(res, 400, { error: redact(error.message) }); }
   });
   async function bodyForDiscard(req) { let size = 0; for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw new Error('Demo body too large.'); } }
-  return { server, manager, state, csrf, stopSession, close, async listen() {
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); }); port = server.address().port; return `http://127.0.0.1:${port}`;
+  return { server, manager, state, csrf, stopSession, close, automation, async listen() {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); }); port = server.address().port;
+    automation?.startScheduler();
+    return `http://127.0.0.1:${port}`;
   } };
 }

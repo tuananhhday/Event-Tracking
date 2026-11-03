@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeRequest } from '../src/core/decoder.mjs';
 import { eventKind } from '../src/core/event-kind.mjs';
-import { linkDeliveries, deliveryStatus, notForwarded, ga4HitAsPush } from '../src/core/delivery.mjs';
+import { linkDeliveries, deliveryStatus, notForwarded, ga4HitAsPush, isRequest, INSIDER_SERVER_NAME } from '../src/core/delivery.mjs';
 import { activityEntries } from '../src/core/activity.mjs';
+import { INSIDER_PAGE_EVENTS } from '../src/core/insider-hit.mjs';
+import { firingChecks } from '../src/core/firing.mjs';
 
 // Requests and pushes as recorded on vinpearlota.com on 2026-11-01.
 const at = ms => new Date(Date.UTC(2026, 10, 1, 8, 0, 0) + ms).toISOString();
@@ -96,4 +98,83 @@ test('the dashboard counts each event Google/Insider received once, not the push
   app.manager.emit({ layer: 'TRACKING_REQUEST', source: 'GA4', event_name: 'page_view', captured_at: iso(900), page: tab, network: { phase: 'request' }, payload: { v: '2', event: 'page_view' } });
   const state = await (await fetch(base + '/api/state?compact=1')).json();
   assert.deepEqual(state.delivery, { sent: 1, kinds: 1, not_sent: 1, pending: 0 });
+});
+
+// A deliberately simple scan is the original greedy pairing contract. Compare
+// optimized indexing with it across overlapping times, tab wildcards and aliases.
+function referenceLinks(events, windowMs = 30000) {
+  const time = event => Date.parse(event.captured_at);
+  const tab = event => event.page?.target_id ?? event.page?.url ?? '';
+  const ordered = events.filter(event => Number.isFinite(time(event))).sort((a, b) => time(a) - time(b));
+  const requests = ordered.filter(isRequest), queue = ordered.filter(event => event.layer === 'JS_QUEUE' && !event.historical);
+  const sentBy = new Map(), pushOf = new Map();
+  const take = (push, names, from = time(push) - 2000) => {
+    for (const name of names) {
+      const request = requests.find(candidate => candidate.source === push.source && candidate.event_name === name
+        && !pushOf.has(candidate.evidence_id) && (!push.page?.target_id || !candidate.page?.target_id || push.page.target_id === candidate.page.target_id)
+        && time(candidate) >= from && time(candidate) <= time(push) + windowMs);
+      if (request) { sentBy.set(push.evidence_id, request); pushOf.set(request.evidence_id, push); return; }
+    }
+  };
+  const pageTypes = new Set(['home', 'category', 'product', 'cart', 'purchase', 'other']);
+  for (const [index, event] of queue.entries()) {
+    if (eventKind(event) !== 'business') continue;
+    if (event.source === 'GA4') take(event, [event.event_name]);
+    else if (event.source === 'INSIDER') {
+      const pageNames = [event.event_name, ...INSIDER_PAGE_EVENTS, 'pageView'];
+      if (event.queue_name === 'insider_object') take(event, pageNames, time(event) - 3000);
+      else if (pageTypes.has(event.queue_type)) {
+        const init = queue.slice(index + 1, index + 30).find(candidate => candidate.queue_type === 'init' && tab(candidate) === tab(event) && time(candidate) - time(event) <= 5000);
+        if (init) take(event, pageNames, time(init) - 2000);
+      } else if (event.queue_name === 'InsiderDispatch') take(event, pageNames);
+      else take(event, [INSIDER_SERVER_NAME[event.queue_type] ?? event.event_name]);
+    }
+  }
+  return { sentBy, pushOf };
+}
+
+const linkIds = links => Object.fromEntries(Object.entries(links).map(([key, map]) => [key, [...map].map(([id, event]) => [id, event.evidence_id])]));
+
+test('indexed delivery pairing preserves greedy matching across mixed tabs, times and Insider names', () => {
+  let seed = 0x51f0a7;
+  const random = max => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 0x100000000 * max); };
+  const names = ['search_submit', 'search_hotel', 'page_view', 'listing_page_view', 'product_detail_page_view', 'pageView', 'add_to_cart', 'item_added_to_cart'];
+  const types = ['custom_event', 'category', 'home', 'init', 'add_to_cart', 'item_added_to_cart', 'dispatch', 'insider_object'];
+  for (let trial = 0; trial < 80; trial++) {
+    const events = Array.from({ length: 180 }, (_, index) => {
+      const source = random(2) ? 'GA4' : 'INSIDER', layer = random(2) ? 'JS_QUEUE' : 'TRACKING_REQUEST';
+      const event_name = names[random(names.length)], queue_type = types[random(types.length)];
+      const target = random(4), queue_name = source === 'GA4' ? 'dataLayer'
+        : queue_type === 'dispatch' ? 'InsiderDispatch' : queue_type === 'insider_object' ? 'insider_object' : 'InsiderQueue';
+      return { evidence_id: `random-${trial}-${index}`, source, layer, event_name, queue_name, queue_type,
+        // Tied timestamps and shuffled arrival order must retain stable matching.
+        captured_at: random(25) ? at(random(24) * 500) : 'invalid', historical: random(12) === 0,
+        page: { url: 'https://example.com/hotel/', ...(target ? { target_id: `tab-${target}` } : {}) },
+        payload: { event: event_name, ...(source === 'INSIDER' && layer === 'JS_QUEUE' ? { type: queue_type, value: [{ event_name, event_parameters: {} }] } : {}) },
+        ...(layer === 'TRACKING_REQUEST' ? { network: { phase: ['request', 'response', 'failed', undefined][random(4)] } } : {}) };
+    });
+    for (const windowMs of [-1000, 0, 1000, 5000, 30000]) {
+      assert.deepEqual(linkIds(linkDeliveries(events, { windowMs })), linkIds(referenceLinks(events, windowMs)), `trial ${trial}, window ${windowMs}`);
+    }
+  }
+});
+
+test('an Insider init lower bound does not discard earlier hits still eligible for another push', () => {
+  const listing = push('InsiderQueue', 'INSIDER', 'listing_page_view', { type: 'category' }, 0, { queue_type: 'category' });
+  const custom = push('InsiderQueue', 'INSIDER', 'pageView', { type: 'custom_event', value: [{ event_name: 'pageView', event_parameters: {} }] }, 1000, { queue_type: 'custom_event' });
+  const init = push('InsiderQueue', 'INSIDER', 'insider_init', { type: 'init' }, 5000, { queue_type: 'init' });
+  const events = [listing, custom, init, hit('INSIDER', 'pageView', { event: 'pageView' }, 4000), hit('INSIDER', 'pageView', { event: 'pageView' }, 0)];
+  assert.deepEqual(linkIds(linkDeliveries(events)), linkIds(referenceLinks(events)));
+  assert.equal(linkDeliveries(events).sentBy.size, 2);
+});
+
+test('firing checks reuse supplied delivery links and retain custom-window matching', () => {
+  const queued = push('dataLayer', 'GA4', 'search_submit', { event: 'search_submit' }, 0);
+  const events = [queued, hit('GA4', 'search_submit', { event: 'search_submit' }, 4000)];
+  for (const deliveryWindowMs of [1000, 30000]) {
+    const links = linkDeliveries(events, { windowMs: deliveryWindowMs });
+    assert.deepEqual(firingChecks(events, { links, deliveryWindowMs }), firingChecks(events, { deliveryWindowMs }));
+    assert.equal(firingChecks(events, { links, deliveryWindowMs }).byEvent.get(queued.evidence_id).find(check => check.rule === 'DELIVERED').status,
+      deliveryWindowMs === 1000 ? 'WARN' : 'PASS');
+  }
 });
