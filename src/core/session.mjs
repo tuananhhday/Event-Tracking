@@ -5,6 +5,7 @@ import { EvidenceStore } from './store.mjs';
 import { redact } from './privacy.mjs';
 import { validateCase } from './rules.mjs';
 import { sanitizeCases } from '../spec/sanitize.mjs';
+import { API_LOG_LIMITS } from './api-log.mjs';
 
 export class SessionManager {
   constructor({ runsDir = 'runs', mode = 'cdp', cases = [] } = {}) {
@@ -54,6 +55,20 @@ export class SessionManager {
     if (this.session?.status !== 'RUNNING' || this.store.apiList.length >= 3000) return null;
     return this.store.appendApi({ ...partial, schema_version: '1.0', evidence_id: `API-${randomUUID()}`, session_id: this.session.id });
   }
+  // Full API request/response records (api-log.mjs). Calls made during a step carry that step. Past the
+  // per-session size limit a call is still listed, without its bodies.
+  emitApiCall(partial) {
+    if (this.session?.status !== 'RUNNING' || this.store.apiCallIndex.length >= API_LOG_LIMITS.calls) return null;
+    const step = this.currentStep && Date.parse(partial.captured_at) >= Date.parse(this.currentStep.started_at) ? this.currentStep : null;
+    let record = { ...partial, schema_version: '1.0', evidence_id: `APICALL-${randomUUID()}`, session_id: this.session.id, step_id: step?.id ?? null, test_case_id: step?.test_case_id ?? null };
+    if (this.store.apiCallBytes > API_LOG_LIMITS.sessionBytes) {
+      const omit = part => part?.body ? { ...part, body: { omitted: 'session_limit', size: part.body.size } } : part;
+      record = { ...record, request: omit(record.request), response: omit(record.response) };
+    }
+    return this.store.appendApiCall(record);
+  }
+  apiCall(id) { return this.store ? this.store.apiCall(id) : null; }
+  apiCallRecords() { return this.store ? this.store.apiCalls() : []; }
   completeStep() {
     const step = this.currentStep; if (!step) throw new Error('Chưa có bước đang chạy.');
     step.completed_at = new Date().toISOString(); step.status = 'COMPLETED'; this.currentStep = null;
@@ -63,6 +78,7 @@ export class SessionManager {
   snapshot() {
     const live = this.store && !this.store.closed;
     const events = live ? this.store.events() : this.lastEvents || [], api = live ? this.store.apiRecords() : this.lastApi || [];
+    const apiCalls = this.store ? this.store.apiCallSummaries() : [];
     const results = [];
     for (const step of this.steps) {
       const testCase = this.cases.find(candidate => candidate.id === step.test_case_id);
@@ -72,7 +88,7 @@ export class SessionManager {
     for (const testCase of this.cases) {
       if (!this.steps.some(s => s.test_case_id === testCase.id)) results.push(validateCase(testCase, [], { id: null, evidence_id: `NOT-EXECUTED-${testCase.id}`, test_case_id: testCase.id, status: 'NOT_EXECUTED', context: {} }));
     }
-    return { session: this.session, cases: this.cases, steps: this.steps, events, api, results };
+    return { session: this.session, cases: this.cases, steps: this.steps, events, api, apiCalls, results };
   }
   finish() {
     if (!this.session || this.session.status !== 'RUNNING') return this.snapshot();
@@ -95,7 +111,7 @@ export function loadRun(runDir) {
     for (const step of store.recoveredSteps || []) latest.set(step.id, step);
     const expectedPath = path.join(dir, 'expected.json');
     const cases = fs.existsSync(expectedPath) ? JSON.parse(fs.readFileSync(expectedPath, 'utf8')).cases || [] : [];
-    return { session: saved, cases, steps: [...latest.values()], results: saved.results || [], events: store.events(), api: store.apiRecords() };
+    return { session: saved, cases, steps: [...latest.values()], results: saved.results || [], events: store.events(), api: store.apiRecords(), api_calls: store.apiCalls() };
   }
   finally { store.close(); }
 }

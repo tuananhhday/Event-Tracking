@@ -4,11 +4,14 @@ import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
 import { redactUrl } from '../core/privacy.mjs';
 import { apiPrices } from '../core/api-prices.mjs';
+import { apiCallRecord, matchesApiLog, DEFAULT_API_LOG_PATTERNS, API_LOG_LIMITS } from '../core/api-log.mjs';
 
 // A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
 // between the events of one request.
 const hitPage = (event, page) => { const url = event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
 
+// How long a call with a response may stay unfinished before it is logged anyway.
+const API_LOG_SETTLE_MS = 10000;
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
 
 // The website's own API (same site as the page, e.g. api.vinpearlota.com for vinpearlota.com): its JSON
@@ -156,10 +159,12 @@ export function queueEvents(record) {
 }
 
 export class CDPCollector {
-  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
+  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onApiCall, apiLogPatterns = DEFAULT_API_LOG_PATTERNS, apiLogSettleMs = API_LOG_SETTLE_MS, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
     if (typeof onEvent !== 'function') throw new Error('CDPCollector requires onEvent.');
     this.port = Number(port); this.targetId = targetId; this.urlFilter = urlFilter;
     this.onEvent = onEvent; this.onApi = typeof onApi === 'function' ? onApi : null; this.onStatus = onStatus;
+    // Full request/response of the website's backend API (api-log.mjs), for the hosts in apiLogPatterns.
+    this.onApiCall = typeof onApiCall === 'function' ? onApiCall : null; this.apiLogPatterns = [...apiLogPatterns]; this.apiLogSettleMs = apiLogSettleMs;
     this.captureQueues = captureQueues;
     this.patterns = endpointPatterns; this.discovered = new Map();
     this.connections = new Map(); this.attaching = new Map(); this.activeConnections = new Set(); this.jobs = new Set(); this.running = false; this.generation = 0;
@@ -218,7 +223,7 @@ export class CDPCollector {
     const connection = new CDPConnection(target.webSocketDebuggerUrl);
     this.activeConnections.add(connection);
     connection.on('closed', () => this.activeConnections.delete(connection));
-    const state = { connection, target, requests: new Map(), api: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
+    const state = { connection, target, requests: new Map(), api: new Map(), apiLog: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
     try {
       await connection.connect();
       if (!this.running || generation !== this.generation) { connection.close(); return; }
@@ -296,7 +301,7 @@ export class CDPCollector {
       const request = params.request || {};
       // CORS preflight asks permission to send an event; it is not the event itself.
       if (request.method?.toUpperCase() === 'OPTIONS') return;
-      if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); this.#apiRequest(state, sessionId, params); return; }
+      if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); this.#apiRequest(state, sessionId, params); this.#apiLogRequest(state, sessionId, params); return; }
       const key = `${sessionId || ''}:${params.requestId}`;
       const capturedAt = new Date((params.wallTime || Date.now() / 1000) * 1000).toISOString();
       const pending = { requestId: params.requestId, capturedAt, url: request.url, method: request.method,
@@ -316,6 +321,7 @@ export class CDPCollector {
       await pending.ready;
     } else if (['Network.responseReceived', 'Network.loadingFailed', 'Network.loadingFinished'].includes(method)) {
       const key = `${sessionId || ''}:${params.requestId}`;
+      if (state.apiLog.has(key)) await this.#apiLogEvent(state, key, method, params, send, generation);
       const api = state.api.get(key);
       if (api) {
         if (method === 'Network.responseReceived') {
@@ -363,6 +369,65 @@ export class CDPCollector {
     const prices = apiPrices(json);
     if (prices.length && this.running && generation === this.generation) await this.onApi({ captured_at: new Date(api.at ?? Date.now()).toISOString(), url: redactUrl(api.url), method: api.method, page: api.page, prices });
   }
+  // A call to a logged API host (api.uat.vinpearlota.com / api.vinpearlota.com): kept until it finishes or fails.
+  #apiLogRequest(state, sessionId, params) {
+    const request = params.request || {};
+    if (!this.onApiCall || !['XHR', 'Fetch'].includes(params.type) || !matchesApiLog(request.url || '', this.apiLogPatterns)) return;
+    state.apiLog.set(`${sessionId || ''}:${params.requestId}`, { request, type: params.type, wall: (params.wallTime || Date.now() / 1000) * 1000, monotonic: params.timestamp,
+      page: { url: params.documentURL || state.target.url, frame_id: params.frameId, target_id: state.target.id } });
+    if (state.apiLog.size > 300) state.apiLog.delete(state.apiLog.keys().next().value);
+  }
+  async #apiLogEvent(state, key, method, params, send, generation) {
+    const call = state.apiLog.get(key);
+    if (method === 'Network.responseReceived') {
+      call.response = params.response || {}; call.responseAt = params.timestamp;
+      // A page that never reads the body (or a streamed response) never finishes loading: the call is
+      // still logged, with what Chrome has of its body, after API_LOG_SETTLE_MS.
+      clearTimeout(call.timer);
+      call.timer = setTimeout(() => this.#job(this.#apiLogFinish(state, key, { requestId: params.requestId, timestamp: call.responseAt, incomplete: 'response_not_finished' }, send, generation)), this.apiLogSettleMs);
+      call.timer.unref?.();
+      return;
+    }
+    // Chrome cancels the loader of a body-less response after delivering it: that call did complete.
+    const failed = method === 'Network.loadingFailed' && !(call.response && params.canceled === true);
+    await this.#apiLogFinish(state, key, { requestId: params.requestId, timestamp: params.timestamp, encodedDataLength: params.encodedDataLength, error: failed ? params.errorText || 'Network request failed' : undefined }, send, generation);
+  }
+  async #apiLogFinish(state, key, { requestId, timestamp, encodedDataLength, error, incomplete }, send, generation) {
+    const call = state.apiLog.get(key);
+    if (!call) return;
+    state.apiLog.delete(key); clearTimeout(call.timer);
+    let requestBody = call.request.postData;
+    if (!requestBody && call.request.hasPostData) {
+      try { requestBody = (await send('Network.getRequestPostData', { requestId })).postData; } catch { /* listed without its body */ }
+    }
+    let responseBody;
+    if (!error && call.response && call.response.status !== 204 && !(encodedDataLength > API_LOG_LIMITS.bodyChars * 4)) {
+      try {
+        const { body, base64Encoded } = await send('Network.getResponseBody', { requestId });
+        responseBody = base64Encoded && /json|text|xml|javascript/i.test(call.response.mimeType || '') ? Buffer.from(body, 'base64').toString('utf8') : base64Encoded ? '' : body;
+      } catch { /* evicted, still streaming or not available: listed without its body */ }
+    }
+    if (!this.running || generation !== this.generation) return;
+    await this.onApiCall(this.#apiLogRecord(call, { error, incomplete, timestamp, requestBody, responseBody }));
+  }
+  #apiLogRecord(call, { error, incomplete, timestamp, requestBody, responseBody }) {
+    const finished = Number.isFinite(timestamp) && Number.isFinite(call.monotonic) ? call.wall + (timestamp - call.monotonic) * 1000 : Date.now();
+    return apiCallRecord({ request: call.request, response: call.response, error, incomplete, page: call.page, resourceType: call.type,
+      startedAt: new Date(call.wall).toISOString(), finishedAt: new Date(finished).toISOString(), requestBody, responseBody });
+  }
+  // Calls still open when capture stops are logged as they are (no body read: the connection is closing).
+  // The server calls it before it stops accepting records of this capture.
+  flushApiLog() { if (this.running) this.#apiLogFlush(); }
+  #apiLogFlush() {
+    if (!this.onApiCall) return;
+    for (const state of this.connections.values()) {
+      for (const call of state.apiLog.values()) {
+        clearTimeout(call.timer);
+        try { this.onApiCall(this.#apiLogRecord(call, { incomplete: call.response ? 'response_not_finished' : 'no_response_before_stop', timestamp: call.responseAt, requestBody: call.request.postData })); } catch { /* capture is stopping */ }
+      }
+      state.apiLog.clear();
+    }
+  }
   #deactivate() {
     this.running = false;
     this.generation++;
@@ -377,11 +442,13 @@ export class CDPCollector {
     this.activeConnections.clear(); this.connections.clear(); this.attaching.clear(); this.jobs.clear(); this.discovering = false;
   }
   forceStop() {
+    if (this.running) this.#apiLogFlush();
     this.stopWasForced = true;
     this.#disconnect();
   }
   stop({ timeoutMs = 3000 } = {}) {
     if (this.stopPromise) return this.stopPromise;
+    if (this.running) this.#apiLogFlush();
     this.#deactivate();
     this.stopWasForced = false;
     const states = [...this.connections.values()];

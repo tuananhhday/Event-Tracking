@@ -43,8 +43,12 @@
         </div>
         <span class="label">Tracking cần bắt</span>
         <div id="vendors" class="vendor-list"></div>
-        <details class="more"><summary>Nâng cao: so giá với API, request, hệ thống khác</summary>
+        <details class="more"><summary>Nâng cao: so giá với API, lưu API request/response, hệ thống khác</summary>
           <label class="check"><input id="compare-api" type="checkbox" checked data-lock-running> So giá đã gửi với API của website</label><p class="hint">App đọc các API JSON website gọi (như tab Network trong F12) và so với giá đã gửi lên Google/Insider. Kết quả ở tab <b>Giá vs API</b>.</p>
+          <label class="check"><input id="log-api" type="checkbox" checked data-lock-running> Lưu API Request/Response của website</label><p class="hint">Lưu đầy đủ request (method, URL, body) và response (HTTP status, body, cả lỗi) của các API dưới đây, để đối chiếu và bổ sung tham số cho event. Token, cookie, email, số điện thoại, họ tên được che; API đăng nhập chỉ lưu status. Xem ở tab <b>API</b>; file <code>api-calls.jsonl</code> và sheet <b>API calls</b> trong report.xlsx.</p>
+          <label for="api-patterns">Host API cần lưu <span class="hint">(mỗi dòng một regex, so với host + path)</span></label>
+          <textarea id="api-patterns" class="code" rows="2" data-lock-running>(?:^|\.)api\.uat\.vinpearlota\.com(?:/|$)
+(?:^|\.)api\.vinpearlota\.com(?:/|$)</textarea>
           <span class="label">Hệ thống tracking khác</span>
           <div id="vendors-more" class="vendor-list"></div>
           <label class="check"><input id="request-only" type="checkbox" data-lock-running> Không đọc dataLayer / InsiderQueue (chỉ khi website bị lag)</label><p class="hint">Để trống để thấy đủ như F12: dataLayer, InsiderQueue và request gửi lên Google/Insider. Chỉ tick khi website lag hoặc không thao tác được; khi đó app chỉ thấy request và không so được với F12 Console. Áp dụng khi mở phiên mới.</p>
@@ -159,6 +163,7 @@
         <button type="button" class="tab" role="tab" data-tab="spec">Đối chiếu đặc tả <span id="spec-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="prices">Giá vs API <span id="prices-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="apicalls">API <span id="apicalls-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
@@ -211,6 +216,12 @@
         <div id="prices-table"></div>
         <h3 class="section-title">Giá trong API của website <span class="hint">(mới nhất trước)</span></h3>
         <div id="prices-api"></div>
+      </div>
+      <div class="tabpanel hidden" data-panel="apicalls">
+        <p class="hint" style="margin-top:0">Các lời gọi API của website (như tab Network trong F12, lọc theo host ở bước 1 → Nâng cao), mới nhất trước. Mở một dòng để xem request, response và các event Google / Insider bắn quanh thời điểm đó.</p>
+        <div id="apicalls-summary"></div>
+        <div class="toolbar"><input id="apicalls-q" type="search" placeholder="Tìm theo path, method, status… (vd bookable, promotion, cart)" aria-label="Tìm lời gọi API"><select id="apicalls-status" aria-label="Lọc theo kết quả"><option value="">Tất cả</option><option value="failed">Chỉ lỗi (HTTP ≥ 400 / mạng)</option><option value="ok">Chỉ thành công</option></select></div>
+        <div id="apicalls-list"></div>
       </div>
       <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>

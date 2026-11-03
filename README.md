@@ -145,6 +145,18 @@ Báo cáo Excel có sheet **Giá vs API**; mỗi giá lệch thành một bug tr
 
 Giới hạn: giá website viết sẵn trong HTML (không qua API) thì app không thấy; mỗi phiên đọc tối đa 3000 response API, mỗi response tối đa 3 MB. Kết quả so giá là bằng chứng để QC xem lại; API có nhiều mức giá (giá gốc, giá khuyến mãi) được liệt kê đủ để chọn đúng.
 
+## Lưu API Request/Response của website
+
+App lưu đầy đủ các lời gọi API mà website gọi tới backend của nó, mặc định là **`api.uat.vinpearlota.com` (UAT)** và **`api.vinpearlota.com` (PROD)**. Mục đích: đối chiếu và bổ sung tham số cho event, ví dụ addon theo `ancillaries` của API Bookable, số tiền giảm khi áp mã khuyến mãi, sản phẩm trong giỏ hàng. Tính năng bật sẵn ở cả bản thường và bản AI; tắt hoặc đổi host ở bước 1 → **Nâng cao** → **Lưu API Request/Response của website** (mỗi dòng một regex, so với host + path).
+
+- **Lưu gì.** Mỗi lời gọi XHR/fetch tới host trên: method, URL, query, body của request; HTTP status, body của response; thời điểm gọi, thời gian chạy và trang đang mở. Response lỗi (4xx/5xx, ví dụ áp mã thất bại) và lỗi mạng cũng được lưu. Lời gọi đã có response nhưng trang không đọc hết sau 10 giây, hoặc còn dở khi dừng phiên, vẫn được lưu với nhãn **Chưa xong**. Lời gọi xảy ra trong một bước mang mã bước và case đó.
+- **Che dữ liệu.** Header chỉ giữ các header định dạng (`content-type`, `accept-language`, `x-currency`…); `Authorization`, `Cookie`, `Set-Cookie` và token tuỳ biến không được lưu. Trong body, token, email, số điện thoại, họ tên, ngày sinh, hộ chiếu/CCCD được che `[REDACTED]`. API đăng nhập, token, OTP, mật khẩu chỉ lưu status, không lưu body. Trên PROD, API chứa dữ liệu đơn hàng thật: chỉ bật khi được phép và giữ file trong máy.
+- **Xem ở đâu.** Tab **API**: lọc theo path/method/status, chỉ lỗi hoặc chỉ thành công; mở một dòng để xem request, response và các event Google/Insider bắn trong khoảng 5 giây quanh lời gọi đó (bấm **Xem event** để mở event), sao chép hoặc tải JSON của lời gọi.
+- **File.** `runs/<phiên>/api-calls.jsonl` (mỗi dòng một lời gọi, tải ở mục báo cáo sau khi kết thúc phiên) và sheet **API calls** trong `report.xlsx`.
+- **Giới hạn.** Tối đa 3000 lời gọi mỗi phiên; mỗi body lưu tối đa 1 triệu ký tự (phần dài hơn bị cắt, có ghi kích thước gốc); sau 300 MB mỗi phiên chỉ lưu thông tin lời gọi, không lưu body. Dữ liệu nhị phân (ảnh, file) không lưu.
+
+Khác với **So giá với API** (chỉ giữ các trường tiền để so với giá đã gửi, file `api.jsonl`), API log giữ nguyên request/response để QC tự đối chiếu mọi tham số.
+
 ## Chạy thử với trang demo
 
 Bấm **Chưa có website? Chạy thử với trang demo** ở bước 1: app chọn trang demo nội bộ và nạp 3 case mẫu Hotel, Merchandise, Insider. Trên demo, tick **Bỏ destination_id** để có FAIL/MISSING_FIELD ở tầng queue; tick **Bỏ request** ở Insider để có FAIL ở tầng request. Mục **Giá so với API** của demo gọi API sản phẩm (giá 1.000.000) rồi gửi `view_item`; tick **Gửi sai giá (500.000)** để thấy **Lệch API** ở tab **Giá vs API**.
@@ -173,9 +185,10 @@ runs/<session-id>/
   steps.jsonl        # vòng đời bước; bằng chứng cho event bị thiếu
   eventqa.db         # SQLite WAL, index có thể dựng lại từ JSONL
   report.xlsx       # Báo cáo event / Run Summary / Spec Coverage / Firing Checks /
-                    # Giá vs API / Test Cases / Expected Events / Actual Events /
+                    # Giá vs API / API calls / Test Cases / Expected Events / Actual Events /
                     # Comparison / Bug Reports
   api.jsonl          # giá đọc từ API của website (chỉ trường tiền + mã, tên sản phẩm)
+  api-calls.jsonl    # API Request/Response đầy đủ của website (đã che dữ liệu nhạy cảm)
   report.html
   comparison.json
   bugs.md

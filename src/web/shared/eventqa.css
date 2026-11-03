@@ -511,3 +511,7 @@ label,.label { font-size:12px; }.stage-title strong { font-size:13px; }.stage-ti
 .price-line { display: inline-block; margin-top: 4px; }
 details.api-prices { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
 details.api-prices summary { cursor: pointer; }
+/* API Request/Response tab */
+#apicalls-list details.api-prices summary code { font-size: 12px; overflow-wrap: anywhere; }
+#apicalls-list h4 { margin: 12px 0 4px; font-size: 13px; }
+#apicalls-q { flex: 1 1 260px; min-width: 0; }

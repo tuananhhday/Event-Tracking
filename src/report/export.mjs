@@ -9,6 +9,7 @@ import { linkDeliveries, deliveryStatus } from '../core/delivery.mjs';
 import { activityEntries } from '../core/activity.mjs';
 import { priceChecks } from '../core/api-prices.mjs';
 import { eventReportRows, REPORT_LABEL } from './event-report.mjs';
+import { bodyText } from '../core/api-log.mjs';
 
 const json = value => value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value);
 const safe = value => {
@@ -89,7 +90,7 @@ function addSheet(workbook, name, headers, rows, widths = []) {
   return worksheet;
 }
 
-export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], report_notes: reportNotes = null }, outputDir) {
+export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir) {
   // Matched on the unsanitized spec so sample values can still identify each flow.
   const links = linkDeliveries(events), now = Date.now();
   const coverage = cases.length ? specCoverage(cases, events, new Map(), { links, now }) : null;
@@ -117,6 +118,7 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
     ...(coverage ? [['Spec rows', coverage.totals.rows], ['Spec rows fired', coverage.totals.seen], ['Spec rows matching sample', coverage.totals.match], ['Spec rows mismatching', coverage.totals.mismatch], ['Spec rows pushed but not sent', coverage.totals.not_sent], ['Spec rows not seen', coverage.totals.not_seen], ['Events outside spec', coverage.totals.unmatched]] : []),
     ['Nhận xét trong sheet Báo cáo event', byAi ? `AI${reportNotes.model ? ` (${reportNotes.model})` : ''}; dòng AI không trả lời giữ nhận xét của công cụ` : 'Công cụ tự kiểm'],
     ['Giá đã so với API', priced.summary.total], ['Giá lệch API', priced.summary.mismatch], ['API của website đã đọc', priced.summary.api_responses],
+    ['API Request/Response đã lưu', apiCalls.length], ['API lỗi (HTTP ≥ 400 hoặc lỗi mạng)', apiCalls.filter(call => !call.ok).length],
     ['Ingestion', 'NOT_VERIFIED: HTTP response does not confirm vendor ingestion.'],
   ], [28, 86]);
   const coverageRows = coverage ? [
@@ -131,6 +133,12 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   addSheet(workbook, 'Giá vs API', ['Thời điểm', 'Nền tảng', 'Event', 'Trường giá', 'Giá đã gửi', 'Giá API', 'Kết quả', 'Trường API', 'API', 'Giá khác trong API', 'Evidence ID'],
     redact(priced.checks).map(check => [check.at, check.source, check.event, check.field, check.sent, check.api?.value ?? '', PRICE_LABEL[check.status], check.api?.path ?? '', check.api?.url ?? '',
       (check.candidates ?? []).map(other => `${money(other.value)} (${other.path})`).join('\n'), check.evidence_id]), [24, 10, 26, 30, 14, 14, 18, 44, 60, 44, 42]);
+  // Website API calls (api-log.mjs): one row per call; a body longer than a cell is cut here and kept whole in api-calls.jsonl.
+  const stepCase = new Map(steps.map(step => [step.id, step.test_case_id]));
+  addSheet(workbook, 'API calls', ['Thời điểm', 'Method', 'Host', 'Path', 'Query', 'HTTP status', 'Thời gian (ms)', 'Request body', 'Response body', 'Lỗi', 'Trang', 'Test case', 'Evidence ID'],
+    apiCalls.map(call => [call.captured_at, call.method, call.host, call.path, Object.keys(call.query ?? {}).length ? call.query : '', call.response?.status ?? '', call.duration_ms ?? '',
+      bodyText(call.request?.body), bodyText(call.response?.body), call.error ?? '', call.page?.url ?? '', call.test_case_id ?? stepCase.get(call.step_id) ?? '', call.evidence_id]),
+    [24, 9, 26, 46, 30, 11, 12, 60, 80, 24, 50, 30, 46]);
   addSheet(workbook, 'Test Cases', ['ID', 'Name', 'Source', 'Flow', 'Description', 'Needs review', 'File', 'Sheet', 'Row'], cases.map(testCase => [testCase.id, testCase.name, testCase.source, testCase.flow, testCase.description, Boolean(testCase.needs_review), testCase.provenance?.file, testCase.provenance?.sheet, testCase.provenance?.row]), [35, 40, 16, 22, 65, 16, 55, 30, 10]);
   addSheet(workbook, 'Expected Events', ['Test case', 'Event', 'Layer', 'Source', 'Count', 'Timing ms', 'After', 'Field rules', 'Needs review'], cases.flatMap(testCase => testCase.rules.map(rule => [testCase.id, rule.event_name, rule.layer, rule.source ?? testCase.source, rule.count, rule.within_ms, rule.after, rule.fields, Boolean(rule.needs_review)])), [35, 30, 24, 16, 24, 16, 28, 95, 16]);
   addSheet(workbook, 'Actual Events', ['Evidence ID', 'Captured at', 'Test case', 'Step', 'Event', 'Layer', 'Source', 'Gửi lên server', 'Page', 'Payload', 'Network'], events.map(event => [event.evidence_id, event.captured_at, event.test_case_id, event.step_id, event.event_name, event.layer, event.source, delivery.get(event.evidence_id), event.page?.url, event.payload, event.network]), [30, 30, 35, 30, 30, 24, 16, 22, 60, 100, 80]);
@@ -164,5 +172,13 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
     + `Evidence: ${check.evidence_id}\n\n`;
   const bugText = bugs.length ? bugs.map(bug => bug.price ? priceBug(bug) : bug.spec ? specBug(bug) : `## [Tracking][${bug.flow ?? ''}][${bug.source ?? ''}] ${bug.event_name}: ${bug.code}\n\nTest case: ${bug.test_case_id}\n\nStep: ${bug.step_id}\n\nLayer: ${bug.layer}\n\nField: ${bug.path ?? '(event)'}\n\nExpected:\n\n\`\`\`json\n${JSON.stringify(bug.expected ?? null, null, 2)}\n\`\`\`\n\nActual:\n\n\`\`\`json\n${JSON.stringify(bug.actual ?? null, null, 2)}\n\`\`\`\n\nEvidence: ${bug.evidence_id}\n\nVerdict: FAIL\n\n${bug.ai_note ? `AI note (advisory): ${bug.ai_note}\n\n` : ''}`).join('\n---\n\n') : '# Bug reports\n\nNo deterministic failures found. Review/NOT_EXECUTED cases are not confirmed defects.\n';
   await fs.writeFile(paths.bugs, bugText, 'utf8');
+  // The full API log is a download of its own; reports written elsewhere than the run folder get a copy.
+  if (apiCalls.length) {
+    const file = path.join(directory, 'api-calls.jsonl');
+    let present = false;
+    try { present = (await fs.stat(file)).size > 0; } catch { /* written below */ }
+    if (!present) await fs.writeFile(file, apiCalls.map(call => JSON.stringify(redact(call))).join('\n') + '\n', 'utf8');
+    paths.api_calls = file;
+  }
   return paths;
 }

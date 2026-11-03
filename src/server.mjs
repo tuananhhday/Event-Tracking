@@ -14,6 +14,7 @@ import { eventKind } from './core/event-kind.mjs';
 import { firingChecks } from './core/firing.mjs';
 import { activityEvent, activityEntries } from './core/activity.mjs';
 import { priceChecks } from './core/api-prices.mjs';
+import { apiLogPatterns, DEFAULT_API_LOG_PATTERNS } from './core/api-log.mjs';
 import { importSpec, specSheets, validateTestCase, manualCase } from './spec/import.mjs';
 import { exportReports } from './report/export.mjs';
 import { eventReportRows } from './report/event-report.mjs';
@@ -132,7 +133,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const snapshot = manager.snapshot();
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [],
-      eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), prices: prices(snapshot.events, snapshot.api).summary, specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
+      eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), prices: prices(snapshot.events, snapshot.api).summary, apiCalls: { total: snapshot.apiCalls.length, failed: snapshot.apiCalls.filter(call => !call.ok).length, default_patterns: DEFAULT_API_LOG_PATTERNS }, specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
       events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   // One captured event with the specification row it matched (field-by-field outcome), its firing
@@ -218,7 +219,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   }
   async function exportWithNotes(snapshot) {
     const reportNotes = await bounded(aiReportNotes(snapshot), 150000).catch(() => null);
-    exported = await exportReports({ ...snapshot, ...(reportNotes ? { report_notes: reportNotes } : {}) }, manager.runDir);
+    exported = await exportReports({ ...snapshot, api_calls: manager.apiCallRecords(), ...(reportNotes ? { report_notes: reportNotes } : {}) }, manager.runDir);
     return reportNotes;
   }
   async function bounded(promise, milliseconds) {
@@ -227,6 +228,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     finally { clearTimeout(timer); }
   }
   async function stopCapture() {
+    collector?.flushApiLog?.();
     captureEpoch++;
     const current = collector; collector = null;
     if (!current) return;
@@ -266,7 +268,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     if (stoppingSession) return stoppingSession;
     if (!manager.session || manager.session.status !== 'RUNNING') return { snapshot: manager.snapshot(), files: exported, interrupted: manager.session?.status === 'INTERRUPTED' };
     const pending = (async () => {
-      // Cancel remote work immediately; shutdown never waits for AI routing/retries.
+      // Cancel remote work immediately; shutdown never waits for AI routing/retries. API calls still open are
+      // logged first, while this capture's records are still accepted.
+      collector?.flushApiLog?.();
       captureEpoch++;
       ai.close?.();
       if (!closing && !aiClient) ai = new OpenRouterClient();
@@ -274,7 +278,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const interrupted = Boolean(manager.currentStep);
       if (interrupted) manager.abort(); else manager.finish();
       const snapshot = manager.snapshot();
-      try { exported = await exportReports(snapshot, manager.runDir); }
+      try { exported = await exportReports({ ...snapshot, api_calls: manager.apiCallRecords() }, manager.runDir); }
       catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
       await releaseBrowser();
       status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : 'Đã kết thúc và lưu báo cáo.');
@@ -354,6 +358,24 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         const returned = snapshot.api.slice(-20).reverse().map(record => ({ captured_at: record.captured_at, url: record.url, method: record.method, total: record.prices.length,
           prices: record.prices.slice(0, 80).map(entry => ({ path: entry.path, value: entry.value, name: entry.name, ids: entry.ids?.slice(0, 3), currency: entry.currency })) }));
         return send(res, 200, { summary, session_id: manager.session?.id || null, checks: checks.slice(-400).reverse().sort((a, b) => order[a.status] - order[b.status]), api_prices: returned });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/api-calls') {
+        // The website API calls of the session (api-log.mjs), newest first, filtered by text and outcome.
+        const all = manager.snapshot().apiCalls, q = String(url.searchParams.get('q') || '').trim().toLowerCase(), outcome = url.searchParams.get('status') || '';
+        const calls = all.filter(call => (!q || `${call.method} ${call.host}${call.path} ${call.status ?? ''}`.toLowerCase().includes(q))
+          && (!outcome || (outcome === 'failed' ? !call.ok : outcome === 'ok' ? call.ok : true)));
+        return send(res, 200, { total: all.length, matched: calls.length, session_id: manager.session?.id || null, enabled: manager.session ? manager.session.api_log !== false : true,
+          patterns: manager.session?.api_log_patterns ?? DEFAULT_API_LOG_PATTERNS, calls: calls.slice(-400).reverse() });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/api-call') {
+        // One call in full, with the tracking events sent from 5 s before it started to 5 s after it finished.
+        const record = manager.apiCall(String(url.searchParams.get('id') || ''));
+        if (!record) return send(res, 404, { error: 'Không có lời gọi API này trong phiên.' });
+        const events = manager.snapshot().events, links = deliveryLinks(events);
+        const from = Date.parse(record.captured_at) - 5000, to = Date.parse(record.finished_at ?? record.captured_at) + 5000;
+        const nearby = activityEntries(events, { links }).filter(row => row.event_kind === 'business' && Date.parse(row.captured_at) >= from && Date.parse(row.captured_at) <= to)
+          .slice(-40).map(row => ({ evidence_id: row.evidence_id, captured_at: row.captured_at, source: row.source, name: row.display_name ?? row.event_name, delivery: row.delivery }));
+        return send(res, 200, { call: record, nearby });
       }
       if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
       if (req.method === 'GET' && url.pathname === '/api/event') {
@@ -471,14 +493,18 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           }
           const captureQueues = data.captureQueues !== false;
           const compareApi = data.compareApi !== false;
-          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi }); exported = null;
+          // API Request/Response log: on by default for the UAT/PROD API hosts; the QC can change the hosts.
+          const logApi = data.logApi !== false;
+          const logPatterns = logApi ? apiLogPatterns(data.apiLogPatterns) : [];
+          manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi, api_log: logApi, api_log_patterns: logPatterns }); exported = null;
           const epoch = ++captureEpoch;
           const emit = event => epoch === captureEpoch ? manager.emit(event) : null;
           try {
             const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
             if (closing || epoch !== captureEpoch) { await releaseBrowser(); return send(res, 200, state()); }
             collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues,
-              onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined });
+              onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined,
+              ...(logApi ? { apiLogPatterns: logPatterns, onApiCall: record => epoch === captureEpoch ? manager.emitApiCall(record) : null } : {}) });
             await collector.start(manager.session);
             if (!data.attach) {
               const page = collector.connections.get(opened.targetId);

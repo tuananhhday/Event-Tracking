@@ -40,13 +40,14 @@
   // Where a specification row comes from: Excel sheet!row, or "Nhập tay" for an event typed in the app.
   const whereSpec = (sheet, row) => row == null || row === '' ? String(sheet ?? '') : `${sheet ?? ''}!${row}`;
   const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
-  const FILE_TEXT = { xlsx: ['Excel', '6 sheet đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'] };
+  const FILE_TEXT = { xlsx: ['Excel', '6 sheet đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
     sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'activity', marker: null,
     activity: [], activityVersion: null, activityNext: null, activityTotal: 0, activitySelected: null,
-    hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null, pushes: [], pushVersion: null, pushLoading: false };
+    hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null, pushes: [], pushVersion: null, pushLoading: false,
+    apiCalls: [], apiCallsMeta: null, apiCallsVersion: null, apiCallsLoading: false, apiCallDetails: new Map() };
   const siteKey = () => `eventqa:${ui.mode}:site`;
 
   // ---- feedback ---------------------------------------------------------
@@ -130,11 +131,18 @@
     for (const pattern of custom) { try { new RegExp(pattern); } catch { throw new Error(`Regex endpoint không hợp lệ: ${pattern}`); } }
     return [...new Set([...patterns, ...custom])];
   }
+  // API Request/Response log: on/off and the API hosts (one regex per line, matched against host + path).
+  function apiLogOptions() {
+    const logApi = $('log-api')?.checked ?? true;
+    const apiLogPatterns = ($('api-patterns')?.value || '').split('\n').map(line => line.trim()).filter(Boolean);
+    for (const pattern of apiLogPatterns) { try { new RegExp(pattern); } catch { throw new Error(`Mẫu host API không hợp lệ: ${pattern}`); } }
+    return { logApi, ...(apiLogPatterns.length ? { apiLogPatterns } : {}) };
+  }
   function saveSite() {
     const saved = store.get(siteKey(), {});
     const url = $('url')?.value.trim();
     const recent = [url, ...(saved.recent || [])].filter((u, i, list) => u && !u.includes('/demo') && list.indexOf(u) === i).slice(0, 6);
-    store.set(siteKey(), { ...saved, url, recent, browser: $('browser')?.value, vendors: $$('[data-vendor]').filter(b => b.checked).map(b => b.dataset.vendor), custom: $('patterns')?.value || '', compareApi: $('compare-api')?.checked ?? true });
+    store.set(siteKey(), { ...saved, url, recent, browser: $('browser')?.value, vendors: $$('[data-vendor]').filter(b => b.checked).map(b => b.dataset.vendor), custom: $('patterns')?.value || '', compareApi: $('compare-api')?.checked ?? true, logApi: $('log-api')?.checked ?? true, apiPatterns: $('api-patterns')?.value ?? '' });
     renderRecent();
   }
   function renderRecent() {
@@ -148,6 +156,8 @@
     if ($('url') && saved.url) $('url').value = saved.url;
     if ($('patterns') && saved.custom) $('patterns').value = saved.custom;
     if ($('compare-api') && saved.compareApi === false) $('compare-api').checked = false;
+    if ($('log-api') && saved.logApi === false) $('log-api').checked = false;
+    if ($('api-patterns') && typeof saved.apiPatterns === 'string' && saved.apiPatterns.trim()) $('api-patterns').value = saved.apiPatterns;
     if (saved.browser) setBrowser(saved.browser);
     renderRecent();
   }
@@ -763,6 +773,72 @@
       : `<p class="hint">${off ? 'Phiên này không đọc API của website.' : 'Chưa có response API nào chứa giá.'}</p>`;
   }
 
+  // ---- API Request/Response --------------------------------------------------
+  // "(?:^|\.)api\.uat\.vinpearlota\.com(?:/|$)" is shown as api.uat.vinpearlota.com.
+  const apiHostLabel = pattern => pattern.replace(/\(\?:\^\|\\\.\)|\(\?:\/\|\$\)/g, '').replace(/\\/g, '').replace(/[\^$]/g, '');
+  const bytes = size => !size ? '' : size < 1024 ? `${size} B` : size < 1048576 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1048576).toFixed(1)} MB`;
+  async function refreshApiCalls() {
+    if (ui.apiCallsLoading || !ui.state) return;
+    const q = $('apicalls-q')?.value.trim() || '', status = $('apicalls-status')?.value || '';
+    const version = JSON.stringify([ui.state.session?.id, ui.state.apiCalls?.total, q, status]);
+    if (version === ui.apiCallsVersion) return;
+    ui.apiCallsLoading = true;
+    try {
+      const response = await fetch(`/api/api-calls?${new URLSearchParams({ q, status })}`, { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Chưa tải được danh sách API.');
+      const result = await response.json();
+      if (result.session_id !== ui.apiCallsMeta?.session_id) ui.apiCallDetails.clear();
+      ui.apiCalls = result.calls; ui.apiCallsMeta = result; ui.apiCallsVersion = version; ui.sig.apicalls = null; render();
+    } catch (error) { showError(error.message); }
+    finally { ui.apiCallsLoading = false; }
+  }
+  function apiBody(body) {
+    if (!body) return '<p class="hint">Không có body.</p>';
+    if (body.omitted) return `<p class="hint">${esc(body.omitted === 'credential_endpoint' ? 'Không lưu body của API đăng nhập / tài khoản.' : body.omitted === 'binary' ? `Dữ liệu nhị phân (${body.mime_type || ''}), không lưu.` : body.omitted === 'session_limit' ? 'Phiên đã đạt giới hạn dung lượng, không lưu body.' : body.omitted)}</p>`;
+    const value = body.json !== undefined ? JSON.stringify(body.json, null, 2) : body.form ? JSON.stringify(body.form, null, 2) : body.text ?? '';
+    return `${body.truncated ? `<p class="hint">Body dài ${bytes(body.size)}: chỉ hiện phần đầu.</p>` : ''}<pre class="activity-json" tabindex="0">${esc(value)}</pre>`;
+  }
+  function apiCallDetail(id) {
+    const detail = ui.apiCallDetails.get(id);
+    if (!detail) return '<p class="hint">Đang tải…</p>';
+    if (detail.error) return `<p class="hint">${esc(detail.error)}</p>`;
+    const { call, nearby } = detail;
+    const headers = value => Object.keys(value || {}).length ? `<table class="params"><tbody>${Object.entries(value).map(([name, item]) => `<tr><td><code>${esc(name)}</code></td><td>${esc(item)}</td></tr>`).join('')}</tbody></table>` : '';
+    return `<div class="toolbar"><button type="button" class="btn small" data-api-copy="${esc(id)}">Sao chép JSON</button><button type="button" class="btn small" data-api-download="${esc(id)}">Tải JSON</button></div>
+      <p class="hint"><code>${esc(call.url)}</code>${call.page?.url ? `<br>Trang: ${esc(call.page.url)}` : ''}</p>
+      ${Object.keys(call.query || {}).length ? `<h4>Query</h4><pre class="activity-json">${esc(JSON.stringify(call.query, null, 2))}</pre>` : ''}
+      <h4>Request</h4>${headers(call.request?.headers)}${apiBody(call.request?.body)}
+      <h4>Response ${call.response ? `· HTTP ${esc(call.response.status)}` : ''}</h4>${call.error ? `<div class="banner warn">${esc(call.error)}</div>` : ''}${call.incomplete ? `<div class="banner warn">${call.incomplete === 'no_response_before_stop' ? 'Đã dừng thu thập trước khi API trả response.' : 'Trang chưa đọc hết response sau 10 giây; body có thể chưa đầy đủ.'}</div>` : ''}${call.response ? `${headers(call.response.headers)}${apiBody(call.response.body)}` : '<p class="hint">Không có response.</p>'}
+      <h4>Event tracking quanh lời gọi này <span class="hint">(5 giây trước khi gọi đến 5 giây sau khi xong)</span></h4>
+      ${nearby.length ? `<ul class="log">${nearby.map(row => `<li>${esc(clock(row.captured_at))} · ${esc(SOURCE_TEXT[row.source] || row.source)} · <b>${esc(row.name)}</b> <button type="button" class="evlink" data-activity-id="${esc(row.evidence_id)}">Xem event</button></li>`).join('')}</ul>` : '<p class="hint">Không có event Google / Insider nào trong khoảng này.</p>'}`;
+  }
+  async function loadApiCall(id) {
+    if (ui.apiCallDetails.has(id)) return;
+    ui.apiCallDetails.set(id, null);
+    try {
+      const response = await fetch(`/api/api-call?id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
+      const result = await response.json();
+      ui.apiCallDetails.set(id, response.ok ? result : { error: result.error || 'Không tải được lời gọi API.' });
+    } catch (error) { ui.apiCallDetails.set(id, { error: error.message }); }
+    const host = document.querySelector(`[data-api-detail="${CSS.escape(id)}"]`);
+    if (host) host.innerHTML = apiCallDetail(id);
+  }
+  function renderApiCalls(s) {
+    const info = s.apiCalls || { total: 0, failed: 0 };
+    setText('apicalls-count', String(info.total || 0));
+    if (ui.tab !== 'apicalls') return;
+    void refreshApiCalls();
+    const host = $('apicalls-list'); if (!host) return;
+    const sig = JSON.stringify([ui.apiCallsVersion, s.session?.id]); if (sig === ui.sig.apicalls) return; ui.sig.apicalls = sig;
+    const meta = ui.apiCallsMeta, off = s.session && s.session.api_log === false;
+    $('apicalls-summary').innerHTML = info.total ? `<div class="kv"><div><span>Lời gọi đã lưu</span><b>${info.total}</b></div><div><span>Lỗi (HTTP ≥ 400 / mạng)</span><b class="${info.failed ? 'text-fail' : ''}">${info.failed}</b></div><div><span>Đang hiện</span><b>${meta?.matched ?? 0}</b></div></div>` : '';
+    const open = new Set($$('#apicalls-list details[open]').map(item => item.dataset.apiCall));
+    const calls = ui.apiCalls || [];
+    host.innerHTML = calls.length ? calls.map(call => `<details class="api-prices" data-api-call="${esc(call.evidence_id)}"${open.has(call.evidence_id) ? ' open' : ''}><summary><small>${esc(clock(call.captured_at))}</small> <b>${esc(call.method)}</b> <code>${esc(call.path)}</code> <span class="pill ${call.ok ? 'PASS' : 'FAIL'}">${esc(call.error ? 'Lỗi mạng' : call.status ?? '—')}</span>${call.incomplete ? ' <span class="pill warn">Chưa xong</span>' : ''} <small class="hint">${esc(call.host)}${call.duration_ms != null ? ` · ${call.duration_ms} ms` : ''}${call.response_size ? ` · ${bytes(call.response_size)}` : ''}</small></summary><div data-api-detail="${esc(call.evidence_id)}">${open.has(call.evidence_id) ? apiCallDetail(call.evidence_id) : ''}</div></details>`).join('')
+      : `<div class="empty"><strong>${off ? 'Phiên này đã tắt Lưu API Request/Response' : info.total ? 'Không có lời gọi nào khớp bộ lọc' : 'Chưa có lời gọi API nào'}</strong>${off ? 'Bật lại ở bước 1 → Nâng cao rồi mở phiên mới.' : info.total ? 'Xoá ô tìm kiếm hoặc chọn “Tất cả”.' : `Thao tác trên website test: mọi lời gọi tới ${esc((meta?.patterns || s.apiCalls?.default_patterns || []).map(apiHostLabel).join(', '))} sẽ hiện ở đây.`}</div>`;
+    for (const id of open) if (!ui.apiCallDetails.has(id)) void loadApiCall(id);
+  }
+
   // ---- endpoints ----------------------------------------------------------
   function renderEndpoints(s) {
     const host = $('endpoints'); if (!host) return;
@@ -938,7 +1014,7 @@
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
     if (Date.now() < ui.holdUntil) { clearTimeout(ui.holdTimer); ui.holdTimer = setTimeout(render, ui.holdUntil - Date.now() + 50); }
-    else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderPrices(s); renderEndpoints(s); }
+    else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderPrices(s); renderApiCalls(s); renderEndpoints(s); }
     renderLog(s); renderReports(s);
     ui.hooks.render?.(s, phase, ui);
   }
@@ -948,13 +1024,14 @@
     ui.tab = name;
     for (const tab of $$('.tab')) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
     for (const panel of $$('.tabpanel')) panel.classList.toggle('hidden', panel.dataset.panel !== name);
-    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', prices: 'Giá so với API', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
+    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', prices: 'Giá so với API', apicalls: 'API Request/Response', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
     setText('board-title', names[name] || 'Event trực tiếp');
     for (const link of $$('[data-workspace-tab]')) {
       if (link.dataset.workspaceTab === name) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
     if (name === 'prices') { ui.sig.prices = null; render(); }
+    if (name === 'apicalls') { ui.sig.apicalls = null; render(); }
   }
 
   function toggleSetup(collapsed = !document.body.classList.contains('setup-collapsed')) {
@@ -977,7 +1054,7 @@
     let parsed; try { parsed = new URL(url); } catch { throw new Error('URL chưa hợp lệ. Ví dụ: www.website.vn hoặc https://www.website.vn/'); }
     $('url').value = parsed.toString();
     if (!/^https?:$/.test(parsed.protocol)) throw new Error('URL cần dùng http hoặc https.');
-    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, compareApi: $('compare-api')?.checked ?? true, endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
+    return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, compareApi: $('compare-api')?.checked ?? true, ...apiLogOptions(), endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
   }
   const actions = {
     start: async () => {
@@ -1129,6 +1206,25 @@
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
     $('firing-status')?.addEventListener('input', () => { ui.sig.firing = null; render(); });
     $('prices-status')?.addEventListener('input', () => { ui.sig.prices = null; render(); });
+    for (const id of ['apicalls-q', 'apicalls-status']) $(id)?.addEventListener('input', () => { ui.apiCallsVersion = null; render(); });
+    $('apicalls-list')?.addEventListener('toggle', event => {
+      const id = event.target.dataset?.apiCall; if (!id || !event.target.open) return;
+      const host = event.target.querySelector('[data-api-detail]');
+      if (host) host.innerHTML = apiCallDetail(id);
+      void loadApiCall(id);
+    }, true);
+    $('apicalls-list')?.addEventListener('click', event => run(async () => {
+      const copy = event.target.closest('[data-api-copy]'), download = event.target.closest('[data-api-download]');
+      const id = copy?.dataset.apiCopy ?? download?.dataset.apiDownload; if (!id) return;
+      const call = ui.apiCallDetails.get(id)?.call; if (!call) return;
+      if (copy) {
+        try { await navigator.clipboard.writeText(JSON.stringify(call, null, 2)); toast('Đã sao chép request/response.', 'ok'); }
+        catch { throw new Error('Trình duyệt chưa cho phép sao chép. Dùng nút Tải JSON.'); }
+      } else {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(call, null, 2)], { type: 'application/json' }));
+        const link = document.createElement('a'); link.href = url; link.download = `${id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    })());
     $('events')?.addEventListener('toggle', event => {
       const id = event.target.dataset?.ev; if (!id) return;
       if (event.target.open) { ui.openEvents.add(id); const host = event.target.querySelector(`[data-detail="${CSS.escape(id)}"]`); if (host && !host.innerHTML.trim()) host.innerHTML = detailContent(id); }
@@ -1140,6 +1236,8 @@
     $('vendors')?.addEventListener('change', saveSite);
     $('vendors-more')?.addEventListener('change', saveSite);
     $('compare-api')?.addEventListener('change', saveSite);
+    $('log-api')?.addEventListener('change', saveSite);
+    $('api-patterns')?.addEventListener('change', saveSite);
     $('patterns')?.addEventListener('change', saveSite);
   }
 
