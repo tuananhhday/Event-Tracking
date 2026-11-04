@@ -40,7 +40,7 @@
   // Where a specification row comes from: Excel sheet!row, or "Nhập tay" for an event typed in the app.
   const whereSpec = (sheet, row) => row == null || row === '' ? String(sheet ?? '') : `${sheet ?? ''}!${row}`;
   const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
-  const FILE_TEXT = { xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Xem nhanh trên trình duyệt'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'] };
+  const FILE_TEXT = { xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Bảng đối chiếu có lọc và xem chi tiết'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'], api_html: ['API · HTML', 'Toàn bộ API và chi tiết trong một file'], api_json: ['API · JSON', 'Request/response của phiên'], api_xlsx: ['API · Excel', 'Danh sách và trường chi tiết'], tp2_html: ['TP2 ↔ API · HTML', 'Dữ liệu giải mã và đối chiếu'], tp2_json: ['TP2 ↔ API · JSON', 'Dữ liệu giải mã và đối chiếu'], tp2_xlsx: ['TP2 ↔ API · Excel', 'Dữ liệu giải mã và đối chiếu'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
@@ -276,9 +276,9 @@
     }[phase];
     primary.textContent = ui.busy ? 'Đang xử lý…' : action[0]; primary.dataset.action = action[1] || ''; primary.className = `btn ${action[2]}`;
     primary.disabled = !!ui.busy || !action[1] || (action[1] === 'step-start' && !ui.selectedCase);
-    const second = { running: ['Kết thúc & xuất', 'finish'], recording: ['Dừng phiên', 'stop-session'] }[phase];
+    const second = { running: ['Kết thúc', 'finish-only'], recording: ['Kết thúc', 'finish-only'] }[phase];
     secondary.classList.toggle('hidden', !second);
-    if (second) { secondary.textContent = second[0]; secondary.dataset.action = second[1]; secondary.disabled = !!ui.busy && second[1] !== 'stop-session'; }
+    if (second) { secondary.textContent = second[0]; secondary.dataset.action = second[1]; secondary.disabled = ui.busy === 'finish-only' || !!ui.state?.closing; }
   }
   function tickTimers() { for (const el of $$('[data-elapsed]')) el.textContent = duration(Date.now() - Date.parse(el.dataset.elapsed)); }
 
@@ -992,7 +992,7 @@
     set('start', s.running || busy || s.closing); set('import', !!s.currentStep || (s.running && s.steps?.length > 0) || busy);
     set('save-case', !!s.currentStep || busy); set('delete-case', !!s.currentStep || busy || !ui.selectedCase);
     set('step-start', !s.running || !!s.currentStep || busy || !ui.selectedCase); set('step-complete', !s.currentStep || busy);
-    set('finish', !s.running || !!s.currentStep || busy); set('export', !s.session || busy); set('stop-session', !s.running || s.closing);
+    set('finish', !s.running || ui.busy === 'finish-only' || s.closing); set('finish-export', !s.running || !!s.currentStep || busy); set('export', !s.session || busy); set('stop-session', !s.running || s.closing);
     $('apply-endpoints')?.classList.toggle('hidden', !s.running);
     $('recorder')?.classList.toggle('hidden', phase !== 'recording');
     $('step-idle')?.classList.toggle('hidden', phase === 'recording');
@@ -1024,7 +1024,7 @@
     ui.tab = name;
     for (const tab of $$('.tab')) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
     for (const panel of $$('.tabpanel')) panel.classList.toggle('hidden', panel.dataset.panel !== name);
-    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', prices: 'Giá so với API', apicalls: 'API Request/Response', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
+    const names = { events: 'Event trực tiếp', spec: 'Đối chiếu đặc tả', results: 'Kết quả kiểm tra', firing: 'Kiểm tra cách bắn', prices: 'Giá so với API', apicalls: 'API Request/Response', tp2: 'TP2 ↔ API', endpoints: 'Endpoint tracking', log: 'Nhật ký phiên' };
     setText('board-title', names[name] || 'Event trực tiếp');
     for (const link of $$('[data-workspace-tab]')) {
       if (link.dataset.workspaceTab === name) link.setAttribute('aria-current', 'page');
@@ -1090,6 +1090,7 @@
       resetSelection(); setStage('session', true); toast('Đã chọn trang demo nội bộ và 3 case mẫu.', 'ok');
     },
     finish: async () => {
+      if (window.EventQAExports) return window.EventQAExports.open(true);
       const aiNotes = $('report-ai-notes')?.checked !== false;
       toast(aiNotes && ui.state?.ai?.enabled ? 'Đang kết thúc phiên và tạo báo cáo kèm nhận xét AI…' : 'Đang kết thúc phiên và xuất báo cáo…');
       await api('finish', { aiNotes }, 'finish'); toast('Đã kết thúc phiên và xuất báo cáo.', 'ok');
@@ -1103,10 +1104,12 @@
       toast(`Đã thêm ${added.event_name} vào đặc tả. Event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
     },
     export: async () => {
+      if (window.EventQAExports) return window.EventQAExports.open(false);
       const aiNotes = $('report-ai-notes')?.checked !== false;
       toast(aiNotes && ui.state?.ai?.enabled ? 'Đang tạo báo cáo kèm nhận xét AI…' : 'Đang xuất báo cáo…');
       await api('export', { aiNotes }, 'export'); toast('Đã xuất báo cáo hiện tại.', 'ok');
     },
+    'finish-only': async () => { await api('finish', { exportReport: false, aiNotes: false }, 'finish-only'); toast('Đã kết thúc và lưu bằng chứng. Chưa tạo báo cáo.', 'ok'); },
     'stop-session': async () => {
       if (ui.state?.currentStep && !confirm('Bước đang ghi sẽ được giữ REVIEW. Dừng phiên?')) return;
       await api('stop-session', {}, 'stop-session'); toast('Đã dừng phiên và lưu bằng chứng.');

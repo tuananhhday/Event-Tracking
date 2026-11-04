@@ -217,6 +217,10 @@ Tab **Luồng tự động** nhận hướng dẫn TXT/Markdown hoặc kịch b�
 - Chế độ `auto` thử model miễn phí trước, sau đó model trả phí rẻ nhất trong giới hạn: tối đa 6 model/tác vụ (2 free trước), giá input ≤0,25 USD/triệu token, output ≤1 USD/triệu token, ngân sách ≤0,01 USD/tác vụ. `OPENROUTER_ALLOW_PAID=false` để chỉ dùng free. Key sai/hết credit chuyển sang key dự phòng trong `OPENROUTER_API_KEYS`.
 - Các endpoint ngoài GA4/Insider cần thêm regex ở ô **Endpoint bổ sung**. Regex đối chiếu `hostname + pathname`, không đối chiếu query. Payload không hỗ trợ chỉ giữ `UNPARSED`, hash và lý do; không suy đoán mã hóa.
 
+## TP2 và xuất riêng API
+
+Tab **TP2 ↔ API** tự bắt request `/tp2`, giải mã `ue_px` Base64 thành JSON và đối chiếu các trường với request/response API theo cấu hình đã lưu. Không cần AI cho các thao tác này. Nút **Kết thúc** lưu bằng chứng mà không xuất file; **Kết thúc & xuất…** và **Xuất báo cáo…** cho chọn riêng Event, TP2 hoặc API, định dạng HTML/Excel/JSON. HTML mở offline, có tìm kiếm, phân trang, xem chi tiết và chỉnh cột như bảng Excel. Xem [hướng dẫn và ví dụ cấu hình](docs/TP2_AND_EXPORT.md).
+
 ## Kiểm chứng
 
 ```powershell
@@ -227,6 +231,7 @@ node src/cli.mjs demo --failure
 node scripts/local-smoke.mjs
 npm.cmd run smoke:checkout
 npm.cmd run smoke:ai
+npm.cmd run smoke:inspection
 ```
 
 Unit tests không gửi request ra ngoài. `scripts/local-smoke.mjs` chạy Chrome thật với website demo localhost và tạo screenshot/báo cáo. Có thể chọn Edge bằng biến môi trường `EVENTQA_SMOKE_BROWSER=edge`. `smoke:checkout` bấm nút đặt hàng thật trên trang localhost và xác nhận collector không gọi getter/`toJSON` của website và không làm treo thao tác. Smoke Trip thật là tùy chọn `EVENTQA_LIVE_CDP=1` khi chạy `tests/cdp-live.test.mjs`.

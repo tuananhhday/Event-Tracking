@@ -22,13 +22,17 @@ import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/laun
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
 import { AutomationController } from './automation/controller.mjs';
+import { TP2_ENDPOINTS } from './core/tp2.mjs';
+import { Tp2MappingStore, compareTp2Event, tp2Events, fieldPaths } from './core/tp2-compare.mjs';
+import { exportSelection, normalizeSelection } from './report/selection.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
 const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), 'utf8');
 // Each mode has its own screen; styling and client logic are shared assets.
 const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html' };
 const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'],
-  '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'] };
+  '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'],
+  '/assets/inspection.css': ['shared/inspection.css', 'text/css; charset=utf-8'], '/assets/inspection.js': ['shared/inspection.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Smoke tests only: run the test browser without a window.
@@ -86,6 +90,33 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     catch { cases = []; specSource = 'none'; }
   } else cases = await loadDemoCases();
   const manager = new SessionManager({ mode, runsDir, cases });
+  const tp2Mappings = new Tp2MappingStore(path.join(runsDir, '.settings', `tp2-${mode}.json`));
+  await tp2Mappings.load();
+  const apiBodyCache = new Map(), tp2ComparisonCache = new Map();
+  function apiBody(id) {
+    if (!apiBodyCache.has(id)) { apiBodyCache.set(id, manager.apiCall(id)); if (apiBodyCache.size > 30) apiBodyCache.delete(apiBodyCache.keys().next().value); }
+    return apiBodyCache.get(id);
+  }
+  function tp2State({ id, apiId, mappingId, q = '', status: outcome = '', page = 0 } = {}) {
+    const snapshot = manager.snapshot(), all = tp2Events(snapshot.events), mappings = tp2Mappings.list();
+    const version = JSON.stringify([snapshot.session?.id, snapshot.events.length, snapshot.apiCalls.length, mappings]);
+    const compare = event => {
+      const key = `${version}|${event.evidence_id}|${apiId || ''}|${mappingId || ''}`;
+      if (!tp2ComparisonCache.has(key)) { tp2ComparisonCache.set(key, compareTp2Event(event, snapshot.apiCalls, apiBody, mappings, { apiId, mappingId })); if (tp2ComparisonCache.size > 500) tp2ComparisonCache.delete(tp2ComparisonCache.keys().next().value); }
+      return tp2ComparisonCache.get(key);
+    };
+    if (id) {
+      const event = all.find(item => item.evidence_id === id); if (!event) return null;
+      const comparison = compare(event), api = comparison.api ? apiBody(comparison.api.evidence_id) : apiId ? apiBody(apiId) : null;
+      return { event, comparison, api, event_paths: fieldPaths(event.payload), api_paths: fieldPaths(api?.response?.body?.json ?? {}) };
+    }
+    const responses = new Map();
+    for (const item of snapshot.events) if (item.network?.request_id && item.network.phase === 'response') responses.set(`${item.page?.target_id ?? ''}|${item.network.request_id}`, item.network.status);
+    const rows = all.map(event => ({ ...compare(event), http_status: responses.get(`${event.page?.target_id ?? ''}|${event.network?.request_id}`) ?? event.network?.status }));
+    const filtered = rows.filter(row => (!outcome || row.status === outcome) && (!q || `${row.event_name} ${row.schema} ${row.page?.url}`.toLowerCase().includes(q.toLowerCase()))).reverse();
+    return { session_id: snapshot.session?.id, mappings, total: rows.length, matched: filtered.length, page, events: filtered.slice(page * 100, (page + 1) * 100),
+      summary: Object.fromEntries([...new Set(rows.map(row => row.status))].map(status => [status, rows.filter(row => row.status === status).length])), apis: snapshot.apiCalls.slice(-500).reverse() };
+  }
   let activePatterns = [...DEFAULT_ENDPOINT_PATTERNS], navigationError = null;
   // Firing checks over all evidence; recomputed only when evidence grows.
   let firingCache = { count: -1, result: null };
@@ -128,7 +159,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   };
   const statuses = []; let collector = null, browserHandle = null, testPage = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
-  let reportNotesCache = null, reportNotesController = null, reportExportTask = null, reportWriteTask = null;
+  let reportNotesCache = null, reportNotesController = null, reportExportTask = null, reportWriteTask = null, reportExportEpoch = 0;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let ai = aiClient ?? new OpenRouterClient();
   const state = ({ compact = false } = {}) => {
@@ -236,23 +267,24 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     if (complete && value) reportNotesCache = { client, key, value };
     return value;
   }
-  async function exportWithNotes(snapshot, { aiNotes = true } = {}) {
-    const epoch = captureEpoch, controller = new AbortController();
+  async function exportWithNotes(snapshot, { aiNotes = true, selection } = {}) {
+    if (selection) selection = normalizeSelection(selection);
+    const epoch = captureEpoch, exportEpoch = reportExportEpoch, controller = new AbortController();
     const pending = (async () => {
-      const prepared = prepareReportData(snapshot);
+      const prepared = !selection || selection.contents.includes('events') ? prepareReportData(snapshot) : null;
       reportNotesController = controller;
       let onAbort;
       const cancelled = new Promise(resolve => { onAbort = () => resolve(null); controller.signal.addEventListener('abort', onAbort, { once: true }); });
       let reportNotes;
-      try { reportNotes = aiNotes ? await bounded(Promise.race([aiReportNotes(snapshot, prepared.report, controller.signal), cancelled]), 150000).catch(() => null) : null; }
+      try { reportNotes = aiNotes && prepared ? await bounded(Promise.race([aiReportNotes(snapshot, prepared.report, controller.signal), cancelled]), 150000).catch(() => null) : null; }
       finally {
         controller.signal.removeEventListener('abort', onAbort);
         controller.abort();
         if (reportNotesController === controller) reportNotesController = null;
       }
       // A stopped live export must not overwrite the final report with its earlier snapshot.
-      if (epoch !== captureEpoch) return null;
-      await writeReports({ ...snapshot, api_calls: manager.apiCallRecords(), ...(reportNotes ? { report_notes: reportNotes } : {}) }, { prepared });
+      if (epoch !== captureEpoch || exportEpoch !== reportExportEpoch) return null;
+      await writeReports({ ...snapshot, api_calls: manager.apiCallRecords(), ...(reportNotes ? { report_notes: reportNotes } : {}) }, { prepared, selection });
       return reportNotes;
     })();
     reportExportTask = pending;
@@ -264,9 +296,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const pending = (async () => {
       // Stop can bypass an active export request; finish writing that snapshot before the final one.
       if (previous) await previous.catch(() => {});
-      const files = await exportReports(snapshot, outputDir, options);
+      const files = options?.selection ? await exportSelection(snapshot, outputDir, options.selection, { prepared: options.prepared, tp2Mappings: tp2Mappings.list() }) : await exportReports(snapshot, outputDir, options);
       const workflowResults = path.join(outputDir, 'workflow-results.json');
-      if (await fs.stat(workflowResults).then(stat => stat.isFile()).catch(() => false)) files.automation = workflowResults;
+      if ((!options?.selection || options.selection.contents.includes('events')) && await fs.stat(workflowResults).then(stat => stat.isFile()).catch(() => false)) files.automation = workflowResults;
       exported = files;
       return files;
     })();
@@ -320,6 +352,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const browser = data.browser === 'edge' ? 'edge' : 'chrome';
     const debugPort = Number(data.debugPort || ({ cdp: 9222, 'cdp-ai': 9223 }[mode]));
     const endpointPatterns = Array.isArray(data.endpointPatterns) ? data.endpointPatterns.filter(pattern => typeof pattern === 'string' && pattern.length < 500) : [...DEFAULT_ENDPOINT_PATTERNS];
+    for (const pattern of TP2_ENDPOINTS) if (!endpointPatterns.includes(pattern)) endpointPatterns.push(pattern);
     if (targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') endpointPatterns.push('/demo/g/collect', '/demo/insider/events');
     activePatterns = endpointPatterns;
     navigationError = null;
@@ -329,7 +362,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     }
     const captureQueues = data.captureQueues !== false, compareApi = data.compareApi !== false, logApi = data.logApi !== false;
     const logPatterns = logApi ? apiLogPatterns(data.apiLogPatterns) : [];
+    if (logApi && targetUrl.hostname === '127.0.0.1' && targetUrl.pathname === '/demo') logPatterns.push('/demo/api/');
     manager.start({ browser, environment: targetUrl.origin, target_url: targetUrl.toString(), capture_queues: captureQueues, compare_api: compareApi, api_log: logApi, api_log_patterns: logPatterns }); exported = null;
+    apiBodyCache.clear(); tp2ComparisonCache.clear();
     firingCache = { count: -1, result: null }; linkCache = { count: -1, links: null }; priceCache = { key: '', result: null }; coverageCases = null; coverageCache.clear();
     const epoch = ++captureEpoch, emit = event => epoch === captureEpoch ? manager.emit(event) : null;
     try {
@@ -381,7 +416,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
       }
       await releaseBrowser();
-      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : exportReport ? 'Đã kết thúc và lưu báo cáo.' : 'Đã kết thúc phiên; đang xuất báo cáo.');
+      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : exportReport ? 'Đã kết thúc và lưu báo cáo.' : 'Đã kết thúc phiên; bằng chứng đã lưu.');
       return { snapshot, files: exported, interrupted };
     })();
     stoppingSession = pending;
@@ -433,15 +468,21 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const addresses = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
       if (!addresses.has(req.headers.host)) return send(res, 403, { error: 'Localhost Host header required.' });
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
-      if (req.method === 'GET' && url.pathname === '/') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
+      if (req.method === 'GET' && url.pathname === '/') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replace('__INSPECTION__', await readWeb('shared/inspection.html')).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
       if (req.method === 'GET' && ASSETS[url.pathname]) return send(res, 200, await readWeb(ASSETS[url.pathname][0]), ASSETS[url.pathname][1]);
       if (req.method === 'GET' && url.pathname === '/demo') return send(res, 200, await readWeb('demo.html'), 'text/html; charset=utf-8');
       // The demo product API whose price the demo page's tracking is checked against.
       if (req.method === 'GET' && url.pathname.startsWith('/demo/api/products/')) return send(res, 200, { data: { id: decodeURIComponent(url.pathname.slice('/demo/api/products/'.length)), name: 'Phòng Deluxe hướng biển', currency: 'VND', price: 1000000, originalPrice: 1200000 } });
-      if (req.method === 'POST' && ['/demo/g/collect', '/demo/insider/events'].includes(url.pathname)) {
+      if (req.method === 'POST' && ['/demo/g/collect', '/demo/insider/events', '/demo/tp2'].includes(url.pathname)) {
         await bodyForDiscard(req); res.writeHead(204); return res.end();
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, state({ compact: url.searchParams.get('compact') === '1' }));
+      if (req.method === 'GET' && url.pathname === '/api/tp2') return send(res, 200, tp2State({ q: (url.searchParams.get('q') || '').slice(0, 200), status: url.searchParams.get('status') || '', page: Math.max(0, Math.min(10000, Number(url.searchParams.get('page')) || 0)) }));
+      if (req.method === 'GET' && url.pathname === '/api/tp2/detail') {
+        if (!url.searchParams.get('id')) return send(res, 400, { error: 'Chọn một event TP2 để xem chi tiết.' });
+        const detail = tp2State({ id: url.searchParams.get('id'), apiId: url.searchParams.get('api_id'), mappingId: url.searchParams.get('mapping_id') });
+        return detail ? send(res, 200, detail) : send(res, 404, { error: 'Không tìm thấy event TP2.' });
+      }
       if (req.method === 'GET' && url.pathname === '/api/automation/state') return automation
         ? send(res, 200, automation.state()) : send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
       if (req.method === 'GET' && url.pathname === '/api/activity') {
@@ -530,13 +571,28 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         automation.cancel(); reportNotesController?.abort();
         return send(res, 200, automation.state());
       }
+      const finishData = url.pathname === '/api/finish' ? await body(req) : null;
+      if (finishData?.exportReport === false) {
+        reportExportEpoch++;
+        if (automation?.busy) { automation.cancel({ exportReport: false }); reportNotesController?.abort(); await automation.wait(); }
+        else {
+          if (!manager.session) throw new Error('Chưa có phiên đang chạy.');
+          await stopSession({ exportReport: false });
+        }
+        exported = null; status('Đã kết thúc phiên và lưu bằng chứng. Có thể xuất báo cáo sau.');
+        return send(res, 200, state());
+      }
+      if (finishData && automation?.busy) return send(res, 409, { error: 'Luồng tự động đang chạy; dùng Kết thúc để dừng trước khi xuất.' });
       if (closing || stoppingSession) return send(res, 503, { error: 'Ứng dụng đang dừng; bằng chứng đang được lưu.' });
-      if (automation?.busy && !['/api/export', '/api/ai-review', '/api/ai-explain-event'].includes(url.pathname)) return send(res, 409, { error: 'Luồng tự động đang chạy. Dừng luồng trước khi thay đổi phiên hoặc kịch bản.' });
+      if (automation?.busy && !['/api/export', '/api/ai-review', '/api/ai-explain-event', '/api/tp2/mapping'].includes(url.pathname)) return send(res, 409, { error: 'Luồng tự động đang chạy. Dừng luồng trước khi thay đổi phiên hoặc kịch bản.' });
       if (mutating) return send(res, 409, { error: 'Đang xử lý thao tác trước.' });
       mutating = true;
       try {
-        const data = await body(req);
-        if (url.pathname.startsWith('/api/automation/')) {
+        const data = finishData ?? await body(req);
+        if (url.pathname === '/api/tp2/mapping') {
+          if (data.deleteId) await tp2Mappings.delete(String(data.deleteId)); else await tp2Mappings.save(data.mapping);
+          tp2ComparisonCache.clear(); return send(res, 200, tp2State());
+        } else if (url.pathname.startsWith('/api/automation/')) {
           if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
           const action = url.pathname.slice('/api/automation/'.length);
           if (action === 'inspect') return send(res, 200, await automation.inspect(data));
@@ -606,8 +662,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           const patterns = Array.isArray(data.patterns) ? data.patterns.filter(p => typeof p === 'string' && p.length && p.length < 500) : null;
           if (!patterns?.length) throw new Error('Cần ít nhất một endpoint.');
           for (const pattern of patterns) { try { new RegExp(pattern, 'i'); } catch { throw new Error(`Regex endpoint không hợp lệ: ${pattern}`); } }
-          activePatterns = patterns; collector?.setPatterns?.(patterns);
-          status(`Allowlist: ${patterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
+          activePatterns = [...new Set([...patterns, ...TP2_ENDPOINTS])]; collector?.setPatterns?.(activePatterns);
+          status(`Allowlist: ${activePatterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
         } else if (url.pathname === '/api/start') {
           await startCapture(data);
         } else if (url.pathname === '/api/step/start') {
@@ -627,13 +683,14 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           }
         } else if (url.pathname === '/api/finish') {
           if (!manager.session || manager.session.status !== 'RUNNING') throw new Error('Chưa có phiên đang chạy.');
+          const selection = data.selection ? normalizeSelection(data.selection) : undefined;
           if (manager.currentStep) throw new Error('Hoàn tất bước hiện tại trước.');
           await stopSession({ exportReport: false });
-          if (await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false })) status('AI đã viết cột nhận xét của sheet Báo cáo event.');
-          status(`Đã xuất report tại ${manager.runDir}`);
+          if (await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false, selection })) status('AI đã viết cột nhận xét của sheet Báo cáo event.');
+          if (exported) status(`Đã xuất report tại ${manager.runDir}`);
         } else if (url.pathname === '/api/export') {
           if (!manager.session) throw new Error('Chưa có phiên.');
-          status(await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false }) ? 'Đã xuất report hiện tại; AI đã viết cột nhận xét của sheet Báo cáo event.' : 'Đã xuất report hiện tại.');
+          status(await exportWithNotes(manager.snapshot(), { aiNotes: data.aiNotes !== false, selection: data.selection }) ? 'Đã xuất report hiện tại; AI đã viết cột nhận xét của sheet Báo cáo event.' : 'Đã xuất report hiện tại.');
         } else if (url.pathname === '/api/ai-key') {
           if (mode !== 'cdp-ai') throw new Error('Chức năng AI chỉ có trong bản AI.');
           const key = String(data.key ?? '').trim();

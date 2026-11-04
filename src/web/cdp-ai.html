@@ -6,6 +6,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d4fd8'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,sans-serif' font-size='15' font-weight='700' fill='white' text-anchor='middle'%3E02%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/assets/eventqa.css">
 <link rel="stylesheet" href="/assets/automation.css">
+<link rel="stylesheet" href="/assets/inspection.css">
 </head>
 <body data-mode="cdp-ai">
 <nav class="app-rail" aria-label="Điều hướng chính"><a class="rail-logo" href="http://127.0.0.1:4172/" title="Chọn chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 13 4-7 4 12 4-12 4 7"/></svg></a><span class="rail-divider"></span><button type="button" data-workspace-tab="events" title="Event trực tiếp" aria-label="Event trực tiếp" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Event</span></button><button type="button" data-workspace-tab="spec" title="Đối chiếu đặc tả" aria-label="Đối chiếu đặc tả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>Đặc tả</span></button><button type="button" data-workspace-tab="results" title="Kết quả" aria-label="Kết quả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg><span>Kết quả</span></button><button type="button" data-setup-stage="report" title="Xuất báo cáo" aria-label="Xuất báo cáo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><span>Xuất</span></button><div class="rail-bottom"><button type="button" data-setup-stage="session" title="Thiết lập phiên" aria-label="Thiết lập phiên"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button><a href="http://127.0.0.1:4172/" title="Đổi chế độ" aria-label="Đổi chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a></div></nav>
@@ -139,8 +140,7 @@
       <div class="stage-body">
         <label class="check"><input id="report-ai-notes" type="checkbox" checked> Kèm nhận xét AI khi xuất</label>
         <p class="hint">Bỏ chọn để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo.</p>
-        <div class="row"><button type="button" class="btn primary" id="finish" data-action="finish">Kết thúc &amp; xuất</button><button type="button" class="btn" id="export" data-action="export">Xuất bản hiện tại</button></div>
-        <button type="button" class="btn ghost" id="stop-session" data-action="stop-session" style="margin-top:6px">Dừng phiên ngay (giữ bước đang ghi là REVIEW)</button>
+        <div class="row"><button type="button" class="btn primary" id="finish" data-action="finish-only">Kết thúc</button><button type="button" class="btn" id="finish-export" data-action="finish">Kết thúc &amp; xuất…</button><button type="button" class="btn" id="export" data-action="export">Xuất báo cáo…</button></div>
         <div id="downloads" class="downloads"></div>
         <p id="run-dir" class="hint"></p>
         <p class="hint">Báo cáo vẫn xuất được khi chưa có rule: toàn bộ event thu thập nằm trong sheet Actual Events. HTTP thành công chỉ là bằng chứng tầng request.</p>
@@ -168,6 +168,7 @@
         <button type="button" class="tab" role="tab" data-tab="firing">Kiểm tra cách bắn <span id="firing-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="prices">Giá vs API <span id="prices-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="apicalls">API <span id="apicalls-count" class="count">0</span></button>
+        <button type="button" class="tab" role="tab" data-tab="tp2">TP2 ↔ API <span id="tp2-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="results">Kết quả <span id="results-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="endpoints">Endpoint <span id="endpoints-count" class="count">0</span></button>
         <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
@@ -228,6 +229,7 @@
         <div id="apicalls-list"></div>
       </div>
       <div class="tabpanel hidden" data-panel="results"><div id="results"></div></div>
+      <div class="tabpanel hidden" data-panel="tp2"><div id="tp2-panel"></div></div>
       <div class="tabpanel hidden" data-panel="endpoints"><div id="endpoints"></div></div>
       <div class="tabpanel hidden" data-panel="ai">
         <div id="ai-status" class="ai-status" role="status"></div>
@@ -297,6 +299,7 @@
             <details class="more hidden" id="automation-page-details"><summary>Thông tin trang đã quan sát</summary><pre id="automation-page-preview" class="automation-page-preview"></pre></details>
             <div class="automation-preview-card"><div class="automation-section-head"><h3>Các bước sẽ thực hiện</h3><span id="automation-step-count" class="hint"></span></div><div id="automation-preview"><p class="hint">Kịch bản xuất hiện ở đây sau khi tạo bằng AI hoặc nạp JSON.</p></div></div>
             <details class="more automation-advanced" id="automation-advanced"><summary>Xem / chỉnh kịch bản JSON</summary><label for="automation-json">Kịch bản</label><textarea id="automation-json" class="code" rows="12" spellcheck="false" placeholder='{"name":"Luồng của tôi","url":"https://...","steps":[]}'></textarea><label for="automation-variables">Giá trị dùng lại trong luồng (JSON)</label><textarea id="automation-variables" class="code" rows="3" spellcheck="false">{}</textarea><p class="hint">Trong các bước, dùng {{destination}} để lấy giá trị destination, hoặc {{date:+7}} để lấy ngày sau 7 ngày.</p></details>
+            <label class="check"><input type="checkbox" id="automation-export-report" checked> Xuất báo cáo khi chạy xong</label>
             <div class="automation-schedule"><label class="check"><input type="checkbox" id="automation-schedule-enabled"> Bật lịch tự chạy</label><div><label for="automation-schedule-time">Giờ chạy tại Việt Nam</label><input id="automation-schedule-time" type="time" value="07:00"></div></div>
             <p class="hint automation-schedule-hint">Mặc định chạy hằng ngày. Lịch chỉ bật khi bạn chọn và lưu. Giữ ứng dụng mở và máy hoạt động vào giờ chạy.</p>
             <div class="automation-actions automation-save-actions"><button type="button" class="btn primary" id="automation-save" data-auto-idle disabled>Lưu luồng</button><button type="button" class="btn" id="automation-run-current" data-auto-idle disabled>Chạy luồng này</button><span id="automation-save-state" class="hint">Xem lại các bước trước khi lưu.</span></div>
@@ -492,5 +495,7 @@ EventQA.boot({ token, mode: 'cdp-ai', hooks: {
 </script>
 <script src="/assets/automation.js"></script>
 
+__INSPECTION__
+<script src="/assets/inspection.js"></script>
 </body>
 </html>

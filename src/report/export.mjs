@@ -10,6 +10,8 @@ import { activityEntries } from '../core/activity.mjs';
 import { priceChecks } from '../core/api-prices.mjs';
 import { eventReportRows, REPORT_LABEL } from './event-report.mjs';
 import { bodyText } from '../core/api-log.mjs';
+import { renderHtmlReport } from './html.mjs';
+import { eventSections } from './models.mjs';
 
 const json = value => value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value);
 const safe = value => {
@@ -129,7 +131,7 @@ export function prepareReportData({ cases = [], events = [], api = [] } = {}) {
   return { links, now, coverage, firing, entries, priced, report };
 }
 
-export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir, { prepared } = {}) {
+export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir, { prepared, formats, htmlSettings = {} } = {}) {
   const { links, now, coverage, firing, priced, report } = prepared ?? prepareReportData({ cases, events, api });
   const notes = reportNotes?.notes ?? {}, byAi = report.some(row => notes[row.key]);
   const delivery = new Map(events.map(event => [event.evidence_id, DELIVERY_LABEL[deliveryStatus(event, links, now)] ?? '']));
@@ -137,6 +139,20 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   const directory = path.resolve(outputDir);
   await fs.mkdir(directory, { recursive: true });
   const paths = { xlsx: path.join(directory, 'report.xlsx'), html: path.join(directory, 'report.html'), json: path.join(directory, 'comparison.json'), bugs: path.join(directory, 'bugs.md') };
+  const wanted = formats ?? ['xlsx', 'html', 'json', 'bugs'];
+  const tallies = Object.fromEntries(['PASS', 'FAIL', 'REVIEW', 'NOT_EXECUTED'].map(verdict => [verdict, results.filter(result => result.verdict === verdict).length]));
+  const comparisons = [];
+  const bugs = [];
+  for (const result of results) {
+    const testCase = cases.find(candidate => candidate.id === result.test_case_id);
+    if (!result.results?.length) comparisons.push([result.test_case_id, result.step_id, '', '', '', '', '', result.verdict, 'Step was not executed', '']);
+    for (const eventResult of result.results ?? []) {
+      if (!eventResult.checks?.length) comparisons.push([result.test_case_id, result.step_id, eventResult.event_name, eventResult.layer, '', '', '', eventResult.verdict, '', (eventResult.evidence_ids ?? []).join(', ')]);
+      for (const check of eventResult.checks ?? []) comparisons.push([result.test_case_id, result.step_id, eventResult.event_name, eventResult.layer, check.path ?? '', check.expected, check.actual, check.verdict, check.code ?? '', check.evidence_id]);
+      for (const issue of eventResult.issues ?? []) if (result.verdict === 'FAIL' && eventResult.verdict === 'FAIL' && issue.verdict !== 'REVIEW') bugs.push({ test_case_id: result.test_case_id, step_id: result.step_id, flow: testCase?.flow, event_name: eventResult.event_name, layer: eventResult.layer, source: eventResult.source, ...issue, ai_note: eventResult.ai_note ?? result.ai_note });
+    }
+  }
+  if (wanted.includes('xlsx')) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Event Tracking QA';
   workbook.created = new Date();
@@ -144,7 +160,6 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   const reportSheet = addSheet(workbook, 'Báo cáo event', ['STT', 'Nền tảng', 'Luồng', 'Tên event', 'Event mong muốn', 'Event thực tế (GA4)', 'Event thực tế (Insider)', byAi ? 'Nhận xét của AI' : 'Nhận xét'],
     report.map(row => [row.stt, row.platform, row.flow, row.event_name, row.expected, row.actual_ga4, row.actual_insider, `[${REPORT_LABEL[row.status]}] ${notes[row.key] ?? row.comment}`]), [6, 11, 18, 26, 55, 55, 55, 60]);
   report.forEach((row, index) => { reportSheet.getRow(index + 2).getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_FILL[row.status] ?? 'FFFFFF' } }; });
-  const tallies = Object.fromEntries(['PASS', 'FAIL', 'REVIEW', 'NOT_EXECUTED'].map(verdict => [verdict, results.filter(result => result.verdict === verdict).length]));
   addSheet(workbook, 'Run Summary', ['Metric', 'Value'], [
     ['Session', session.id ?? session.session_id], ['Mode', session.mode], ['Started', session.started_at], ['Completed', session.completed_at],
     ['Test cases', cases.length], ['Steps', steps.length], ['Evidence records', events.length], ...Object.entries(tallies),
@@ -175,24 +190,12 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   addSheet(workbook, 'Test Cases', ['ID', 'Name', 'Source', 'Flow', 'Description', 'Needs review', 'File', 'Sheet', 'Row'], cases.map(testCase => [testCase.id, testCase.name, testCase.source, testCase.flow, testCase.description, Boolean(testCase.needs_review), testCase.provenance?.file, testCase.provenance?.sheet, testCase.provenance?.row]), [35, 40, 16, 22, 65, 16, 55, 30, 10]);
   addSheet(workbook, 'Expected Events', ['Test case', 'Event', 'Layer', 'Source', 'Count', 'Timing ms', 'After', 'Field rules', 'Needs review'], cases.flatMap(testCase => testCase.rules.map(rule => [testCase.id, rule.event_name, rule.layer, rule.source ?? testCase.source, rule.count, rule.within_ms, rule.after, rule.fields, Boolean(rule.needs_review)])), [35, 30, 24, 16, 24, 16, 28, 95, 16]);
   addSheet(workbook, 'Actual Events', ['Evidence ID', 'Captured at', 'Test case', 'Step', 'Event', 'Layer', 'Source', 'Gửi lên server', 'Page', 'Payload', 'Network'], events.map(event => [event.evidence_id, event.captured_at, event.test_case_id, event.step_id, event.event_name, event.layer, event.source, delivery.get(event.evidence_id), event.page?.url, event.payload, event.network]), [30, 30, 35, 30, 30, 24, 16, 22, 60, 100, 80]);
-  const comparisons = [];
-  const bugs = [];
-  for (const result of results) {
-    const testCase = cases.find(candidate => candidate.id === result.test_case_id);
-    if (!result.results?.length) comparisons.push([result.test_case_id, result.step_id, '', '', '', '', '', result.verdict, 'Step was not executed', '']);
-    for (const eventResult of result.results ?? []) {
-      if (!eventResult.checks?.length) comparisons.push([result.test_case_id, result.step_id, eventResult.event_name, eventResult.layer, '', '', '', eventResult.verdict, '', (eventResult.evidence_ids ?? []).join(', ')]);
-      for (const check of eventResult.checks ?? []) comparisons.push([result.test_case_id, result.step_id, eventResult.event_name, eventResult.layer, check.path ?? '', check.expected, check.actual, check.verdict, check.code ?? '', check.evidence_id]);
-      for (const issue of eventResult.issues ?? []) if (result.verdict === 'FAIL' && eventResult.verdict === 'FAIL' && issue.verdict !== 'REVIEW') bugs.push({ test_case_id: result.test_case_id, step_id: result.step_id, flow: testCase?.flow, event_name: eventResult.event_name, layer: eventResult.layer, source: eventResult.source, ...issue, ai_note: eventResult.ai_note ?? result.ai_note });
-    }
-  }
   addSheet(workbook, 'Comparison', ['Test case', 'Step', 'Event', 'Layer', 'Field', 'Expected', 'Actual', 'Verdict', 'Issue', 'Evidence ID'], comparisons, [35, 30, 30, 24, 35, 65, 65, 18, 30, 30]);
   addSheet(workbook, 'Bug Reports', ['Test case', 'Event', 'Layer', 'Issue', 'Field', 'Expected', 'Actual', 'Evidence', 'AI note'], bugs.map(bug => [bug.test_case_id, bug.event_name, bug.layer, bug.code, bug.path, bug.expected, bug.actual, bug.evidence_id, bug.ai_note]), [35, 30, 24, 30, 35, 65, 65, 30, 90]);
   await workbook.xlsx.writeFile(paths.xlsx);
-  await fs.writeFile(paths.json, JSON.stringify({ session, counts: tallies, cases, events, steps, results, event_report: report.map(row => ({ stt: row.stt, platform: row.platform, flow: row.flow, event: row.event_name, status: row.status, evidence_id: row.evidence_id, comment: notes[row.key] ?? row.comment, comment_by: notes[row.key] ? 'AI' : 'tool' })) }, null, 2), 'utf8');
-  const coverageHtml = coverage ? `<h2>Đối chiếu đặc tả</h2><p class="summary">${escape(coverage.totals.rows)} dòng · đã bắn ${escape(coverage.totals.seen)} · khớp ${escape(coverage.totals.match)} · lệch ${escape(coverage.totals.mismatch)} · có push nhưng không gửi ${escape(coverage.totals.not_sent)} · chưa thấy ${escape(coverage.totals.not_seen)} · ngoài đặc tả ${escape(coverage.totals.unmatched)}</p><table><thead><tr>${['STT', 'Nền tảng', 'Luồng', 'Event Name', 'Trạng thái', 'Số lần bắn', 'Trường lệch', 'Evidence ID', 'Ghi chú đặc tả'].map(value => `<th>${value}</th>`).join('')}</tr></thead><tbody>${coverageRows.map(row => `<tr>${[0, 1, 2, 3, 5, 6, 9, 10, 11].map(index => `<td>${escape(row[index]).replace(/\n/g, '<br>')}</td>`).join('')}</tr>`).join('\n')}</tbody></table><h2>Kết quả theo bước</h2>` : '';
-  const htmlRows = comparisons.map(values => `<tr>${values.map(value => `<td>${escape(value)}</td>`).join('')}</tr>`).join('\n');
-  await fs.writeFile(paths.html, `<!doctype html><html lang="vi"><meta charset="utf-8"><title>Event Tracking QA Report</title><style>body{font:15px system-ui;margin:32px;color:#172b4d}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cbd5e1;padding:9px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#17365d;color:white}h1{font-size:26px}.summary{padding:16px;background:#eff6ff}pre{white-space:pre-wrap}</style><h1>Event Tracking QA</h1><p class="summary">Session: ${escape(session.id ?? session.session_id)} · Mode: ${escape(session.mode)} · ${escape(tallies)}</p><p>Vendor ingestion: NOT_VERIFIED. HTTP response is transport evidence only.</p>${coverageHtml}<table><thead><tr>${['Test case', 'Step', 'Event', 'Layer', 'Field', 'Expected', 'Actual', 'Verdict', 'Issue', 'Evidence ID'].map(value => `<th>${value}</th>`).join('')}</tr></thead><tbody>${htmlRows}</tbody></table></html>`, 'utf8');
+  }
+  if (wanted.includes('json')) await fs.writeFile(paths.json, JSON.stringify({ session, counts: tallies, cases, events, steps, results, event_report: report.map(row => ({ stt: row.stt, platform: row.platform, flow: row.flow, event: row.event_name, status: row.status, evidence_id: row.evidence_id, comment: notes[row.key] ?? row.comment, comment_by: notes[row.key] ? 'AI' : 'tool' })) }, null, 2), 'utf8');
+  if (wanted.includes('html')) await fs.writeFile(paths.html, renderHtmlReport({ title: 'Báo cáo event', session, settings: htmlSettings, sections: eventSections({ session, cases, events, steps, results, api_calls: apiCalls, report_notes: reportNotes }, { report }) }), 'utf8');
   for (const row of coverage?.rows ?? []) if (row.status === 'MISMATCH' || row.status === 'NOT_SENT') bugs.push({ spec: true, row });
   const specBug = ({ row }) => row.status === 'NOT_SENT'
     ? `## [Tracking][${row.flow}][${row.source}] ${row.event_name}: có push nhưng không gửi lên ${vendorOf(row)}\n\nĐặc tả: STT ${row.stt} (${row.sheet ?? ''} dòng ${row.row ?? ''})\n\nWebsite push vào ${row.source === 'GA4' ? 'dataLayer' : 'InsiderQueue'} ${row.not_sent} lần nhưng không có request nào mang event này lên ${vendorOf(row)}. Kiểm tra tag/trigger trong GTM hoặc Insider SDK.\n\nEvidence: ${row.last_fail_evidence_id}\n\n${row.notes ? `Ghi chú đặc tả: ${row.notes}\n\n` : ''}`
@@ -204,7 +207,7 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
     + (check.stale ? `Giá đã gửi khớp API cũ lúc ${check.stale.at} (\`${check.stale.path}\`): giá chưa được cập nhật sau khi API đổi.\n\n` : '')
     + `Evidence: ${check.evidence_id}\n\n`;
   const bugText = bugs.length ? bugs.map(bug => bug.price ? priceBug(bug) : bug.spec ? specBug(bug) : `## [Tracking][${bug.flow ?? ''}][${bug.source ?? ''}] ${bug.event_name}: ${bug.code}\n\nTest case: ${bug.test_case_id}\n\nStep: ${bug.step_id}\n\nLayer: ${bug.layer}\n\nField: ${bug.path ?? '(event)'}\n\nExpected:\n\n\`\`\`json\n${JSON.stringify(bug.expected ?? null, null, 2)}\n\`\`\`\n\nActual:\n\n\`\`\`json\n${JSON.stringify(bug.actual ?? null, null, 2)}\n\`\`\`\n\nEvidence: ${bug.evidence_id}\n\nVerdict: FAIL\n\n${bug.ai_note ? `AI note (advisory): ${bug.ai_note}\n\n` : ''}`).join('\n---\n\n') : '# Bug reports\n\nNo deterministic failures found. Review/NOT_EXECUTED cases are not confirmed defects.\n';
-  await fs.writeFile(paths.bugs, bugText, 'utf8');
+  if (wanted.includes('bugs')) await fs.writeFile(paths.bugs, bugText, 'utf8');
   // The full API log is a download of its own; reports written elsewhere than the run folder get a copy.
   if (apiCalls.length) {
     const file = path.join(directory, 'api-calls.jsonl');
@@ -213,5 +216,5 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
     if (!present) await fs.writeFile(file, apiCalls.map(call => JSON.stringify(redact(call))).join('\n') + '\n', 'utf8');
     paths.api_calls = file;
   }
-  return paths;
+  return Object.fromEntries(Object.entries(paths).filter(([key]) => wanted.includes(key) || key === 'api_calls'));
 }

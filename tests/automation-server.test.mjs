@@ -80,6 +80,28 @@ test('cancellation interrupts the current case, blocks later workflows and still
   assert.ok((await fs.stat(path.join(app.manager.runDir, 'report.xlsx'))).size > 1000);
 });
 
+test('Kết thúc cancels an active automatic run without exporting', async t => {
+  let reached;
+  const pendingAction = new Promise(resolve => { reached = resolve; });
+  const { app, post, aiCalls } = await fixture(t, { execute: async action => { if (action.type === 'fill') { reached(); return new Promise(() => {}); } } });
+  await post('automation/save', { workflow: workflow() });
+  await post('automation/run', { ids: ['hotel'] }); await pendingAction;
+  assert.equal((await post('finish', { exportReport: false })).status, 200);
+  assert.equal(app.automation.run.status, 'CANCELLED'); assert.notEqual(app.manager.session.status, 'RUNNING');
+  assert.equal(app.manager.steps[0].status, 'INTERRUPTED'); assert.equal(app.manager.snapshot().results[0].verdict, 'REVIEW'); assert.equal(aiCalls(), 0);
+  const names = await fs.readdir(app.manager.runDir);
+  assert.ok(names.includes('workflow-results.json')); assert.ok(!names.includes('report.xlsx') && !names.includes('report.html'));
+});
+
+test('a completed automatic run with export_report disabled keeps evidence without generating reports', async t => {
+  const { app, post, aiCalls } = await fixture(t);
+  await post('automation/save', { workflow: { ...workflow(), export_report: false } });
+  await post('automation/run', { ids: ['hotel'], aiNotes: true }); await app.automation.wait();
+  assert.equal(app.automation.run.status, 'COMPLETED'); assert.equal(app.automation.run.reports, undefined);
+  assert.equal(aiCalls(), 0); const names = await fs.readdir(app.manager.runDir);
+  assert.ok(names.includes('events.jsonl') && names.includes('workflow-results.json')); assert.ok(!names.includes('report.xlsx'));
+});
+
 test('a failed workflow reconnects the driver for the next one and leaves failed actions reviewable', async t => {
   const { app, post } = await fixture(t, { execute: async (_action, _context, _app, connection) => { if (connection === 1) throw new Error('Locator no longer exists'); } });
   const second = workflow('next'); delete second.steps[0].case_id;
@@ -152,4 +174,17 @@ test('closing during optional automation report notes cancels the wait and keeps
   } finally { clearTimeout(timer); }
   assert.ok((await fs.stat(path.join(app.manager.runDir, 'report.xlsx'))).size > 1000);
   assert.equal(app.server.listening, false);
+});
+
+test('Kết thúc during automatic report notes cancels the export and allows a later explicit export', async t => {
+  let started;
+  const writingNotes = new Promise(resolve => { started = resolve; });
+  const { app, post } = await fixture(t, { ai: { reportNotes() { started(); return new Promise(() => {}); } } });
+  await post('automation/save', { workflow: workflow() });
+  await post('automation/run', { ids: ['hotel'], aiNotes: true }); await writingNotes;
+  const stopped = await post('finish', { exportReport: false });
+  assert.equal(stopped.status, 200); assert.equal(stopped.body.exported, null);
+  assert.ok(!(await fs.readdir(app.manager.runDir)).includes('report.xlsx'));
+  const exported = await post('export', { aiNotes: false, selection: { contents: ['events'], formats: ['html'] } });
+  assert.equal(exported.status, 200); assert.ok(exported.body.exported.html);
 });

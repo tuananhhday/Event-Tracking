@@ -62,6 +62,7 @@ function maskPersonal(value, depth = 0) {
   if (Array.isArray(value)) return value.map(item => maskPersonal(item, depth + 1));
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, PERSONAL_KEY.test(key) ? MASK : maskPersonal(item, depth + 1)]));
 }
+export const redactApiData = value => maskPersonal(redact(value));
 
 /**
  * A request or response body as it is stored: JSON parsed (so masking works by key), other text as text,
@@ -119,6 +120,7 @@ export function apiCallRecord({ request = {}, response, error, incomplete, page 
 export function apiCallSummary(record) {
   const size = body => body?.size ?? 0;
   return { evidence_id: record.evidence_id, captured_at: record.captured_at, duration_ms: record.duration_ms ?? null, method: record.method, host: record.host, path: record.path,
+    finished_at: record.finished_at ?? null, target_id: record.page?.target_id ?? null,
     url: record.url, status: record.response?.status ?? null, ok: Boolean(record.ok), error: record.error ?? null, incomplete: record.incomplete ?? null, request_size: size(record.request?.body), response_size: size(record.response?.body),
     step_id: record.step_id ?? null, test_case_id: record.test_case_id ?? null, page_url: record.page?.url ?? '' };
 }

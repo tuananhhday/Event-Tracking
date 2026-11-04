@@ -156,6 +156,7 @@ export function firingChecks(events, { deliveryWindowMs = 30000, duplicateWindow
   // two GA4 properties sends each event once per measurement ID; that is not a repeat.
   const lastHit = new Map();
   for (const request of requests) {
+    if (request.source === 'TP2') continue;
     if (eventKind(request) !== 'business') continue;
     let path = ''; try { const url = new URL(request.page?.url); path = url.host + url.pathname; } catch { /* no page URL */ }
     const key = `${request.source}|${request.payload?.tid ?? ''}|${request.event_name}|${path}`, previous = lastHit.get(key);

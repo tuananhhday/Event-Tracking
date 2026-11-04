@@ -137,7 +137,7 @@ export function eventReportRows({ cases = [], events = [], api = [], links = lin
         evidence_id: shownEvidence ?? '', price_mismatches: shownEvidence ? pricesOf(shownEvidence) : [] });
     }
     // An event already shown on a specification row of its name is not "outside the specification".
-    for (const item of coverage.unmatched) if (!shown.has(`${item.source}|${item.event_name}`)) rows.push({ key: `outside|${item.source}|${item.event_name}`, source: item.source, platforms: [item.source], flow: '', event_name: item.event_name, status: 'OUTSIDE', issues: [], seen: item.count, not_sent: 0,
+    for (const item of coverage.unmatched) if (item.source !== 'TP2' && !shown.has(`${item.source}|${item.event_name}`)) rows.push({ key: `outside|${item.source}|${item.event_name}`, source: item.source, platforms: [item.source], flow: '', event_name: item.event_name, status: 'OUTSIDE', issues: [], seen: item.count, not_sent: 0,
       expected_fields: [], expected: '(Không có trong file đặc tả)', ...actualColumns({ source: item.source, event: item.event_name, evidence: item.last_evidence_id, status: 'OUTSIDE' }),
       evidence_id: item.last_evidence_id, price_mismatches: pricesOf(item.last_evidence_id) });
   } else {

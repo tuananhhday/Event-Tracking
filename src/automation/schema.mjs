@@ -23,6 +23,7 @@ export const WORKFLOW_SCHEMA = {
     schema_version: { const: '1.0' }, id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$' },
     name: { type: 'string', minLength: 1, maxLength: 200 }, url,
     browser: { enum: ['chrome', 'edge'] }, variables: { type: 'object' },
+    export_report: { type: 'boolean' },
     steps: {
       type: 'array', minItems: 1, maxItems: 100,
       items: {
@@ -33,7 +34,7 @@ export const WORKFLOW_SCHEMA = {
           timeout_ms: { type: 'integer', minimum: 1, maximum: 120000 },
           expected_events: { type: 'array', maxItems: 100, items: {
             type: 'object', additionalProperties: false, required: ['event_name'],
-            properties: { event_name: { type: 'string', minLength: 1 }, source: { enum: ['GA4', 'INSIDER'] }, layer: { enum: ['JS_QUEUE', 'TRACKING_REQUEST'] } },
+            properties: { event_name: { type: 'string', minLength: 1 }, source: { enum: ['GA4', 'INSIDER', 'TP2'] }, layer: { enum: ['JS_QUEUE', 'TRACKING_REQUEST'] } },
           } },
           actions: { type: 'array', maxItems: 200, items: { oneOf: [
             action('goto', { url }, ['url']),

@@ -5,10 +5,11 @@ import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTra
 import { redactUrl } from '../core/privacy.mjs';
 import { apiPrices } from '../core/api-prices.mjs';
 import { apiCallRecord, matchesApiLog, DEFAULT_API_LOG_PATTERNS, API_LOG_LIMITS } from '../core/api-log.mjs';
+import { isTp2Endpoint } from '../core/tp2.mjs';
 
 // A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
 // between the events of one request.
-const hitPage = (event, page) => { const url = event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
+const hitPage = (event, page) => { const url = event.source === 'TP2' ? event.tp2?.parameters?.url : event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
 
 // How long a call with a response may stay unfinished before it is logged anyway.
 const API_LOG_SETTLE_MS = 10000;
@@ -354,7 +355,7 @@ export class CDPCollector {
   // XHR/fetch calls of the website's own API, remembered until their JSON response has loaded.
   #apiRequest(state, sessionId, params) {
     const request = params.request || {}, pageUrl = params.documentURL || state.target.url;
-    if (!this.onApi || !['XHR', 'Fetch'].includes(params.type) || !websiteApi(request.url, pageUrl)) return;
+    if (!this.onApi || !['XHR', 'Fetch'].includes(params.type) || isTp2Endpoint(request.url) || !websiteApi(request.url, pageUrl)) return;
     state.api.set(`${sessionId || ''}:${params.requestId}`, { url: request.url, method: request.method, page: { url: redactUrl(pageUrl), frame_id: params.frameId, target_id: state.target.id },
       wall: (params.wallTime || Date.now() / 1000) * 1000, monotonic: params.timestamp });
     if (state.api.size > 200) state.api.delete(state.api.keys().next().value);

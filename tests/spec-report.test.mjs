@@ -58,7 +58,8 @@ test('report has the spec coverage and six styled sheets, escaped HTML and safe 
   assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Báo cáo event', 'Run Summary', 'Spec Coverage', 'Firing Checks', 'Giá vs API', 'API calls', 'Test Cases', 'Expected Events', 'Actual Events', 'Comparison', 'Bug Reports']);
   assert.equal(workbook.getWorksheet('Test Cases').getCell('A2').value, `'${caseData.id}`);
   const html = await fs.readFile(paths.html, 'utf8');
-  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes('id="report-data"'), 'the trusted offline viewer contains embedded JSON');
+  assert.ok(!html.includes('<script>x</script>'), 'event content must not become executable HTML');
   assert.ok(html.includes('&lt;script&gt;'));
   assert.match(await fs.readFile(paths.bugs, 'utf8'), /Evidence: EV-1/);
 });

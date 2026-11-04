@@ -117,6 +117,7 @@
     $('name').value = workflow.name || ''; $('url').value = workflow.url || ''; $('browser').value = workflow.browser === 'edge' ? 'edge' : 'chrome';
     $('variables').value = JSON.stringify(workflow.variables || {}, null, 2);
     $('schedule-enabled').checked = saved && !!workflow.schedule?.enabled; $('schedule-time').value = workflow.schedule?.time || '07:00';
+    $('export-report').checked = workflow.export_report !== false;
     $('json').value = JSON.stringify(workflow, null, 2); $('editor-title').textContent = saved ? 'Chỉnh sửa luồng' : 'Xem lại kịch bản';
     preview(workflow); renderLibrary(); updateControls();
   }
@@ -124,6 +125,7 @@
     currentWorkflow = null; inspected = null; dirty = false;
     for (const name of ['name', 'url', 'instructions', 'json']) $(name).value = '';
     $('browser').value = 'chrome'; $('variables').value = '{}'; $('schedule-enabled').checked = false; $('schedule-time').value = '07:00';
+    $('export-report').checked = true;
     $('file').value = ''; $('file-name').textContent = 'TXT, Markdown hoặc JSON · tối đa 1 MB';
     $('inspect-status').textContent = 'Quan sát trang để AI nhận diện đúng các ô nhập và nút bấm trên website.';
     $('page-details').classList.add('hidden'); $('editor-title').textContent = 'Tạo luồng mới'; $('advanced').open = false;
@@ -136,7 +138,7 @@
     const variables = objectJson($('variables').value, 'Giá trị dùng lại');
     const time = $('schedule-time').value || '07:00';
     return { ...workflow, ...(currentWorkflow?.id ? { id: currentWorkflow.id } : {}), schema_version: '1.0', name, url: website(), browser: $('browser').value, variables,
-      schedule: { ...workflow.schedule, enabled: $('schedule-enabled').checked, time, timezone: 'Asia/Ho_Chi_Minh', days: workflow.schedule?.days || [0, 1, 2, 3, 4, 5, 6] } };
+      export_report: $('export-report').checked, schedule: { ...workflow.schedule, enabled: $('schedule-enabled').checked, time, timezone: 'Asia/Ho_Chi_Minh', days: workflow.schedule?.days || [0, 1, 2, 3, 4, 5, 6] } };
   }
   function progressText(item) {
     if (item.message) return item.message;
@@ -154,7 +156,7 @@
     $('run').innerHTML = `<div class="automation-run-overview"><strong>${esc(names)}</strong>${pill(run.status)}</div><p class="hint">Bắt đầu ${esc(date(run.started_at))}${run.completed_at ? ` · Kết thúc ${esc(date(run.completed_at))}` : ''}</p>${run.error ? `<div class="banner error">${esc(run.error)}</div>` : ''}
       ${run.progress?.length ? `<ol class="automation-progress">${run.progress.slice(-10).map(item => `<li><time>${esc(clock(item.at))}</time><span>${esc(progressText(item))}</span></li>`).join('')}</ol>` : ''}
       ${(run.results || []).map(result => `<details class="automation-result"${result.status === 'FAILED' ? ' open' : ''}><summary>${pill(result.status)}<strong>${esc(result.name || state.workflows.find(workflow => workflow.id === result.workflow_id)?.name || result.workflow_id)}</strong></summary>${result.error ? `<p class="field-error">${esc(result.error)}</p>` : ''}<ul>${(result.steps || []).map(step => `<li>${esc(step.name || step.id)} · ${esc(statusNames[step.status] || step.status)}${step.error ? `<br><span class="field-error">${esc(step.error)}</span>` : ''}</li>`).join('')}</ul></details>`).join('')}
-      ${run.status !== 'RUNNING' ? '<div class="automation-actions"><button type="button" class="btn small" data-setup-stage="report">Mở phần báo cáo</button><button type="button" class="btn small ghost" data-workspace-tab="events">Xem event thu thập</button></div><p class="hint">File Excel, HTML, JSON và API của phiên nằm trong phần Kết thúc &amp; báo cáo.</p>' : ''}`;
+      ${run.status !== 'RUNNING' ? `<div class="automation-actions"><button type="button" class="btn small" data-setup-stage="report">Mở phần báo cáo</button><button type="button" class="btn small ghost" data-workspace-tab="events">Xem event thu thập</button></div><p class="hint">${run.reports ? 'File đã xuất nằm trong phần Kết thúc &amp; báo cáo.' : 'Bằng chứng đã lưu. Mở phần báo cáo để chọn nội dung cần xuất.'}</p>` : ''}`;
   }
   function renderHistory() {
     const history = state.history || [], signature = JSON.stringify(history);
@@ -230,7 +232,7 @@
     if (saved) applyWorkflow(saved, { saved: true }); else { dirty = false; currentWorkflow = workflow; }
     message(workflow.schedule.enabled ? `Đã lưu luồng và bật lịch ${workflow.schedule.time} theo giờ Việt Nam.` : 'Đã lưu luồng. Bạn có thể chạy ngay từ danh sách.');
   }));
-  for (const name of ['name', 'url', 'browser', 'variables', 'schedule-enabled', 'schedule-time', 'json']) $(name).addEventListener('input', () => {
+  for (const name of ['name', 'url', 'browser', 'variables', 'schedule-enabled', 'schedule-time', 'export-report', 'json']) $(name).addEventListener('input', () => {
     if ($('json').value.trim()) dirty = true;
     if (name === 'url' || name === 'browser') { inspected = null; $('page-details').classList.add('hidden'); $('inspect-status').textContent = 'Website hoặc trình duyệt đã thay đổi. Quan sát lại trang trước khi tạo bằng AI.'; }
     if (name === 'json') { try { preview(JSON.parse($('json').value)); } catch { $('step-count').textContent = 'JSON cần chỉnh lại'; } }

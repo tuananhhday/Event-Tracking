@@ -135,6 +135,7 @@ export function priceChecks(rows, records = [], { windowMs = 30 * 60000 } = {}) 
   }
   const checks = [];
   for (const row of rows) {
+    if (row.source === 'TP2') continue;
     if (row.delivery !== 'sent' || row.event_kind !== 'business') continue;
     const fields = sentPrices(row);
     if (!fields.length) continue;

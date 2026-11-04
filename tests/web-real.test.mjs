@@ -62,5 +62,5 @@ test('endpoint allowlist updates validate regexes and are reported in state', as
   assert.equal((await post('endpoints', { patterns: ['(unclosed'] })).status, 400);
   assert.equal((await post('endpoints', { patterns: [] })).status, 400);
   const state = await (await post('endpoints', { patterns: ['^ubt-sin\\.tripcdn\\.com/bee/collect$'] })).json();
-  assert.deepEqual(state.patterns, ['^ubt-sin\\.tripcdn\\.com/bee/collect$']);
+  assert.deepEqual(state.patterns, ['^ubt-sin\\.tripcdn\\.com/bee/collect$', '/tp2(?:$|/)']);
 });

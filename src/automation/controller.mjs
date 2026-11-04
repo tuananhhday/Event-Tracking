@@ -48,7 +48,7 @@ export class AutomationController {
       ? this.inspection.page : null;
     return draftWorkflow(this.getAi(), { ...input, page, cases: this.manager.cases });
   }
-  async enqueue(ids, { variables = {}, aiNotes = false, trigger = 'manual', scheduled_date } = {}) {
+  async enqueue(ids, { variables = {}, aiNotes = false, trigger = 'manual', scheduled_date, exportReport } = {}) {
     if (this.closed) throw new Error('Ứng dụng đang dừng.');
     if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Đang có phiên chạy. Kết thúc hoặc dừng phiên đó trước.');
     if (!Array.isArray(ids) || !ids.length || ids.length > 50) throw new Error('Chọn từ 1 đến 50 luồng để chạy.');
@@ -75,7 +75,7 @@ export class AutomationController {
     this.run = { id: `AUTO-${randomUUID()}`, status: 'RUNNING', trigger, scheduled_date, workflow_ids: uniqueIds,
       workflow_names: uniqueIds.map(id => this.store.get(id)?.name ?? id), started_at: this.now().toISOString(), results: failures, progress: [],
       ...(failures.length ? { error: failures.map(failure => `${failure.name}: ${failure.error}`).join('\n') } : {}) };
-    const task = this.execute(workflows, { aiNotes, signal: this.abortController.signal });
+    const task = this.execute(workflows, { aiNotes, exportReport: exportReport ?? workflows.some(workflow => workflow.export_report !== false), signal: this.abortController.signal });
     this.task = task;
     task.catch(error => this.onStatus(`Luồng tự động: ${error.message}`)).finally(() => { if (this.task === task) this.task = null; });
     return { accepted: true, ...this.state() };
@@ -87,7 +87,7 @@ export class AutomationController {
     if (event.workflow_id) this.run.current_workflow_id = event.workflow_id;
     if (event.step_id) this.run.current_step_id = event.step_id;
   }
-  async execute(workflows, { aiNotes, signal }) {
+  async execute(workflows, { aiNotes, exportReport, signal }) {
     let driver, captureStarted = false, stepStartedAt = 0;
     const previousSession = this.manager.session?.id;
     const run = this.run;
@@ -150,8 +150,8 @@ export class AutomationController {
           await this.finish();
           const evidence = path.join(this.manager.runDir, 'workflow-results.json');
           await fs.writeFile(evidence, JSON.stringify(redact(run), null, 2), 'utf8');
-          const files = await this.exportReport({ aiNotes: aiNotes === true && !signal.aborted });
-          run.reports = files; run.run_dir = this.manager.runDir;
+          if (exportReport && run.export_report !== false) run.reports = await this.exportReport({ aiNotes: aiNotes === true && !signal.aborted });
+          run.run_dir = this.manager.runDir;
           await fs.writeFile(evidence, JSON.stringify(redact(run), null, 2), 'utf8');
         } catch (error) { run.error = `Đã lưu bằng chứng; xuất báo cáo gặp lỗi: ${redact(String(error.message || error))}`; run.status = run.status === 'CANCELLED' ? run.status : 'FAILED'; }
       }
@@ -160,7 +160,7 @@ export class AutomationController {
     }
     return run;
   }
-  cancel() { if (this.busy) { this.run.cancel_requested = true; this.abortController.abort(new Error('Người dùng đã dừng luồng.')); } return this.state(); }
+  cancel({ exportReport } = {}) { if (this.busy) { if (exportReport === false) this.run.export_report = false; this.run.cancel_requested = true; this.abortController.abort(new Error('Người dùng đã dừng luồng.')); } return this.state(); }
   async wait() { if (this.task) await this.task; }
   async close() { this.closed = true; this.scheduler.stop(); this.cancel(); await this.wait(); }
 }

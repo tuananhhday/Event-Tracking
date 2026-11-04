@@ -74,7 +74,7 @@ test('shutdown routes require the local token and reject an unrelated origin', {
   assert.equal((await fetch(`${base}/api/state`)).status, 200, 'Rejected shutdown must leave app available');
 });
 
-test('stop-session bypasses an in-flight AI action, cancels it and does not require completing the step first', { timeout: 10000 }, async t => {
+for (const route of ['/api/stop-session', '/api/finish']) test(`${route} bypasses an in-flight AI action without waiting`, { timeout: 10000 }, async t => {
   let signalStarted, release;
   const started = new Promise(resolve => { signalStarted = resolve; });
   const pendingExplanation = new Promise(resolve => { release = resolve; });
@@ -88,11 +88,12 @@ test('stop-session bypasses an in-flight AI action, cancels it and does not requ
   const pending = post(app, base, '/api/step/complete').then(async response => ({ status: response.status, body: await response.json() })).catch(error => ({ error: error.message }));
   t.after(() => release({ available: false, reason: 'TEST_CLEANUP' }));
   await started;
-  const response = await post(app, base, '/api/stop-session');
+  const response = await post(app, base, route, route === '/api/finish' ? { exportReport: false } : {});
   assert.equal(response.status, 200, await response.text());
   assert.ok(cancelCount >= 1);
   assert.equal(app.manager.session.status, 'COMPLETED');
-  assert.ok((await fs.stat(path.join(app.manager.runDir, 'report.xlsx'))).size > 1000);
+  if (route === '/api/stop-session') assert.ok((await fs.stat(path.join(app.manager.runDir, 'report.xlsx'))).size > 1000);
+  else assert.ok(!(await fs.readdir(app.manager.runDir)).includes('report.xlsx'));
   await pending;
 });
 

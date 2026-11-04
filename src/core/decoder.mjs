@@ -3,11 +3,12 @@ import { ga4Items } from './ga4-parameters.mjs';
 import { redact, redactUrl } from './privacy.mjs';
 import { eventKind } from './event-kind.mjs';
 import { insiderPageEvent } from './insider-hit.mjs';
+import { decodeTp2Request, TP2_ENDPOINTS } from './tp2.mjs';
 
 // Insider event endpoints only; its other hosts (segment.api, ucd-web, falcon log-tracking,
 // <partner>.api/api/info) serve SDK files, segments, predictions and logs, not events.
 const INSIDER_EVENT_ENDPOINTS = ['(?:^|\\.)unification\\.useinsider\\.com/api/event/', '(?:^|\\.)hit\\.api\\.useinsider\\.com/hit$'];
-export const DEFAULT_ENDPOINT_PATTERNS = ['(?:^|\\.)google-analytics\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)analytics\\.google\\.com/(?:g/)?collect(?:$|/)', ...INSIDER_EVENT_ENDPOINTS];
+export const DEFAULT_ENDPOINT_PATTERNS = ['(?:^|\\.)google-analytics\\.com/(?:g/)?collect(?:$|/)', '(?:^|\\.)analytics\\.google\\.com/(?:g/)?collect(?:$|/)', ...INSIDER_EVENT_ENDPOINTS, ...TP2_ENDPOINTS];
 // Optional vendor allowlists offered by the UI. Each entry matches hostname + path.
 export const VENDOR_ENDPOINTS = {
   // Recent Google tags also send GA4 hits to /g/s/collect.
@@ -82,6 +83,8 @@ function ga4Payload(input) {
   return result;
 }
 export function decodeRequest({ url, body = '', contentType = '', method = 'POST', requestId, status, source, capturedAt, pageUrl }) {
+  const tp2 = decodeTp2Request({ url, body, method, requestId, status, capturedAt, pageUrl });
+  if (tp2) return tp2;
   let query = {}, host = '', pathname = '';
   try { const u = new URL(url); query = flatQuery(u.search); host = u.hostname; pathname = u.pathname; } catch { /* unsupported URL kept as redacted evidence */ }
   const decoded = parsedBody(body, contentType);

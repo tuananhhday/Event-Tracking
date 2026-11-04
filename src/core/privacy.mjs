@@ -4,6 +4,7 @@ const MASK = '[REDACTED]';
 export const isSensitiveKey = key => sensitive.test(String(key).replace(/^(epn?|upn?)\./i, ''));
 function cleanText(value) {
   return value
+    .replace(/((?:ue_px|ue_pr|cx)["']?\s*[=:]\s*["']?)([^\s&,;"'}]+)/gi, '$1[ENCODED]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${MASK}`)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, MASK)
     .replace(/((?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|cookie)["']?\s*[=:]\s*["']?)([^\s&,;"'}]+)/gi, `$1${MASK}`)
@@ -17,7 +18,7 @@ export function redactUrl(value) {
     if (url.password) url.password = MASK;
     for (const [key, val] of [...url.searchParams]) {
       const bare = key.replace(/^(epn?|upn?)\./i, '');
-      url.searchParams.set(key, sensitive.test(bare) ? MASK : /^https?:\/\//i.test(val) ? redactUrl(val) : cleanText(val));
+      url.searchParams.set(key, sensitive.test(bare) || /^(ue_px|ue_pr|cx)$/i.test(bare) ? MASK : /^https?:\/\//i.test(val) ? redactUrl(val) : cleanText(val));
     }
     url.hash = url.hash ? cleanText(url.hash).replace(/((?:token|key|password)=)[^&]+/gi, `$1${MASK}`) : '';
     return cleanText(url.toString());
@@ -37,6 +38,7 @@ export function redact(value, seen = new WeakSet()) {
   const sensitiveIssue = typeof value.path === 'string' && sensitive.test(value.path.split('.').at(-1));
   const result = Array.isArray(value) ? value.map(v => redact(v, seen)) : Object.fromEntries(
     Object.entries(value).map(([key, val]) => {
+      if (/^(ue_px|ue_pr|cx)$/i.test(key) && typeof val === 'string') return [key, '[ENCODED: xem dữ liệu TP2 đã giải mã]'];
       if (sensitiveIssue && ['actual', 'expected'].includes(key)) return [key, MASK];
       if (sensitive.test(key.replace(/^(epn?|upn?)\./i, ''))) {
         // Preserve expected-rule structure; redact sensitive exact examples only.

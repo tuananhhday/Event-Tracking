@@ -10,6 +10,8 @@ Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không 
 
 Thư viện JavaScript trong bản tải được gộp thành vài bundle, giảm hàng nghìn file nhỏ khi giải nén trên Windows. License các thư viện được giữ trong `node_modules/THIRD_PARTY_LICENSES.txt`.
 
+Bản hiện tại có tab **TP2 ↔ API**, giải mã `ue_px` và lưu cấu hình ghép trường để đối chiếu. **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo event, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
+
 Để tạo bản ít file, cài esbuild 0.25.12 riêng cho máy build, chạy `scripts/bundle-portable-deps.mjs` với đường dẫn module esbuild và thư mục output; đặt `EVENTQA_PACKAGED_DEPS` trỏ đến output đó khi chạy `scripts/build-portable.py`. Đây chỉ là bước build; người dùng gói tải không cần cài thêm gì.
 
 Giao diện workspace của bản portable trước được khôi phục. Bấm tên event để xem **Event Details → Default Parameters → Custom Parameters**; dữ liệu lồng nhau có **Show Details**. JSON và payload gốc có tab riêng. GA4 được giải mã danh sách sản phẩm thay vì chỉ hiện chuỗi `pr1`. Danh sách hoạt động ghép queue/request phù hợp thành một dòng, giữ nguyên bằng chứng gốc và mọi request phát lặp.
