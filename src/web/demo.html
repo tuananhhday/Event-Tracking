@@ -1,0 +1,27 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>EventQA · Tracking demo</title>
+<style>body{font:16px system-ui;max-width:900px;margin:50px auto;color:#19334a;background:#f5f7fa}h1{font-size:30px}section{background:white;border:1px solid #dde3ea;border-radius:16px;padding:24px;margin:20px 0}input,select,button{font:inherit;padding:10px;border:1px solid #bdc9d5;border-radius:8px}button{background:#176653;color:white;cursor:pointer}label{display:inline-block;margin:8px}pre{white-space:pre-wrap;background:#edf2f6;padding:20px;border-radius:12px}.small{color:#576b7e}</style>
+<h1>Website demo cho ba bài PoC</h1><p class="small">Dữ liệu giả lập do dự án tạo. Request chỉ gửi đến localhost. Mở từ trình duyệt test do EventQA khởi chạy.</p>
+<section><h2>Hotel</h2><label>Điểm đến <input id="destination" value="Phú Quốc"></label><label>Người lớn <input id="adults" type="number" value="2" min="1" max="20" style="width:60px"></label><label>Số đêm <input id="nights" type="number" value="1" min="1" style="width:60px"></label><p><label><input type="checkbox" id="missing"> Bỏ destination_id để tạo lỗi</label></p><button id="hotel">Tìm khách sạn</button></section>
+<section><h2>Merchandise</h2><label>Từ khóa <input id="term" value="snack"></label><button id="merch">Tìm sản phẩm</button><p class="small">Sample trong báo cáo là “keychain”; giá trị thực tế “snack” vẫn PASS khi khớp context.</p></section>
+<section><h2>Insider</h2><label>Mã sản phẩm <input id="product" value="SKU-001"></label><label><input type="checkbox" id="skip-network"> Bỏ request để kiểm tra NETWORK_MISSING</label><p><button id="insider">Xem chi tiết sản phẩm</button></p></section><section><h2>Giá so với API</h2><p class="small">Trang gọi API sản phẩm (giá 1.000.000) rồi gửi view_item lên GA4. Tick ô dưới để tracking gửi sai giá 500.000.</p><label>Mã sản phẩm <input id="price-id" value="ROOM-DELUXE"></label><label><input type="checkbox" id="wrong-price"> Gửi sai giá (500.000)</label><p><button id="price">Xem phòng</button></p></section><pre id="output">Chưa phát event.</pre>
+<section><h2>TP2 ↔ API · Giả lập</h2><p class="small">Gọi API sản phẩm trên localhost rồi gửi TP2 chứa ue_px Base64. Không tạo đơn hàng thật.</p><label><input type="checkbox" id="tp2-wrong-price"> Gửi giá TP2 sai</label><button id="tp2-send">Gửi TP2 thử</button></section>
+<script>
+window.dataLayer = []; window.InsiderQueue = [];
+const $ = id => document.getElementById(id);
+async function send(payload, insider=false) {
+  (insider ? window.InsiderQueue : window.dataLayer).push(payload);
+  $('output').textContent = JSON.stringify(payload,null,2);
+  if(insider && $('skip-network').checked) return;
+  if(insider) await fetch('/demo/insider/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  else {
+    const data = new URLSearchParams({v:'2',tid:'G-DEMO',en:payload.event});
+    for(const [key,value] of Object.entries(payload)) if(key !== 'event') data.set((typeof value==='number'?'epn.':'ep.')+key,String(value));
+    await fetch('/demo/g/collect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data});
+  }
+}
+$('hotel').onclick=()=>{const p={event:'search_submit',service:'hotel',destination:$('destination').value,quantity_adult:Number($('adults').value),service_duration:Number($('nights').value)};if(!$('missing').checked)p.destination_id='285dd301-f562-4969-a6b8-b5dd2383a1cb';send(p).catch(e=>$('output').textContent=e.message)};
+$('merch').onclick=()=>send({event:'search_submit',service:'merchandise',search_term:$('term').value,search_source:'listing_searchbox'}).catch(e=>$('output').textContent=e.message);
+$('price').onclick=async()=>{try{const product=(await(await fetch('/demo/api/products/'+encodeURIComponent($('price-id').value))).json()).data;const price=$('wrong-price').checked?500000:product.price,item={item_id:product.id,item_name:product.name,price,quantity:1};window.dataLayer.push({ecommerce:null});const payload={event:'view_item',ecommerce:{currency:product.currency,value:price,items:[item]}};window.dataLayer.push(payload);$('output').textContent=JSON.stringify(payload,null,2);await fetch('/demo/g/collect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({v:'2',tid:'G-DEMO',en:'view_item',cu:product.currency,'epn.value':String(price),pr1:`id${item.item_id}~nm${item.item_name}~pr${price}~qt1`})});}catch(e){$('output').textContent=e.message}};
+$('insider').onclick=()=>send({event:'product_detail_page_view',product:{id:$('product').value,price:120000}},true).catch(e=>$('output').textContent=e.message);
+$('tp2-send').onclick=async()=>{try{const product=(await(await fetch('/demo/api/products/ROOM-TP2')).json()).data;const value={product_id:product.id,price:$('tp2-wrong-price').checked?500000:product.price,quantity:1};const wrapper={schema:'iglu:com.snowplowanalytics.snowplow/unstruct_event/jsonschema/1-0-0',data:{schema:'iglu:example/purchase_demo/jsonschema/1-0-0',data:value}};const encoded=btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(wrapper))));await fetch('/demo/tp2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema:'iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4',data:[{e:'ue',ue_px:encoded,dtm:Date.now(),url:location.href}]})});$('output').textContent=JSON.stringify(wrapper,null,2)}catch(e){$('output').textContent=e.message}};
+</script></html>

@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "id": "TC-HOTEL-SEARCH-001",
+      "name": "Hotel · search_submit",
+      "source": "GA4",
+      "flow": "Hotel",
+      "description": "Bộ demo do dự án tạo; chưa phải đặc tả của Trip.com hay website nội bộ.",
+      "rules": [
+        {
+          "event_name": "search_submit", "layer": "JS_QUEUE", "count": { "min": 1, "max": 1 }, "within_ms": 10000,
+          "fields": {
+            "event": { "op": "eq", "value": "search_submit" },
+            "service": { "op": "eq", "value": "hotel" },
+            "destination": { "op": "ref", "value": "context.search.destination_name" },
+            "destination_id": { "op": "regex", "value": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
+            "quantity_adult": { "op": "ref", "value": "context.search.adults" },
+            "service_duration": { "op": "ref", "value": "context.search.nights" },
+            "gtm.uniqueEventId": { "op": "ignore" }
+          }
+        },
+        { "event_name": "search_submit", "layer": "TRACKING_REQUEST", "count": { "min": 1, "max": 1 }, "fields": { "service": { "op": "eq", "value": "hotel" } } }
+      ]
+    },
+    {
+      "id": "TC-MERCH-SEARCH-001", "name": "Merchandise · dynamic search_term", "source": "GA4", "flow": "Merchandise",
+      "rules": [
+        { "event_name": "search_submit", "layer": "JS_QUEUE", "count": { "min": 1, "max": 1 }, "fields": {
+          "service": { "op": "eq", "value": "merchandise" },
+          "search_term": { "op": "ref", "value": "context.search.term" },
+          "search_source": { "op": "eq", "value": "listing_searchbox" }
+        } },
+        { "event_name": "search_submit", "layer": "TRACKING_REQUEST", "count": { "min": 1, "max": 1 }, "fields": { "search_term": { "op": "ref", "value": "context.search.term" } } }
+      ]
+    },
+    {
+      "id": "TC-INSIDER-DETAIL-001", "name": "Insider · product_detail_page_view", "source": "INSIDER", "flow": "Merchandise",
+      "rules": [
+        { "event_name": "product_detail_page_view", "layer": "JS_QUEUE", "count": { "min": 1, "max": 1 }, "fields": {
+          "product.id": { "op": "ref", "value": "context.product.id" }, "product.price": { "op": "type", "value": "number" }
+        } },
+        { "event_name": "product_detail_page_view", "layer": "TRACKING_REQUEST", "count": { "min": 1, "max": 1 }, "fields": { "product.id": { "op": "ref", "value": "context.product.id" } } }
+      ]
+    }
+  ]
+}

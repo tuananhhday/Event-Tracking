@@ -1,0 +1,5 @@
+{
+  "TC-HOTEL-SEARCH-001": { "search": { "destination_name": "Phú Quốc", "adults": 2, "nights": 1 } },
+  "TC-MERCH-SEARCH-001": { "search": { "term": "snack" } },
+  "TC-INSIDER-DETAIL-001": { "product": { "id": "SKU-001" } }
+}
