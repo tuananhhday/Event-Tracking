@@ -5,6 +5,7 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { findBrowser } from '../src/browser/launcher.mjs';
 import { createApp } from '../src/server.mjs';
+import { manualCase } from '../src/spec/import.mjs';
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-comparison-ui-'));
 const browser = await chromium.launch({ executablePath: findBrowser(), headless: true });
@@ -14,6 +15,9 @@ const cases = [spec('HOTEL', 'Khách sạn · tìm kiếm và đặt phòng', 'h
 cases.push({ id: 'ALIAS', name: 'listing_page_view', flow: 'Tên event tương đương', source: 'INSIDER',
   sample: { event: 'Listing Page View', default_parameters: { service: 'hotel' }, custom_parameters: {} },
   rules: [{ event_name: 'listing_page_view', event_aliases: ['Listing Page View'], source: 'INSIDER', layer: 'TRACKING_REQUEST', capture_platform: 'APP_SDK', fields: { 'default_parameters.service': { op: 'eq', value: 'hotel' } } }] });
+const productSample = { type: 'product', value: { id: 'SHIRT', name: 'Áo thun', unit_price: 180000, quantity: 1, currency: 'VND' } };
+const productCase = manualCase({ source: 'INSIDER', flow: 'Merchandise · chi tiết sản phẩm', event_name: 'product_detail_page_view', sample: JSON.stringify(productSample) }).testCase;
+cases.push(productCase);
 const errors = [], results = [];
 try {
   for (const mode of ['cdp', 'cdp-ai']) {
@@ -96,6 +100,38 @@ try {
       await page.locator('.spec-event-name').click(); await page.locator('#spec-detail-content [data-comparison-verdict="PASS"]').waitFor();
       assert.equal(await page.locator('#spec-detail-content .event-diff-row.is-error').count(), 0);
       await page.locator('#spec-detail-close').click();
+      await page.locator('#comparison-controls [data-action="select-flow"]').click();
+      await page.locator('#comparison-flow-search').fill('Merchandise'); await page.locator('[data-choose-flow]').click();
+      await page.locator('#comparison-flow-dialog').waitFor({ state: 'hidden' });
+      const productPage = { target_id: 'PRODUCT', url: `${base}/merchandise/duck` };
+      const productPush = app.manager.emit({ source: 'INSIDER', layer: 'JS_QUEUE', event_name: 'product_detail_page_view', queue_name: 'InsiderQueue', queue_type: 'product', page: productPage,
+        payload: { type: 'product', value: { ...productSample.value, id: 'DUCK', name: 'Vịt con', unit_price: 250000 } } });
+      app.manager.emit({ source: 'INSIDER', layer: 'JS_QUEUE', event_name: 'insider_init', queue_type: 'init', page: productPage, payload: { type: 'init' } });
+      app.manager.emit({ source: 'INSIDER', layer: 'TRACKING_REQUEST', event_name: 'product_detail_page_view', network: { phase: 'request' }, page: productPage,
+        payload: { event: 'pageView', page_type: 'productDetail', product: { id: 'DUCK', name: 'Vịt con', price: { originalValue: 250000, value: 200000, currency: 'VND' }, quantity: 1 } } });
+      const wrongVendor = app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'product_detail_page_view', page: productPage, payload: { event: 'product_detail_page_view' } });
+      await page.evaluate(() => EventQA.refresh());
+      assert.equal(app.state().specCoverage.rows[0].status, 'MATCH'); assert.equal(app.state().specCoverage.rows[0].seen, 1);
+      await page.waitForFunction(() => document.querySelector('.spec-event-name')?.textContent === 'product_detail_page_view');
+      await page.locator('.spec-event-name').click(); await page.locator('#spec-detail-content [data-comparison-verdict="PASS"]').waitFor();
+      const productDiff = page.locator('#spec-detail-content .event-comparison');
+      assert.equal(await productDiff.locator('.event-diff-head').textContent(), 'Đặc tả INSIDERINSIDER · InsiderQueue');
+      assert.equal(await productDiff.locator('[data-diff-path^="default_parameters"]').count(), 0);
+      const priceRow = productDiff.locator('[data-diff-path="value.unit_price"]');
+      assert.ok((await priceRow.textContent()).includes('180000')); assert.ok((await priceRow.textContent()).includes('250000'));
+      assert.ok((await priceRow.textContent()).includes('Đạt kiểu số nguyên'));
+      assert.ok((await productDiff.textContent()).includes('Đạt quy tắc')); assert.ok((await productDiff.textContent()).includes('chưa được xác nhận với API'));
+      assert.equal(await productDiff.locator('.event-diff-row.is-error').count(), 0);
+      const sourceCheck = await page.evaluate(async ({ id, selected }) => (await (await fetch(`/api/event?id=${id}&case_id=${selected}`)).json()).spec,
+        { id: wrongVendor.evidence_id, selected: productCase.id });
+      assert.equal(sourceCheck.verdict, 'FAIL'); assert.equal(sourceCheck.issues[0].code, 'SOURCE_MISMATCH');
+      await fs.mkdir('.tmp', { recursive: true }); await page.screenshot({ path: `.tmp/insider-queue-basis-${mode}.png` });
+      await page.locator('#spec-detail-content [data-change-comparison-event]').click();
+      assert.equal(await page.locator(`[data-preview-comparison="${wrongVendor.evidence_id}"]`).count(), 0);
+      await page.locator(`[data-preview-comparison="${productPush.evidence_id}"]`).click();
+      await page.locator('#comparison-preview [data-comparison-verdict="PASS"]').waitFor();
+      assert.ok((await page.locator('#comparison-preview .event-diff-head').textContent()).includes('INSIDER · InsiderQueue'));
+      await page.locator('#comparison-event-dialog [data-action="close-event-picker"]').click(); await page.locator('#spec-detail-close').click();
       await page.getByRole('tab', { name: /Event trực tiếp/ }).click(); await page.locator('[data-action="export-tracking"]').click();
       assert.equal(await page.locator('#export-tracking').isChecked(), true); assert.equal(await page.locator('#export-events').isChecked(), false);
       await page.locator('#export-format').selectOption('all');
@@ -103,7 +139,7 @@ try {
       assert.deepEqual(Object.keys(app.state().exported).sort(), ['tracking_html', 'tracking_json', 'tracking_xlsx']);
       const json = JSON.parse(await fs.readFile(path.join(app.manager.runDir, 'tracking-report.json'), 'utf8'));
       assert.equal(json.inventory.find(row => row.event_name === 'page_view').count, 6);
-      results.push({ mode, flowSelection: true, isolatedRetest: true, jsonDiff: true, filterDifferences: true, validAliasPass: true, changeEvidence: true, readableButtons: true, pauseAndSwitch: true, trackingExport: true, readableAt: [1440, 768, 390] });
+      results.push({ mode, flowSelection: true, isolatedRetest: true, jsonDiff: true, filterDifferences: true, validAliasPass: true, insiderQueueBasis: true, explicitRuleMeaning: true, sameVendorOnly: true, changeEvidence: true, readableButtons: true, pauseAndSwitch: true, trackingExport: true, readableAt: [1440, 768, 390] });
       await page.close();
     } finally { await app.close(); }
   }

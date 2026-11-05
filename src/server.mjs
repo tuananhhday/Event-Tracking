@@ -184,16 +184,20 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const links = deliveryLinks(events);
     const attempt = manager.session?.spec_comparison?.attempts.find(attempt => attempt.id === event.comparison_attempt_id);
     const scopedCases = manager.cases.filter(testCase => attempt?.case_ids.includes(testCase.id) || event.step_id && testCase.id === event.test_case_id);
+    const comparisonLinks = attempt ? linkDeliveries(events.filter(candidate => candidate.comparison_attempt_id === attempt.id))
+      : event.step_id ? linkDeliveries(events.filter(candidate => candidate.test_case_id === event.test_case_id && candidate.step_id)) : links;
     const selectedCase = caseId && scopedCases.find(testCase => testCase.id === caseId);
-    const match = selectedCase ? compareSelectedEvent(selectedCase, event, { links }) : scopedCases.length ? matchTracked(scopedCases, event, { links }) : null;
+    if (caseId && !selectedCase) throw new Error('Dòng đặc tả không thuộc lượt đối chiếu của event này.');
+    const match = selectedCase ? compareSelectedEvent(selectedCase, event, { links: comparisonLinks }) : scopedCases.length ? matchTracked(scopedCases, event, { links: comparisonLinks }) : null;
     const testCase = match && manager.cases.find(c => c.id === match.case_id);
-    const spec = match ? { ...match, event_name: testCase?.rules?.[0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
-    const push = event.layer === 'JS_QUEUE' ? event : links.pushOf.get(event.evidence_id) ?? null;
-    const hit = event.layer === 'TRACKING_REQUEST' ? event : links.sentBy.get(event.evidence_id) ?? null;
-    const delivery = { status: deliveryStatus(push ?? event, links), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
+    const spec = match ? { ...match, event_name: testCase?.rules?.[match.rule_index ?? 0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
+    const push = event.layer === 'JS_QUEUE' ? event : comparisonLinks.pushOf.get(event.evidence_id) ?? null;
+    const hit = event.layer === 'TRACKING_REQUEST' ? event : comparisonLinks.sentBy.get(event.evidence_id) ?? null;
+    const delivery = { status: deliveryStatus(push ?? event, comparisonLinks), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
+    const compared = events.find(candidate => candidate.evidence_id === match?.comparison?.evidence_id) ?? event;
     const activity = activityEntries(events, { links }).find(row => row.evidence_ids.includes(event.evidence_id)) ?? activityEvent(event);
     const priced = prices(events, snapshot.api).checks.filter(check => check.evidence_id === activity.evidence_id);
-    return { event, spec, comparison_payload: trackedView(hit || event), firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
+    return { event, spec, comparison_payload: trackedView(compared, match?.comparison?.format), firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
   }
   // What the AI reads to review a session: the QC's requirement, the specification rows the session is
   // about (rows with evidence and the unseen rows of the same flows), the tool's verdict per row, what

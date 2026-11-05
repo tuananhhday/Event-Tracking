@@ -4,7 +4,11 @@
 
 Importer ưu tiên sheet `Tổng hợp Event tracking`, tự tìm hàng tiêu đề trong 50 dòng đầu. Có thể truyền `{sheet: 'Tên sheet'}`. Mỗi case giữ `file`, `sheet`, `row`. Các ô merged được đọc qua giá trị master của ExcelJS.
 
-Sample chỉ giúp tạo bản nháp. `event`, `service`, `search_source` có thể thành so sánh cố định; `search_term`, destination, ngày và số khách dùng `context.search.*`. Trường chưa rõ dùng type và yêu cầu review. Toàn bộ quy tắc suy từ sample được gắn `needs_review`; cần xác nhận BA/QC trước khi chấp nhận kết quả. Cột `Rules`/`Expected Rules` có thể chứa JSON rule đã xác nhận để bỏ bước suy diễn này.
+Sample chỉ giúp tạo bản nháp. `event`, `event_name`, `type`, `service` ở cấp event có thể thành so sánh cố định; `search_term`, destination, ngày và số khách dùng `context.search.*`. Trường chưa rõ dùng type và yêu cầu review. Toàn bộ quy tắc suy từ sample được gắn `needs_review`; cần xác nhận BA/QC trước khi chấp nhận kết quả. Cột `Rules`/`Expected Rules` có thể chứa JSON rule đã xác nhận để bỏ bước suy diễn này.
+
+Trong tab đối chiếu theo luồng, `ref` chưa có ngữ cảnh thao tác chỉ kiểm sự có mặt. **Đạt quy tắc** không có nghĩa mọi giá trị bằng mẫu hay đã khớp API: `{ "op": "type", "value": "integer" }` cho giá cho phép cả `180000` và `250000`; `{ "op": "eq", "value": 180000 }` mới bắt buộc giá bằng `180000`. Màn hình ghi rõ điều kiện bên dưới từng trường khác ví dụ, số quy tắc đạt và nguồn bằng chứng. GA4 chỉ ghép GA4, Insider chỉ ghép Insider, kể cả khi xem trước một lựa chọn bằng API.
+
+Payload hiển thị và rule luôn dùng cùng bằng chứng, cùng cấu trúc: Web InsiderQueue giữ `{ type, value }`; mẫu Insider dạng Default/Custom Parameters dùng request đã giải mã tương ứng; mẫu request thô giữ nguyên dạng request. GA4 dùng các trường thực sự gửi đi, không bù trường thiếu từ dataLayer. Request ghép với queue được giữ riêng để xem bằng chứng gửi đi; nó không thay thế queue trong phép so sánh đặc tả Web InsiderQueue. Chỉ request cùng lượt đối chiếu được ghép để kết luận.
 
 Rule engine hỗ trợ `eq`, `exists`, `not_exists`, `type`, `regex`, `one_of`, `range`, `ref`, `subset`, `ignore`, `optional`, count, thời gian từ Start Step và `after`. Chỉ event thuộc đúng case/step/layer/source trong thời gian step được tính. Response/failed lifecycle không bị tính thêm như một request. Backlog cũ không được gán vào step mới.
 

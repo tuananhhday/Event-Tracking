@@ -37,10 +37,15 @@ function receivedCheck(check, field, pushed) {
  * dynamic values (`ref`) only need to be present, every other rule is applied as written.
  */
 function evaluate(testCase, rule, event) {
-  if (event.capture?.incomplete) return { checks: [{ code: 'CAPTURE_INCOMPLETE', verdict: 'REVIEW' }], score: 0 };
   // An AppOTA_Insider row (R1511…) describes the event as Insider records it: a web Insider hit is
   // judged in that form, without the fields only the app sends (app_version, device_*, os_version, platform).
   const appRow = rule.capture_platform === 'APP_SDK', webAsInsider = appRow && event.insider_view;
+  // Keep the display tied to the exact evidence and representation evaluated here.
+  // A linked Insider hit proves delivery; it does not replace an InsiderQueue contract.
+  const comparison = { evidence_id: event.evidence_id, source: event.source,
+    layer: event.received_by_google ? 'TRACKING_REQUEST' : event.layer,
+    format: webAsInsider ? 'INSIDER_RECORDED' : event.received_by_google ? 'GA4_RECEIVED' : 'RAW' };
+  if (event.capture?.incomplete) return { checks: [{ code: 'CAPTURE_INCOMPLETE', verdict: 'REVIEW' }], score: 0, comparison };
   const payload = webAsInsider ? event.insider_view : event.payload;
   const referenceOnly = appRow && !(payload?.default_parameters && payload?.custom_parameters);
   const fields = Object.entries(rule.fields ?? {}).filter(([path]) => !(webAsInsider && APP_ONLY_FIELD.test(path)));
@@ -60,7 +65,7 @@ function evaluate(testCase, rule, event) {
       if (typeof sample === 'string' && typeof value === 'string' && sample.length <= 60 && sample.toLowerCase() === value.toLowerCase()) similar++;
     }
   }
-  return { checks, score: passed + 2 * similar - 10 * failedFixed + flowHint(testCase.flow, event) };
+  return { checks, comparison, score: passed + 2 * similar - 10 * failedFixed + flowHint(testCase.flow, event) };
 }
 
 // Page paths of booking flows, matched against the flow names used in specifications.
@@ -101,7 +106,8 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
   const issues = best.checks.filter(check => check.verdict !== 'PASS').map(({ path, op, code, expected, actual, verdict, pushed }) => ({ path, op, code, expected, actual, verdict, ...(pushed !== undefined ? { pushed } : {}) }));
   // Field paths the specification expects, so a viewer can mark every parameter of the event.
   const fields = Object.fromEntries(Object.entries(best.rule.fields ?? {}).map(([path, field]) => [path, field?.op]));
-  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
+  return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields,
+    checks: best.checks, comparison: best.comparison, rule_index: best.testCase.rules.indexOf(best.rule), ambiguous: candidates.length > 1 && best.score <= 0 };
 }
 
 /**
@@ -137,25 +143,32 @@ export function matchTracked(cases, event, { links = linkDeliveries([event]), no
 
 /** An explicit row/event choice never searches other specification flows. */
 export function compareSelectedEvent(testCase, event, { links = linkDeliveries([event]), now = Date.now() } = {}) {
+  const rules = (testCase.rules ?? []).filter(rule => String(rule.source ?? testCase.source).toUpperCase() === String(event.source).toUpperCase());
+  if (!rules.length) return { case_id: testCase.id, verdict: 'FAIL', fields: {}, checks: [], manual: true,
+    issues: [{ code: 'SOURCE_MISMATCH', verdict: 'FAIL', expected: [...new Set((testCase.rules ?? []).map(rule => rule.source ?? testCase.source))], actual: event.source }] };
   const normal = matchTracked([testCase], event, { links, now });
   if (normal && !normal.ambiguous) return normal;
-  const rule = testCase.rules?.find(rule => rule.layer === event.layer) ?? testCase.rules?.[0];
+  const rule = rules.find(rule => rule.layer === event.layer) ?? rules[0];
   if (!rule) return null;
   let observed = event;
   if (event.source === 'GA4' && event.layer === 'JS_QUEUE' && links.sentBy.has(event.evidence_id)) observed = links.sentBy.get(event.evidence_id);
   if (observed.source === 'GA4' && observed.layer === 'TRACKING_REQUEST') observed = { ...observed, layer: 'JS_QUEUE', payload: ga4HitAsPush(observed.payload), received_by_google: true, pushed: links.pushOf.get(observed.evidence_id)?.payload };
-  if (observed.source === 'INSIDER' && observed.layer === 'TRACKING_REQUEST') observed = { ...observed, insider_view: insiderHitView(observed.event_name, observed.payload) };
-  const { checks } = evaluate(testCase, rule, observed);
+  if (observed.source === 'INSIDER' && observed.layer === 'TRACKING_REQUEST' && !observed.payload?.default_parameters && !observed.payload?.custom_parameters) observed = { ...observed, insider_view: insiderHitView(observed.event_name, observed.payload) };
+  const { checks, comparison } = evaluate(testCase, rule, observed);
   const issues = checks.filter(check => check.verdict !== 'PASS');
   const names = new Set([event.event_name, ...(event.aliases || []), observed.insider_view?.event].filter(Boolean));
   if (![rule.event_name, ...(rule.event_aliases || [])].some(name => names.has(name))) issues.unshift({ path: 'event_name', code: 'EVENT_NAME_MISMATCH', verdict: 'FAIL', expected: rule.event_name, actual: event.event_name });
   if (rule.layer !== observed.layer && !(observed.source === 'INSIDER' && rule.capture_platform === 'APP_SDK')) issues.unshift({ path: 'layer', code: 'LAYER_MISMATCH', verdict: 'REVIEW', expected: rule.layer, actual: observed.layer });
-  return { case_id: testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields: Object.fromEntries(Object.entries(rule.fields || {}).map(([field, definition]) => [field, definition.op])), manual: true };
+  return { case_id: testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, checks, comparison, rule_index: testCase.rules.indexOf(rule),
+    fields: Object.fromEntries(Object.entries(rule.fields || {}).map(([field, definition]) => [field, definition.op])), manual: true };
 }
 
-// The event a specification row is judged on, in the shape of its sample: what Google received as a
-// dataLayer push, a web Insider hit as the event Insider records, a push or app event as it is.
-export function trackedView(event) {
+// With a rule result, use its evaluated representation. Without one, return the
+// vendor's usual inspection view. Neither path copies missing fields from a push.
+export function trackedView(event, format) {
+  if (format === 'RAW') return event.payload;
+  if (format === 'GA4_RECEIVED') return ga4HitAsPush(event.payload);
+  if (format === 'INSIDER_RECORDED') return event.payload?.default_parameters || event.payload?.custom_parameters ? event.payload : insiderHitView(event.event_name, event.payload);
   if (event.layer === 'TRACKING_REQUEST' && event.source === 'GA4') return ga4HitAsPush(event.payload);
   if (event.layer === 'TRACKING_REQUEST' && event.source === 'INSIDER' && !event.payload?.default_parameters && !event.payload?.custom_parameters) return insiderHitView(event.event_name, event.payload);
   return event.payload;
