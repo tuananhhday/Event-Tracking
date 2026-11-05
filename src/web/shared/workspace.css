@@ -1,0 +1,47 @@
+/* Keep the original workspace layout and typography. Style only the new controls
+   and allow long labels/evidence to wrap inside their existing containers. */
+.flow [data-stage="step"] { display:none; }
+.stage[data-stage="report"] .stage-num span { display:none; }
+.stage[data-stage="report"] .stage-num::after { content:'3'; }
+.stage-title,.stage-title small,.case-main strong { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+.stage-body p,.stage-body .hint,.download,#run-dir,.tabpanel { overflow-wrap:anywhere; }
+.stage-body .btn { height:auto; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.board,.stage,.comparison-controls>div { min-width:0; }
+.table-scroll,.tp2-table-wrap { max-width:100%; overflow:auto; }
+.checks,.params,.tp2-table-wrap table { table-layout:auto; }
+.checks th,.checks td,table.params.items th,table.params.items td { white-space:normal; overflow-wrap:anywhere; overflow:visible; text-overflow:clip; }
+.ai-privacy-note { margin:4px 0 8px; }
+
+.comparison-controls { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--accent-soft); }
+.comparison-controls>div:first-child { flex:1 1 260px; }
+.comparison-controls h2 { margin:4px 0; font-size:17px; line-height:1.5; overflow-wrap:anywhere; }
+.comparison-controls p { margin:0; color:var(--muted); font-size:12px; }
+.comparison-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.comparison-actions .btn { white-space:normal; height:auto; }
+.flow-choice-list { display:grid; gap:10px; margin-top:14px; }
+.flow-choice { display:flex; flex-direction:column; align-items:flex-start; gap:6px; width:100%; padding:14px; text-align:left; background:var(--surface); border:1px solid var(--line-strong); border-radius:8px; color:var(--text); cursor:pointer; overflow-wrap:anywhere; }
+.flow-choice:hover { background:var(--accent-soft); border-color:var(--accent); }
+.flow-choice:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.flow-choice strong { font-size:15px; }
+.flow-choice span { color:var(--muted); font-size:12px; }
+.flow-choice b { color:var(--accent); font-size:12px; }
+.event-choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:14px; border:1px solid var(--line); border-radius:8px; }
+.event-choice>div { display:flex; flex-direction:column; gap:4px; overflow-wrap:anywhere; }
+.event-choice details { grid-column:1/-1; }
+.event-choice pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.inspection-dialog button { white-space:normal; height:auto; }
+
+.sheet-picker { position:relative; width:100%; max-width:780px; }
+.sheet-picker-button { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:38px; padding:8px 10px; text-align:left; font:13px/1.5 "Segoe UI",system-ui,sans-serif; color:var(--text); background:var(--surface); border:1px solid var(--line-strong); border-radius:8px; cursor:pointer; }
+.sheet-picker-button:disabled { color:var(--muted); cursor:default; }
+#sheet-selected { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.sheet-picker-popup { position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:35; padding:8px; border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); color:var(--text); box-shadow:0 8px 24px #1e293b22; }
+.sheet-picker-popup.above { top:auto; bottom:calc(100% + 6px); }
+#sheet-search { width:100%; min-height:34px; padding:7px 9px; font:13px/1.5 "Segoe UI",system-ui,sans-serif; color:var(--text); background:var(--surface); border:1px solid var(--line-strong); border-radius:6px; }
+#sheet-choices { margin-top:6px; max-height:var(--sheet-list-height,240px); overflow-y:auto; overscroll-behavior:contain; }
+#sheet-choices button { display:block; width:100%; padding:8px 9px; border:0; border-radius:5px; background:var(--surface); color:var(--text); font:13px/1.5 "Segoe UI",system-ui,sans-serif; text-align:left; white-space:normal; overflow-wrap:anywhere; cursor:pointer; }
+#sheet-choices button:hover,#sheet-choices button:focus-visible,#sheet-choices [aria-selected="true"] { background:var(--accent-soft); color:var(--accent); outline-offset:-2px; }
+@media(max-width:640px) {
+  .event-choice { grid-template-columns:minmax(0,1fr); }
+  .comparison-controls { align-items:flex-start; padding:12px; }
+}
