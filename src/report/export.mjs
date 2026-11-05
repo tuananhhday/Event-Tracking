@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { redact } from '../core/privacy.mjs';
 import { sanitizeCases, sensitivePath } from '../spec/sanitize.mjs';
 import { specCoverage } from '../core/catalog.mjs';
+import { comparisonCoverage } from '../core/comparison.mjs';
 import { firingChecks, FIRING_RULES } from '../core/firing.mjs';
 import { linkDeliveries, deliveryStatus } from '../core/delivery.mjs';
 import { activityEntries } from '../core/activity.mjs';
@@ -119,10 +120,10 @@ function addSheet(workbook, name, headers, rows, widths = []) {
   return worksheet;
 }
 
-export function prepareReportData({ cases = [], events = [], api = [] } = {}) {
+export function prepareReportData({ cases = [], events = [], api = [], session, steps = [] } = {}) {
   // Matched on the unsanitized spec so sample values can still identify each flow.
   const links = linkDeliveries(events), now = Date.now();
-  const coverage = cases.length ? specCoverage(cases, events, new Map(), { links, now }) : null;
+  const coverage = cases.length ? session?.spec_comparison ? comparisonCoverage(cases, events, session.spec_comparison, { all: true, steps, now }) : specCoverage(cases, events, new Map(), { links, now }) : null;
   const firing = firingChecks(events, { links });
   const entries = activityEntries(events, { links, now });
   const priced = priceChecks(entries, api);
@@ -132,7 +133,7 @@ export function prepareReportData({ cases = [], events = [], api = [] } = {}) {
 }
 
 export async function exportReports({ session = {}, cases = [], events = [], steps = [], results = [], api = [], api_calls: apiCalls = [], report_notes: reportNotes = null }, outputDir, { prepared, formats, htmlSettings = {} } = {}) {
-  const { links, now, coverage, firing, priced, report } = prepared ?? prepareReportData({ cases, events, api });
+  const { links, now, coverage, firing, priced, report } = prepared ?? prepareReportData({ cases, events, api, session, steps });
   const notes = reportNotes?.notes ?? {}, byAi = report.some(row => notes[row.key]);
   const delivery = new Map(events.map(event => [event.evidence_id, DELIVERY_LABEL[deliveryStatus(event, links, now)] ?? '']));
   ({ session, cases, events, steps, results } = sanitizeSnapshot({ session, cases, events, steps, results }));
@@ -140,7 +141,9 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   await fs.mkdir(directory, { recursive: true });
   const paths = { xlsx: path.join(directory, 'report.xlsx'), html: path.join(directory, 'report.html'), json: path.join(directory, 'comparison.json'), bugs: path.join(directory, 'bugs.md') };
   const wanted = formats ?? ['xlsx', 'html', 'json', 'bugs'];
-  const tallies = Object.fromEntries(['PASS', 'FAIL', 'REVIEW', 'NOT_EXECUTED'].map(verdict => [verdict, results.filter(result => result.verdict === verdict).length]));
+  const tallies = coverage?.explicit ? { PASS: coverage.totals.match, FAIL: coverage.totals.mismatch + coverage.totals.not_sent,
+    REVIEW: coverage.rows.filter(row => ['REVIEW', 'PENDING'].includes(row.status)).length, NOT_EXECUTED: coverage.totals.not_seen }
+    : Object.fromEntries(['PASS', 'FAIL', 'REVIEW', 'NOT_EXECUTED'].map(verdict => [verdict, results.filter(result => result.verdict === verdict).length]));
   const comparisons = [];
   const bugs = [];
   for (const result of results) {

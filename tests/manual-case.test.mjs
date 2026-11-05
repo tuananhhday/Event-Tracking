@@ -41,6 +41,7 @@ test('an event typed in the app is saved, checked against what the website sends
   assert.equal((await post('manual-case', { event_name: 'view_item', sample: 'chưa có mẫu' })).status, 400);
   // The website sends view_item as the sample says: the typed row is matched.
   app.manager.start({ environment: 'MOCK_ONLY' });
+  app.manager.startComparison('Khách sạn');
   const [hit] = decodeRequest({ url: 'https://www.google-analytics.com/g/collect?v=2&tid=G-TEST', body: 'en=view_item&cu=VND&epn.value=1000000&pr1=idROOM-1~nmDeluxe~pr1000000', contentType: 'text/plain' });
   app.manager.emit({ ...hit, page: { url: 'https://hotel.test/vi/hotel/room', target_id: 'tab' } });
   const row = (await (await fetch(`${base}/api/state?compact=1`)).json()).specCoverage.rows[0];
@@ -49,6 +50,9 @@ test('an event typed in the app is saved, checked against what the website sends
   const file = path.join(dir, 'spec.json');
   await fs.writeFile(file, JSON.stringify({ cases: [{ id: 'TC-FILE-1', name: 'search_submit', source: 'GA4', rules: [{ event_name: 'search_submit', layer: 'JS_QUEUE', fields: {} }] }] }));
   const imported = await post('import', { path: file });
-  assert.equal(imported.status, 200);
-  assert.deepEqual((await imported.json()).cases.map(c => c.id), ['TC-FILE-1', added.id]);
+  assert.equal(imported.status, 400, 'a specification used by a selected flow cannot change during the session');
+  app.manager.finish();
+  const importedAfter = await post('import', { path: file });
+  assert.equal(importedAfter.status, 200);
+  assert.deepEqual((await importedAfter.json()).cases.map(c => c.id), ['TC-FILE-1', added.id]);
 });

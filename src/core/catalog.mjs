@@ -135,6 +135,24 @@ export function matchTracked(cases, event, { links = linkDeliveries([event]), no
   return matchEvent(cases, event, index);
 }
 
+/** An explicit row/event choice never searches other specification flows. */
+export function compareSelectedEvent(testCase, event, { links = linkDeliveries([event]), now = Date.now() } = {}) {
+  const normal = matchTracked([testCase], event, { links, now });
+  if (normal && !normal.ambiguous) return normal;
+  const rule = testCase.rules?.find(rule => rule.layer === event.layer) ?? testCase.rules?.[0];
+  if (!rule) return null;
+  let observed = event;
+  if (event.source === 'GA4' && event.layer === 'JS_QUEUE' && links.sentBy.has(event.evidence_id)) observed = links.sentBy.get(event.evidence_id);
+  if (observed.source === 'GA4' && observed.layer === 'TRACKING_REQUEST') observed = { ...observed, layer: 'JS_QUEUE', payload: ga4HitAsPush(observed.payload), received_by_google: true, pushed: links.pushOf.get(observed.evidence_id)?.payload };
+  if (observed.source === 'INSIDER' && observed.layer === 'TRACKING_REQUEST') observed = { ...observed, insider_view: insiderHitView(observed.event_name, observed.payload) };
+  const { checks } = evaluate(testCase, rule, observed);
+  const issues = checks.filter(check => check.verdict !== 'PASS');
+  const names = new Set([event.event_name, ...(event.aliases || []), observed.insider_view?.event].filter(Boolean));
+  if (![rule.event_name, ...(rule.event_aliases || [])].some(name => names.has(name))) issues.unshift({ path: 'event_name', code: 'EVENT_NAME_MISMATCH', verdict: 'FAIL', expected: rule.event_name, actual: event.event_name });
+  if (rule.layer !== observed.layer && !(observed.source === 'INSIDER' && rule.capture_platform === 'APP_SDK')) issues.unshift({ path: 'layer', code: 'LAYER_MISMATCH', verdict: 'REVIEW', expected: rule.layer, actual: observed.layer });
+  return { case_id: testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields: Object.fromEntries(Object.entries(rule.fields || {}).map(([field, definition]) => [field, definition.op])), manual: true };
+}
+
 // The event a specification row is judged on, in the shape of its sample: what Google received as a
 // dataLayer push, a web Insider hit as the event Insider records, a push or app event as it is.
 export function trackedView(event) {

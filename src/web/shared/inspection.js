@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id), esc = EventQA.esc, pretty = value => value == null ? '' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
-  const labels = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần kiểm tra', CLICK: 'Click affiliate', NO_MAPPING: 'Chọn API để so sánh', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Cần chọn API', DECODE_ERROR: 'Lỗi giải mã' };
+  const labels = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần kiểm tra', CLICK: 'Click affiliate', NO_MAPPING: 'Chưa đủ dữ liệu ghép', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Chưa xác định được API', DECODE_ERROR: 'Lỗi giải mã' };
   const pill = status => `<span class="pill ${status === 'MATCH' ? 'PASS' : ['MISMATCH', 'DECODE_ERROR'].includes(status) ? 'FAIL' : 'REVIEW'}">${esc(labels[status] || status)}</span>`;
   const prefsKey = `eventqa:${document.body.dataset.mode}:export-options`;
   let finish = false, state = { mappings: [], events: [], apis: [] }, selected = null, editingId = '', loading = false, page = 0, draftFields = [], detailSequence = 0;
@@ -14,7 +14,7 @@
   window.EventQAExports = { open(endSession = false) {
     finish = endSession; $('export-title').textContent = finish ? 'Kết thúc & xuất báo cáo' : 'Xuất báo cáo'; $('export-confirm').textContent = finish ? 'Kết thúc & xuất' : 'Xuất báo cáo'; $('export-error').textContent = '';
     let prefs = {}; try { prefs = JSON.parse(localStorage.getItem(prefsKey) || '{}'); } catch { /* use defaults */ }
-    for (const type of ['events', 'tp2', 'api']) $(`export-${type}`).checked = (prefs.contents || ['events']).includes(type);
+    for (const type of ['events', 'tracking', 'tp2', 'api']) $(`export-${type}`).checked = (prefs.contents || ['events']).includes(type);
     $('export-format').value = prefs.format || 'html'; $('export-font').value = prefs.htmlSettings?.fontSize || 14; $('export-page-size').value = prefs.htmlSettings?.rowsPerPage || 50;
     $('export-wrap').checked = prefs.htmlSettings?.wrap !== false; $('export-issues').checked = prefs.htmlSettings?.onlyIssues === true;
     for (const input of document.querySelectorAll('[data-export-column]')) input.checked = !prefs.htmlSettings?.hiddenColumns?.includes(input.dataset.exportColumn);
@@ -23,7 +23,7 @@
   } };
   $('export-close').onclick = () => $('export-dialog').close();
   $('export-confirm').onclick = async () => {
-    const contents = ['events', 'tp2', 'api'].filter(type => $(`export-${type}`).checked), format = $('export-format').value;
+    const contents = ['events', 'tracking', 'tp2', 'api'].filter(type => $(`export-${type}`).checked), format = $('export-format').value;
     if (!contents.length) { $('export-error').textContent = 'Chọn ít nhất một nội dung để xuất.'; return; }
     const htmlSettings = { fontSize: Number($('export-font').value), rowsPerPage: Number($('export-page-size').value), wrap: $('export-wrap').checked, onlyIssues: $('export-issues').checked,
       hiddenColumns: [...document.querySelectorAll('[data-export-column]')].filter(input => !input.checked).map(input => input.dataset.exportColumn), columnOrder: [...document.querySelectorAll('[data-export-column]')].map(input => input.dataset.exportColumn) };

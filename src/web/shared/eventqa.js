@@ -23,6 +23,7 @@
   // GA4 Measurement Protocol parameters: transport metadata, not business fields.
   const GA4_PROTOCOL = new Set(['v', 'tid', 'gtm', 'gcd', 'npa', 'dma', 'dma_cps', 'cid', 'ul', 'sr', 'uaa', 'uab', 'uafvl', 'uamb', 'uam', 'uap', 'uapv', 'uaw', 'are', 'frm', 'pscdl', 'sid', 'sct', 'seg', 'dl', 'dr', 'dt', 'tfd', 'ec_mode', 'tag_exp', 'ngs', 'gcs', 'gcu', 'richsstsse', 'pae', 'ir', 'tt', 'apve', 'apvf', 'gtm_up', 'gcut', 'dp', 'ecid', 'en']);
   const ISSUE_TEXT = {
+    EVENT_NAME_MISMATCH: 'Tên event khác đặc tả', LAYER_MISMATCH: 'Tầng dữ liệu khác đặc tả',
     MISSING_EVENT: 'Không thấy event', DUPLICATE_EVENT: 'Event bị lặp', MISSING_FIELD: 'Thiếu trường', NULL_FIELD: 'Trường rỗng (null)',
     UNEXPECTED_FIELD: 'Có trường không được phép', VALUE_MISMATCH: 'Sai giá trị', DYNAMIC_VALUE_MISMATCH: 'Không khớp context', WRONG_TYPE: 'Sai kiểu dữ liệu',
     HTTP_ERROR: 'Request lỗi HTTP', REQUEST_FAILED: 'Request thất bại', TIMING_EXCEEDED: 'Quá thời gian cho phép', MISSING_TIMING: 'Thiếu mốc thời gian',
@@ -42,8 +43,9 @@
   const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
   const FILE_TEXT = { xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Bảng đối chiếu có lọc và xem chi tiết'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'], api_html: ['API · HTML', 'Toàn bộ API và chi tiết trong một file'], api_json: ['API · JSON', 'Request/response của phiên'], api_xlsx: ['API · Excel', 'Danh sách và trường chi tiết'], tp2_html: ['TP2 ↔ API · HTML', 'Dữ liệu giải mã và đối chiếu'], tp2_json: ['TP2 ↔ API · JSON', 'Dữ liệu giải mã và đối chiếu'], tp2_xlsx: ['TP2 ↔ API · Excel', 'Dữ liệu giải mã và đối chiếu'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
+  for (const format of ['html', 'xlsx', 'json']) FILE_TEXT[`tracking_${format}`] = [`Danh sách tracking · ${format.toUpperCase()}`, 'Tên event, số lần xuất hiện, trang và bằng chứng thực tế'];
 
-  const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
+  const ui = { state: null, stateEpoch: 0, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
     sig: {}, details: new Map(), loadingDetails: new Set(), expandedGroup: null, casesKey: null, holdUntil: 0, holdTimer: null, groupFilter: null, openEvents: new Set(), seenEvents: new Set(), phase: null, tab: 'events', view: 'activity', marker: null,
     activity: [], activityVersion: null, activityNext: null, activityTotal: 0, activitySelected: null,
     hooks: {}, token: '', mode: '', vendorsRendered: false, builder: null, pushes: [], pushVersion: null, pushLoading: false,
@@ -70,18 +72,19 @@
       const response = await fetch(`/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-EventQA-Token': ui.token }, body: JSON.stringify(data) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `Thao tác thất bại (HTTP ${response.status}).`);
-      if (result.mode) ui.state = result;
+      if (result.mode) { ui.stateEpoch++; ui.state = result; }
       return result;
     } catch (error) { showError(error.message); error.shown = true; throw error; }
-    finally { ui.busy = null; await refresh(); }
+    finally { ui.busy = null; if (path.startsWith('comparison/')) ui.holdUntil = 0; await refresh(); render(); }
   }
   async function refresh() {
     if (ui.stopped || ui.refreshing || document.hidden) return;
     ui.refreshing = true;
+    const epoch = ui.stateEpoch;
     try {
       const response = await fetch('/api/state' + (ui.view === 'stream' ? '' : '?compact=1'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error();
-      ui.state = await response.json(); setOffline(false);
+      const state = await response.json(); if (epoch === ui.stateEpoch) ui.state = state; setOffline(false);
     } catch { setOffline(true); }
     finally { ui.refreshing = false; }
     render();
@@ -228,7 +231,7 @@
   }
 
   // ---- flow (stepper) ---------------------------------------------------
-  function stageForPhase(phase) { return { idle: 'session', loading: 'session', running: 'step', recording: 'step', finished: 'report', closing: 'report' }[phase]; }
+  function stageForPhase(phase) { return { idle: 'session', loading: 'session', running: null, recording: null, finished: 'report', closing: 'report' }[phase]; }
   function setStage(name, open) { const stage = document.querySelector(`[data-stage="${name}"]`); if (stage) { stage.classList.toggle('open', open); stage.querySelector('.stage-head')?.setAttribute('aria-expanded', String(open)); } }
   function renderFlow(s, phase) {
     if (phase !== ui.phase) {
@@ -256,7 +259,7 @@
     bar.classList.toggle('recording', phase === 'recording');
     $('phase').className = `phase ${phase}`;
     const explore = phase === 'running' && !s.cases.length;
-    setText('phase-label', { loading: 'Đang tải…', idle: 'Chưa mở website', running: explore ? 'Đang thu thập tự do' : 'Phiên đang chạy', recording: 'ĐANG GHI BƯỚC', finished: s.session?.status === 'COMPLETED' ? 'Phiên đã kết thúc' : 'Phiên đã dừng', closing: 'Đang tắt…' }[phase]);
+    setText('phase-label', { loading: 'Đang tải…', idle: 'Chưa mở website', running: s.specCoverage?.selection.active ? 'Đang đối chiếu luồng' : 'Đang thu thập event', recording: 'Đang chạy tự động', finished: s.session?.status === 'COMPLETED' ? 'Phiên đã kết thúc' : 'Phiên đã dừng', closing: 'Đang tắt…' }[phase]);
     const meta = [];
     if (s.session) meta.push(`<span>Website <b>${esc(hostOf(s.session.target_url))}</b></span>`);
     if (phase === 'recording') {
@@ -271,8 +274,8 @@
     const primary = $('bar-primary'), secondary = $('bar-secondary');
     const action = {
       idle: [ui.hooks.startLabel || 'Mở trình duyệt test', 'start', 'primary'], finished: ['Mở phiên mới', 'start', 'primary'],
-      running: explore ? ['⚑ Đặt mốc rồi thao tác', 'set-marker', 'primary'] : [`▶ Bắt đầu bước${caseById(ui.selectedCase) ? `: ${caseById(ui.selectedCase).name}` : ''}`, 'step-start', 'primary'],
-      recording: ['■ Hoàn tất bước', 'step-complete', 'rec'], loading: ['…', null, 'primary'], closing: ['Đang tắt…', null, 'primary'],
+      running: explore ? ['Xem event thu thập', 'view-events', 'primary'] : s.specCoverage?.selection.attempt ? ['Xem đối chiếu', 'view-spec', 'primary'] : ['Chọn luồng kiểm tra', 'select-flow', 'primary'],
+      recording: ['Xem đối chiếu', 'view-spec', 'primary'], loading: ['…', null, 'primary'], closing: ['Đang tắt…', null, 'primary'],
     }[phase];
     primary.textContent = ui.busy ? 'Đang xử lý…' : action[0]; primary.dataset.action = action[1] || ''; primary.className = `btn ${action[2]}`;
     primary.disabled = !!ui.busy || !action[1] || (action[1] === 'step-start' && !ui.selectedCase);
@@ -293,15 +296,15 @@
   }
   function renderResults(s) {
     const host = $('results'); if (!host) return;
-    const sig = JSON.stringify([s.results, s.cases.map(c => [c.id, c.name])]); if (sig === ui.sig.results) return; ui.sig.results = sig;
+    const sig = JSON.stringify([s.results, s.specCoverage?.totals, s.specCoverage?.selection, s.cases.map(c => [c.id, c.name])]); if (sig === ui.sig.results) return; ui.sig.results = sig;
     const executed = s.results.filter(r => r.step_id).reverse();
     const pending = s.results.filter(r => !r.step_id);
     const steps = new Map((s.steps || []).map(step => [step.id, step]));
     const notRun = pending.length ? `<p class="hint">Chưa chạy:</p><div class="not-run">${pending.map(r => `<span class="pill">${esc(caseById(r.test_case_id)?.name || r.test_case_id)}</span>`).join('')}</div>` : '';
     if (!executed.length) {
       host.innerHTML = (s.cases.length
-        ? '<div class="empty"><strong>Chưa có kết quả</strong>Chọn test case, bấm <b>Bắt đầu bước</b>, thao tác trên website rồi bấm <b>Hoàn tất bước</b>.</div>'
-        : '<div class="empty"><strong>Chưa có rule để đối chiếu</strong>Mở tab <b>Event trực tiếp</b>, bấm <b>Tạo rule</b> trên event thật, hoặc nhập file đặc tả ở bước 2.</div>') + notRun;
+        ? `<div class="empty"><strong>${s.specCoverage?.selection.attempt ? 'Kết quả đối chiếu theo luồng' : 'Chọn luồng để bắt đầu đối chiếu'}</strong>${s.specCoverage?.selection.attempt ? `Luồng ${esc(s.specCoverage.selection.attempt.flow)} · Khớp ${s.specCoverage.totals.match} · Lệch ${s.specCoverage.totals.mismatch}. Mở bảng đối chiếu để xem từng event.` : 'Nhập đặc tả, chọn luồng rồi thao tác trên website. Kết quả cập nhật trực tiếp.'}<button type="button" class="btn primary" data-action="view-spec">Mở bảng đối chiếu</button></div>`
+        : '<div class="empty"><strong>Chưa có đặc tả để đối chiếu</strong>Nhập file đặc tả hoặc tạo rule từ event thật.</div>');
       return;
     }
     host.innerHTML = executed.map(result => {
@@ -651,6 +654,37 @@
   }
 
   // ---- specification coverage ------------------------------------------------
+  function renderFlowChoices() {
+    const query = $('comparison-flow-search').value.trim().toLowerCase();
+    const flows = (ui.state?.specCoverage?.selection.flows || []).filter(flow => flow.name.toLowerCase().includes(query));
+    $('comparison-flow-list').innerHTML = flows.map(flow => `<button type="button" class="flow-choice" data-choose-flow="${esc(flow.name)}"><strong>${esc(flow.name)}</strong><span>${flow.case_ids.length} event đặc tả · ${esc(flow.sources.join(', '))}</span><b>Kiểm tra luồng này →</b></button>`).join('') || '<p class="empty">Không tìm thấy luồng phù hợp.</p>';
+  }
+  function openFlowPicker() {
+    selectTab('spec');
+    if (!ui.state?.running) throw new Error('Mở website để bắt đầu phiên trước khi chọn luồng.');
+    if (!ui.state.cases.length) { revealSetup('spec'); throw new Error('Nhập file đặc tả trước khi chọn luồng.'); }
+    $('comparison-flow-search').value = ''; renderFlowChoices(); $('comparison-flow-dialog').showModal(); $('comparison-flow-search').focus();
+  }
+  let eventChoices = null;
+  function renderEventChoices() {
+    const query = $('comparison-event-search').value.trim().toLowerCase();
+    const events = (eventChoices?.events || []).filter(event => `${event.event_name} ${event.page?.url || ''} ${event.evidence_id}`.toLowerCase().includes(query));
+    $('comparison-event-list').innerHTML = `<button type="button" class="btn" data-choose-comparison-event="auto">Dùng lại cách ghép tự động theo tên event</button>` + events.map(event => `<article class="event-choice"><div><strong>${esc(event.event_name)}</strong><span>${esc(clock(event.captured_at))} · ${esc(event.source)} · ${esc(LAYER_TEXT[event.layer] || event.layer)}</span><small>${esc(event.page?.url || '')}</small><small>${esc(event.evidence_id)}</small></div><button type="button" class="btn primary" data-choose-comparison-event="${esc(event.evidence_id)}">So sánh event này</button><details><summary>Xem dữ liệu</summary><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></details></article>`).join('') + (!events.length ? '<p class="empty">Chưa có event phù hợp trong lượt này. Thao tác trên website rồi mở lại danh sách.</p>' : '');
+  }
+  async function openEventPicker(caseId) {
+    const response = await fetch(`/api/comparison/candidates?case_id=${encodeURIComponent(caseId)}`), data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Không đọc được event của lượt này.');
+    eventChoices = { ...data, case_id: caseId }; $('comparison-event-search').value = '';
+    $('comparison-event-hint').textContent = `Đặc tả: ${caseById(caseId)?.rules[0]?.event_name} · Luồng ${data.attempt.flow}. Chọn event thực tế cùng nền tảng; khác tên sẽ được báo lệch.`;
+    renderEventChoices(); $('comparison-event-dialog').showModal();
+  }
+  function renderComparisonControls(s) {
+    const host = $('comparison-controls'); if (!host) return;
+    const selection = s.specCoverage?.selection, attempt = selection?.attempt;
+    const sig = JSON.stringify([selection, s.running, !!s.currentStep, !!ui.busy, s.cases.length]); if (host.dataset.sig === sig) return; host.dataset.sig = sig;
+    const disabled = !s.running || s.currentStep || ui.busy ? 'disabled' : '';
+    host.innerHTML = `<div><span class="eyebrow">ĐỐI CHIẾU THEO LUỒNG</span><h2>${attempt ? esc(attempt.flow) : 'Bạn muốn kiểm tra luồng nào?'}</h2><p>${attempt ? `${selection.active ? 'Đang nhận event mới' : 'Đã dừng nhận event cho lượt này'} · Bắt đầu ${esc(clock(attempt.started_at))} · Lượt ${selection.attempts.filter(item => item.flow === attempt.flow).length}` : 'Nhập đặc tả để xem các luồng. Chỉ bắt đầu so sánh sau khi bạn chọn luồng cần kiểm tra.'}</p></div><div class="comparison-actions"><button type="button" class="btn primary" data-action="select-flow" ${disabled || (!s.cases.length ? 'disabled' : '')}>${attempt ? 'Đổi luồng' : 'Chọn luồng kiểm tra'}</button>${attempt ? `<button type="button" class="btn" data-action="retest-flow" ${disabled}>Test lại</button>${selection.active ? `<button type="button" class="btn" data-action="pause-comparison" ${disabled}>Tạm dừng đối chiếu</button>` : ''}` : ''}</div>`;
+  }
   const valueAt = (value, path) => {
     const parts = path.split('.'); let current = value;
     for (let i = 0; i < parts.length; i++) {
@@ -665,11 +699,11 @@
     const c = caseById(id); if (!c) return;
     const row = ui.state.specCoverage?.rows.find(r => r.case_id === id);
     const evidence = row?.last_fail_evidence_id || row?.last_evidence_id;
-    const loaded = evidence ? await (await fetch(`/api/event?id=${encodeURIComponent(evidence)}`)).json() : null;
+    const loaded = evidence ? await (await fetch(`/api/event?id=${encodeURIComponent(evidence)}&case_id=${encodeURIComponent(id)}`)).json() : null;
     const event = loaded?.event;
     const rule = c.rules[0];
     const comparisons = Object.entries(rule?.fields || {}).map(([path, field]) => {
-      const actual = event ? valueAt(event.payload, path) : undefined;
+      const actual = event ? valueAt(loaded.comparison_payload ?? event.payload, path) : undefined;
       const issue = loaded?.spec?.issues.find(i => i.path === path);
       const verdict = !event ? 'Chưa có event' : issue ? (ISSUE_TEXT[issue.code] || issue.code) : field.op === 'ignore' ? 'Bỏ qua' : 'Đúng theo rule';
       return `<tr><td><code>${esc(path)}</code></td><td>${formatValue(valueAt(c.sample, path))}</td><td>${esc(field.op)}${field.value !== undefined ? ` · ${esc(short(field.value, 100))}` : ''}</td><td>${actual === undefined ? '<span class="hint">Chưa có / thiếu trường</span>' : formatValue(actual)}</td><td>${esc(verdict)}</td></tr>`;
@@ -681,15 +715,16 @@
       <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Payload · thực tế</h3><pre>${esc(event ? JSON.stringify(event.payload, null, 2) : 'Chưa có event')}</pre></section></div>`;
     $('spec-detail-dialog').showModal();
   }
-  const SPEC_STATUS = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
+  const SPEC_STATUS = { NOT_SELECTED: ['', 'Chưa chọn luồng'], MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy trong lượt này'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
   function renderSpec(s) {
     const host = $('spec-table'); if (!host) return;
     const cov = s.specCoverage;
+    renderComparisonControls(s);
     $('spec-format-note')?.classList.toggle('hidden', !s.cases.some(c => c.payload_format === 'default_custom_parameters'));
     const f = { flow: $('spec-flow')?.value || '', platform: $('spec-platform')?.value || '', status: $('spec-status')?.value || '', query: ($('spec-search')?.value || '').trim().toLowerCase() };
-    const sig = JSON.stringify([cov?.totals, cov?.rows.map(r => [r.case_id, r.seen, r.status, r.issues.length]), cov?.unmatched.length, f]); if (sig === ui.sig.spec) return; ui.sig.spec = sig;
+    const sig = JSON.stringify([cov?.selection, cov?.totals, cov?.rows.map(r => [r.case_id, r.seen, r.status, r.issues.length, r.last_evidence_id, r.manual]), cov?.unmatched.length, f]); if (sig === ui.sig.spec) return; ui.sig.spec = sig;
     setText('spec-count', cov ? `${cov.totals.seen}/${cov.totals.rows}` : '0');
-    if (!cov) { $('spec-totals').innerHTML = ''; host.innerHTML = '<div class="empty"><strong>Chưa có đặc tả</strong>Nhập file Excel đặc tả ở bước 2 (vd Martech_WebOTA_….xlsx). App sẽ tự gắn từng event bắt được vào đúng dòng Nền tảng · Luồng · Event Name và kiểm trường theo DataLayer Sample.</div>'; return; }
+    if (!cov) { $('spec-totals').innerHTML = ''; host.innerHTML = '<div class="empty"><strong>Chưa có đặc tả</strong>Nhập file Excel hoặc JSON trong phần Đặc tả, sau đó chọn luồng cần kiểm tra.</div>'; return; }
     const t = cov.totals;
     $('spec-totals').innerHTML = [['Dòng đặc tả', t.rows], ['Đã gửi lên server', t.seen], ['Khớp', t.match], ['Lệch', t.mismatch], ['Có push, không gửi', t.not_sent ?? 0], ['Chưa thấy', t.not_seen], ['Ngoài đặc tả', t.unmatched]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     const flows = [...new Set(cov.rows.map(r => r.flow).filter(Boolean))];
@@ -706,10 +741,10 @@
     host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks"><thead><tr><th>STT</th><th>Nền tảng · Luồng</th><th>Event</th><th>Trạng thái</th><th>Số lần</th><th>Trường lệch</th><th>Ghi chú đặc tả</th></tr></thead><tbody>
       ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status]; const evidence = r.last_fail_evidence_id || r.last_evidence_id; return `<tr>
         <td>${esc(r.stt || r.row || '')}</td><td><span class="pill">${esc(r.source)}</span><br><small>${esc(r.flow)}</small></td>
-        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(whereSpec(r.sheet, r.row))} · ${esc(short(r.description, 70))}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button></td>
-        <td><span class="pill ${cls}">${label}</span></td><td>${r.seen ? `<b>${r.seen}</b>${r.fail ? `<br><small class="hint">${r.fail} lệch</small>` : ''}` : '—'}</td>
+        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(whereSpec(r.sheet, r.row))} · ${esc(r.description)}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button>${r.attempt_id && !r.attempt_id.startsWith('step:') ? `<br><button type="button" class="btn small" data-change-comparison-event="${esc(r.case_id)}">Đổi event so sánh</button>` : ''}</td>
+        <td><span class="pill ${cls}">${label}</span>${r.manual ? '<br><small>Event bạn chọn</small>' : ''}</td><td>${r.seen ? `<b>${r.seen}</b>${r.fail ? `<br><small class="hint">${r.fail} lệch</small>` : ''}` : '—'}</td>
         <td>${issueText(r) || (r.seen ? '<span class="hint">Đủ trường theo sample</span>' : '')}${evidence ? `<button type="button" class="evlink" data-evidence="${esc(evidence)}">Xem event</button>` : ''}</td>
-        <td><small>${esc(short(r.notes, 90))}</small></td></tr>`; }).join('')}
+        <td><small>${esc(r.notes)}</small></td></tr>`; }).join('')}
       ${unmatched.map(u => `<tr><td>—</td><td><span class="pill">${esc(u.source)}</span></td><td><b>${esc(u.event_name)}</b></td><td><span class="pill warn">Ngoài đặc tả</span></td><td><b>${u.count}</b></td><td><button type="button" class="evlink" data-evidence="${esc(u.last_evidence_id)}">Xem event</button></td><td><small class="hint">Event bắn ra nhưng file đặc tả không có</small></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty"><strong>Không có dòng khớp bộ lọc</strong></div>';
   }
@@ -963,8 +998,8 @@
     let testCase;
     try { testCase = builderCase(); } catch (error) { $('b-error').textContent = error.message; return; }
     await api('save-case', { case: testCase }, 'save-case');
-    $('builder').close(); ui.selectedCase = null; selectCase(testCase.id, { force: true }); setStage('step', true);
-    toast(ui.state?.running ? 'Đã lưu case. Bấm Bắt đầu bước rồi thao tác lại để kiểm.' : 'Đã lưu case vào imports/reviewed-cases.json.', 'ok');
+    $('builder').close(); ui.selectedCase = null; selectCase(testCase.id, { force: true }); setStage('spec', true); selectTab('spec');
+    toast(ui.state?.running ? 'Đã lưu case. Chọn luồng rồi thao tác lại để kiểm tra.' : 'Đã lưu case vào imports/reviewed-cases.json.', 'ok');
   }
 
   // ---- log, reports, metrics ----------------------------------------------
@@ -983,13 +1018,13 @@
     // Events Google/Insider received, not every record captured (setup pushes, unsent pushes…).
     setText('event-count', String(s.delivery?.sent ?? s.eventCount));
     setText('kind-count', String(s.delivery?.kinds ?? s.eventSummary?.length ?? 0));
-    const count = verdict => s.results.filter(r => r.verdict === verdict).length;
+    const count = verdict => s.specCoverage ? s.specCoverage.rows.filter(row => ({ PASS: ['MATCH'], FAIL: ['MISMATCH', 'NOT_SENT'], REVIEW: ['REVIEW', 'PENDING'], NOT_EXECUTED: ['NOT_SEEN', 'NOT_SELECTED'] }[verdict] || []).includes(row.status)).length : s.results.filter(r => r.verdict === verdict).length;
     setText('pass-count', String(count('PASS'))); setText('fail-count', String(count('FAIL'))); setText('review-count', String(count('REVIEW'))); setText('notrun-count', String(count('NOT_EXECUTED')));
-    setText('results-count', String(s.results.filter(r => r.step_id).length));
+    setText('results-count', String(s.specCoverage?.selection.attempts.length || s.results.filter(r => r.step_id).length));
   }
   function renderControls(s, phase) {
     const busy = !!ui.busy; const set = (id, disabled) => { if ($(id)) $(id).disabled = disabled; };
-    set('start', s.running || busy || s.closing); set('import', !!s.currentStep || (s.running && s.steps?.length > 0) || busy);
+    set('start', s.running || busy || s.closing); set('import', !!s.currentStep || (s.running && (s.steps?.length > 0 || s.specCoverage?.selection.attempts.length > 0)) || busy);
     set('save-case', !!s.currentStep || busy); set('delete-case', !!s.currentStep || busy || !ui.selectedCase);
     set('step-start', !s.running || !!s.currentStep || busy || !ui.selectedCase); set('step-complete', !s.currentStep || busy);
     set('finish', !s.running || ui.busy === 'finish-only' || s.closing); set('finish-export', !s.running || !!s.currentStep || busy); set('export', !s.session || busy); set('stop-session', !s.running || s.closing);
@@ -1057,11 +1092,23 @@
     return { url: parsed.toString(), browser: $('browser')?.value || 'chrome', debugPort: Number($('debug-port')?.value) || undefined, captureQueues: !$('request-only')?.checked, compareApi: $('compare-api')?.checked ?? true, ...apiLogOptions(), endpointPatterns: endpointPatterns(), ...(ui.hooks.startPayload?.() || {}) };
   }
   const actions = {
+    'view-spec': () => selectTab('spec'),
+    'view-events': () => selectTab('events'),
+    'export-tracking': () => {
+      if (!ui.state?.session) throw new Error('Mở phiên và thu thập event trước khi xuất.');
+      window.EventQAExports.open(false);
+      for (const type of ['events', 'tracking', 'tp2', 'api']) $(`export-${type}`).checked = type === 'tracking';
+    },
+    'select-flow': () => openFlowPicker(),
+    'close-flow-picker': () => $('comparison-flow-dialog').close(),
+    'close-event-picker': () => $('comparison-event-dialog').close(),
+    'retest-flow': async () => { await api('comparison/retest', {}, 'comparison-retest'); selectTab('spec'); toast('Đã bắt đầu lượt mới. Thực hiện lại thao tác trên website để thu event mới.', 'ok'); },
+    'pause-comparison': async () => { await api('comparison/stop', {}, 'comparison-stop'); toast('Đã tạm dừng đối chiếu. Phiên vẫn thu thập event.'); },
     start: async () => {
       const payload = startPayload(); saveSite();
       await api('start', payload, 'start'); ui.marker = null; selectTab('events');
       if (ui.state?.navigationError) return showError(`${ui.state.navigationError} Phiên vẫn mở: sửa URL ngay trong cửa sổ test, hoặc dừng phiên và nhập lại.`);
-      toast(ui.state?.cases.length ? 'Đã mở trình duyệt test. Đăng nhập nếu cần, rồi chọn case và bấm Bắt đầu bước.' : 'Đã mở trình duyệt test. Đăng nhập nếu cần và thao tác; event hiện ở tab Event trực tiếp.', 'ok');
+      toast(ui.state?.cases.length ? 'Đã mở trình duyệt test. Đăng nhập nếu cần, rồi chọn luồng trong bảng Đối chiếu đặc tả.' : 'Đã mở trình duyệt test. Đăng nhập nếu cần và thao tác; event hiện ở tab Event trực tiếp.', 'ok');
     },
     'step-start': async () => {
       const parsed = validateContext(); if (!parsed.ok) throw new Error('Context JSON chưa hợp lệ.');
@@ -1101,7 +1148,7 @@
       const added = result.manualCase; if (!added) return;
       $('manual-result').innerHTML = `<div class="banner info"><p><b>Đã thêm ${esc(added.event_name)}</b>${added.flow ? ` · ${esc(added.flow)}` : ''} (${esc(SOURCE_TEXT[added.source] || added.source)}): sẽ kiểm ${added.fields.length} trường ${added.fields.slice(0, 8).map(field => `<code>${esc(field)}</code>`).join(', ')}${added.fields.length > 8 ? '…' : ''}. Sửa cách kiểm ở “Xem / sửa rule” nếu cần.</p>${added.warnings.length ? `<p class="hint">${added.warnings.map(esc).join('<br>')}</p>` : ''}</div>`;
       $('manual-sample').value = ''; $('manual-event').value = '';
-      toast(`Đã thêm ${added.event_name} vào đặc tả. Event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
+      toast(`Đã thêm ${added.event_name} vào đặc tả. Chọn luồng ở bảng Đối chiếu đặc tả để kiểm tra.`, 'ok');
     },
     export: async () => {
       if (window.EventQAExports) return window.EventQAExports.open(false);
@@ -1118,7 +1165,7 @@
       const file = $('spec-path').value.trim().replace(/^"(.*)"$/, '$1'); if (!file) throw new Error('Nhập đường dẫn file XLSX hoặc JSON.');
       $('spec-path').value = file; const result = await api('import', { path: file, sheet: $('sheet')?.value.trim() }, 'import');
       if ($('spec-file-status')) $('spec-file-status').textContent = `Đã nhập ${result.cases.length} dòng. ` + (result.cases.some(c => c.payload_format === 'default_custom_parameters') ? 'Mẫu AppOTA: xem lưu ý cấu trúc và bảng chi tiết.' : 'Mở tab Đối chiếu đặc tả để xem chi tiết từng event.');
-      resetSelection(); selectTab('spec'); toast(`Đã nhập ${ui.state?.cases.length ?? ''} dòng đặc tả. Event bắt được sẽ tự đối chiếu ở tab Đối chiếu đặc tả.`, 'ok');
+      resetSelection(); selectTab('spec'); toast(`Đã nhập ${ui.state?.cases.length ?? ''} dòng đặc tả. Chọn luồng kiểm tra để bắt đầu đối chiếu.`, 'ok');
     },
     'save-case': async () => {
       const parsed = parseJson('case-json', 'case-json-error'); if (!parsed.ok) throw new Error('Rule JSON chưa hợp lệ.');
@@ -1147,6 +1194,9 @@
   };
 
   function bindCommon() {
+    // Keep the rule editor available as an advanced tool; manual per-step controls are retired.
+    const editor = $('rule-editor'), specSetup = document.querySelector('[data-stage="spec"] .stage-body');
+    if (editor && specSetup) specSetup.append(editor);
     $('activity-close')?.addEventListener('click', () => $('activity-dialog').close());
     $('activity-more')?.addEventListener('click', run(() => refreshActivity(true)));
     for (const id of ['activity-from', 'activity-to']) $(id)?.addEventListener('input', () => { ui.sig.events = null; render(); });
@@ -1171,9 +1221,12 @@
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage], [data-activity-id], [data-activity-view]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage], [data-activity-id], [data-activity-view], [data-choose-flow], [data-change-comparison-event], [data-choose-comparison-event]');
       if (!target || target.disabled) return;
       const d = target.dataset;
+      if (d.chooseFlow) return run(async () => { await api('comparison/start', { flow: d.chooseFlow }, 'comparison-start'); $('comparison-flow-dialog').close(); for (const id of ['spec-flow', 'spec-status', 'spec-platform', 'spec-search']) $(id).value = ''; ui.sig.spec = null; selectTab('spec'); toast('Đã bắt đầu đối chiếu. Thao tác luồng này trên website để nhận event mới.', 'ok'); })();
+      if (d.changeComparisonEvent) return run(() => openEventPicker(d.changeComparisonEvent))();
+      if (d.chooseComparisonEvent) return run(async () => { await api('comparison/event', { case_id: eventChoices.case_id, evidence_id: d.chooseComparisonEvent === 'auto' ? null : d.chooseComparisonEvent }, 'comparison-event'); $('comparison-event-dialog').close(); toast('Đã cập nhật event đối chiếu.', 'ok'); })();
       if (d.activityId) return run(() => openActivity(d.activityId))();
       if (d.activityView) {
         for (const button of $$('[data-activity-view]')) button.setAttribute('aria-pressed', String(button === target));
@@ -1209,6 +1262,8 @@
     $('rule-reset')?.addEventListener('click', () => loadRuleEditor(caseById(ui.selectedCase)));
     for (const id of ['ev-layer', 'ev-source', 'ev-search', 'ev-marked', 'ev-system', 'ev-unsent']) $(id)?.addEventListener('input', () => { if (!['ev-marked', 'ev-system', 'ev-unsent'].includes(id)) ui.groupFilter = null; ui.sig.events = null; render(); });
     for (const id of ['spec-flow', 'spec-platform', 'spec-status', 'spec-search']) $(id)?.addEventListener('input', () => { ui.sig.spec = null; render(); });
+    $('comparison-flow-search')?.addEventListener('input', renderFlowChoices);
+    $('comparison-event-search')?.addEventListener('input', renderEventChoices);
     $('firing-status')?.addEventListener('input', () => { ui.sig.firing = null; render(); });
     $('prices-status')?.addEventListener('input', () => { ui.sig.prices = null; render(); });
     for (const id of ['apicalls-q', 'apicalls-status']) $(id)?.addEventListener('input', () => { ui.apiCallsVersion = null; render(); });
@@ -1258,7 +1313,7 @@
       toggleSetup(false);
       $('case-json').value = JSON.stringify(testCase, null, 2); if ($('approve')) $('approve').checked = !testCase.needs_review;
       if ($('rule-title')) $('rule-title').textContent = `${testCase.id || ''} (chưa lưu)`;
-      setStage('step', true); $('with-cases')?.classList.remove('hidden'); $('rule-editor').open = true; $('case-json').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      revealSetup('spec'); $('rule-editor').open = true; $('case-json').scrollIntoView({ block: 'center', behavior: 'smooth' });
     },
   };
 })();

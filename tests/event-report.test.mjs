@@ -125,7 +125,8 @@ test('exporting in the AI version asks AI for the comment column of the report s
   const base = await app.listen();
   t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
   app.manager.start({ environment: 'MOCK_ONLY' });
-  for (const { evidence_id, ...event } of golfEvents()) app.manager.emit(event);
+  app.manager.startComparison('Golf');
+  for (const { evidence_id, ...event } of golfEvents()) app.manager.emit({ ...event, captured_at: new Date().toISOString() });
   const response = await fetch(`${base}/api/export`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eventqa-token': app.csrf }, body: '{}' });
   assert.equal(response.status, 200);
   assert.deepEqual(asked.map(row => [row.id, row.event, row.status]), [['R1', 'search_golf', 'NOT_SEEN'], ['R2', 'listing_page_view', 'MISMATCH'], ['R3', 'product_detail_page_view', 'MATCH']]);

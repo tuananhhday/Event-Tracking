@@ -3,14 +3,14 @@ import path from 'node:path';
 import ExcelJS from 'exceljs';
 import { exportReports, prepareReportData } from './export.mjs';
 import { renderHtmlReport, htmlSettings } from './html.mjs';
-import { apiSection, tp2Section } from './models.mjs';
+import { apiSection, tp2Section, trackingSection } from './models.mjs';
 import { compareTp2Event, tp2Events } from '../core/tp2-compare.mjs';
 import { redactApiData, apiCallSummary } from '../core/api-log.mjs';
 
 export function normalizeSelection(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Lựa chọn xuất không hợp lệ.');
   const contents = [...new Set(input.contents ?? ['events'])], formats = [...new Set(input.formats ?? ['html'])];
-  if (!contents.length || contents.some(value => !['events', 'api', 'tp2'].includes(value))) throw new Error('Chọn nội dung Event, TP2 hoặc API để xuất.');
+  if (!contents.length || contents.some(value => !['events', 'tracking', 'api', 'tp2'].includes(value))) throw new Error('Chọn báo cáo đối chiếu, danh sách event tracking, TP2 hoặc API để xuất.');
   if (!formats.length || formats.some(value => !['xlsx', 'html', 'json', 'bugs'].includes(value)) || formats.every(value => value === 'bugs') && !contents.includes('events')) throw new Error('Chọn định dạng HTML, Excel hoặc JSON.');
   return { contents, formats, htmlSettings: htmlSettings(input.htmlSettings) };
 }
@@ -59,11 +59,11 @@ export async function exportSelection(snapshot, outputDir, rawSelection, { prepa
   const summaries = calls.map(apiCallSummary);
   for (const kind of selection.contents.filter(value => value !== 'events')) {
     const comparisons = kind === 'tp2' ? events.map(event => compareTp2Event(event, summaries, id => callsById.get(id), tp2Mappings)) : null;
-    const section = kind === 'api' ? apiSection(calls) : tp2Section(comparisons, events);
-    const data = kind === 'api' ? { session: redactApiData(snapshot.session), api_calls: calls } : { session: redactApiData(snapshot.session), events: redactApiData(events), comparisons };
+    const section = kind === 'tracking' ? trackingSection(redactApiData(snapshot.events ?? [])) : kind === 'api' ? apiSection(calls) : tp2Section(comparisons, events);
+    const data = kind === 'tracking' ? { session: redactApiData(snapshot.session), inventory: section.rows } : kind === 'api' ? { session: redactApiData(snapshot.session), api_calls: calls } : { session: redactApiData(snapshot.session), events: redactApiData(events), comparisons };
     for (const format of selection.formats.filter(format => format !== 'bugs')) {
       const file = path.join(directory, `${kind}-report.${format}`);
-      if (format === 'html') await fs.writeFile(file, renderHtmlReport({ title: section.title, session: snapshot.session, sections: [section], settings: selection.htmlSettings }), 'utf8');
+      if (format === 'html') await fs.writeFile(file, renderHtmlReport({ title: section.title, session: snapshot.session, sections: [section], settings: kind === 'tracking' ? { ...selection.htmlSettings, onlyIssues: false } : selection.htmlSettings }), 'utf8');
       else if (format === 'json') await fs.writeFile(file, JSON.stringify(data, null, 2), 'utf8');
       else await writeSectionWorkbook(file, section);
       files[`${kind}_${format}`] = file;

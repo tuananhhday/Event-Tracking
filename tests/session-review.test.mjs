@@ -50,8 +50,9 @@ test('the session review reads the requirement, the specification rows of the te
   ];
   assert.equal((await post(`${base}/api/ai-review`, app.csrf, {})).status, 400, 'nothing to review before any event');
   app.manager.start({ environment: 'MOCK_ONLY' });
+  app.manager.startComparison('Golf');
   const page = { url: 'https://vinpearlota.com/vi/golf/search', target_id: 'tab' };
-  const at = new Date(Date.now() - 60000).toISOString();
+  const at = new Date().toISOString();
   app.manager.emit({ source: 'GA4', layer: 'JS_QUEUE', queue_name: 'dataLayer', event_name: 'search_submit', captured_at: at, page, payload: { event: 'search_submit', service: 'golf' } });
   app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'search_submit', captured_at: at, page, network: { phase: 'request' }, payload: { v: '2', tid: 'G-LK3M5B2Y8Y', event: 'search_submit', service: 'golf' } });
   const response = await post(`${base}/api/ai-review`, app.csrf, { requirement: '  Kiểm tra luồng Golf  ' });

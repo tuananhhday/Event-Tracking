@@ -74,6 +74,7 @@ test('AI event explanation receives the event with its specification match and i
   t.after(async () => { await app.close(); await plain.close(); await fs.rm(dir, { recursive: true, force: true }); });
   app.manager.cases = [{ id: 'TC-1', name: 'Search', source: 'GA4', rules: [{ event_name: 'search_submit', layer: 'JS_QUEUE', count: { min: 1, max: 1 }, fields: { service: { op: 'eq', value: 'hotel' } } }] }];
   app.manager.start({ environment: 'MOCK_ONLY' });
+  app.manager.startComparison('Chưa phân luồng');
   const page = { url: 'https://example.test/search' };
   const event = app.manager.emit({ source: 'GA4', layer: 'JS_QUEUE', event_name: 'search_submit', captured_at: new Date().toISOString(), page, payload: { event: 'search_submit', service: 'merchandise' } });
   const hit = app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'search_submit', captured_at: new Date().toISOString(), page, network: { phase: 'request' }, payload: { v: '2', tid: 'G-TEST', event: 'search_submit', service: 'merchandise' } });

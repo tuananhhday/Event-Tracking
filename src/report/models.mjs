@@ -1,10 +1,24 @@
 import { REPORT_LABEL } from './event-report.mjs';
 import { TP2_LABELS } from '../core/tp2-compare.mjs';
 import { redactApiData } from '../core/api-log.mjs';
+import { activityEntries } from '../core/activity.mjs';
 
 const col = (key, label, width) => ({ key, label, width });
 const showBody = body => !body ? null : body.omitted || body.truncated ? body : body.json ?? body.form ?? body.text ?? body;
 const displayTime = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(value)) : value;
+export function trackingSection(events = []) {
+  const groups = new Map();
+  for (const event of activityEntries(events).filter(event => event.event_kind === 'business')) {
+    const key = `${event.source}|${event.event_name}`, group = groups.get(key) || { source: event.source, event_name: event.event_name, occurrences: [] };
+    group.occurrences.push(event); groups.set(key, group);
+  }
+  return { id: 'tracking', title: 'Danh sách event tracking đã xuất hiện', columns: [col('stt', 'STT', 65), col('source', 'Nền tảng', 110), col('event_name', 'Tên event', 280),
+    col('count', 'Số lần xuất hiện', 140), col('sent', 'Đã gửi', 100), col('unsent', 'Push chưa gửi', 140), col('first', 'Lần đầu', 175), col('last', 'Lần cuối', 175), col('pages', 'Trang xuất hiện', 360)],
+    rows: [...groups.values()].map((group, index) => ({ id: `TRACKING-${index + 1}`, stt: index + 1, source: group.source, event_name: group.event_name,
+      count: group.occurrences.length, sent: group.occurrences.filter(event => event.delivery === 'sent').length,
+      unsent: group.occurrences.filter(event => event.delivery !== 'sent').length, first: displayTime(group.occurrences[0].captured_at), last: displayTime(group.occurrences.at(-1).captured_at),
+      pages: [...new Set(group.occurrences.map(event => event.page?.url).filter(Boolean))].join('\n'), details: { 'Các lần xuất hiện': group.occurrences } })) };
+}
 export function apiSection(calls = []) {
   return { id: 'api', title: 'API của phiên', columns: [col('stt', 'STT', 65), col('at', 'Thời điểm', 175), col('method', 'Method', 90), col('url', 'API', 370),
     col('http', 'HTTP', 80), col('duration', 'Thời gian (ms)', 120), col('result', 'Kết quả', 150), col('error', 'Chi tiết lỗi', 250)],

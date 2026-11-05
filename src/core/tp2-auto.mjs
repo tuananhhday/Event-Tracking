@@ -23,26 +23,36 @@ const isProductApi = call => /\/products?(?:\/|$)/i.test(call?.path || '');
 function meaning(path, orderApi = false, productApi = false) {
   const parts = path.split('.'), name = key(parts.at(-1));
   if (name === 'id') {
-    const parent = key(parts.at(-2) || '');
+    const parent = key(parts.slice(0, -1).filter(part => !/^\d+$/.test(part)).at(-1) || '');
     if (['product', 'products'].includes(parent)) return 'productid';
     if (['order', 'orders', 'booking'].includes(parent) || orderApi && parts.slice(0, -1).every(part => ['data', 'result', 'response'].includes(key(part)))) return 'orderid';
     if (productApi && parts.slice(0, -1).every(part => ['data', 'result', 'response', 'items', 'products'].includes(key(part)) || /^\d+$/.test(part))) return 'productid';
   }
   return groups.find(group => group.includes(name))?.[0] || name;
 }
-function sameItems(eventPath, apiPath, payload, body) {
+function sameItems(eventPath, apiPath, payload, body, orderApi, productApi) {
   const ancestors = path => path.split('.').flatMap((part, index, parts) => /^\d+$/.test(part) ? [parts.slice(0, index + 1).join('.')] : []);
   const a = ancestors(eventPath), b = ancestors(apiPath);
-  if (a.length !== b.length) return false;
-  return a.every((path, index) => {
-    const eventItem = autoValueAt(payload, path), apiItem = autoValueAt(body, b[index]);
-    if (!eventItem || !apiItem || typeof eventItem !== 'object' || typeof apiItem !== 'object') return false;
-    const ids = Object.keys(eventItem).filter(name => ['productid', 'orderid'].includes(meaning(name)));
-    return ids.some(name => {
-      const candidates = Object.keys(apiItem).filter(other => meaning(other) === meaning(name));
-      return candidates.length === 1 && usable(eventItem[name]) && usable(apiItem[candidates[0]]) && String(eventItem[name]) === String(apiItem[candidates[0]]);
-    });
-  });
+  if (!a.length && !b.length) return true;
+  // Ignore child arrays here: another item's ID must never authorize this item's fields.
+  const identities = (node, prefix, api = false, out = []) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return out;
+    for (const [name, value] of Object.entries(node)) {
+      const path = prefix ? `${prefix}.${name}` : name, type = meaning(path, api && orderApi, api && productApi);
+      if (['productid', 'orderid'].includes(type) && usable(value) && typeof value !== 'object') out.push([type, String(value)]);
+      else if (value && typeof value === 'object' && !Array.isArray(value)) identities(value, path, api, out);
+    }
+    return out;
+  };
+  const eventContexts = ['', ...a].map(path => identities(path ? autoValueAt(payload, path) : payload, path));
+  const apiContexts = ['', ...b].map(path => identities(path ? autoValueAt(body, path) : body, path, true));
+  const joined = (left, right) => {
+    const type = left.some(([type]) => type === 'productid') ? 'productid' : 'orderid';
+    const a = [...new Set(left.filter(([kind]) => kind === type).map(([, value]) => value))], b = [...new Set(right.filter(([kind]) => kind === type).map(([, value]) => value))];
+    return a.length === 1 && b.length === 1 && a[0] === b[0];
+  };
+  return eventContexts.slice(1).every(ids => apiContexts.some(other => joined(ids, other)))
+    && apiContexts.slice(1).every(ids => eventContexts.some(other => joined(ids, other)));
 }
 export const isMyOrder = call => /\/myorder(?:\/|$)/i.test(call.path || '');
 export function affiliateStage(event) {
@@ -68,7 +78,7 @@ export function suggestTp2Fields(event, call, { side = 'response', recordPath = 
   const body = recordPath ? autoValueAt(call?.[side]?.body?.json, recordPath.replace(/\[(\d+)\]/g, '.$1')) : call?.[side]?.body?.json;
   const payload = event.payload || {}, allEventPaths = leaves(payload), eventPaths = allEventPaths.filter(path => !ignored.has(key(path.split('.').at(-1)))), apiPaths = leaves(body);
   const fields = eventPaths.slice(0, 100).map(eventPath => {
-    const name = meaning(eventPath), matches = apiPaths.filter(apiPath => name === meaning(apiPath, isMyOrder(call || {}), isProductApi(call)) && sameItems(eventPath, apiPath, payload, body));
+    const name = meaning(eventPath), matches = apiPaths.filter(apiPath => name === meaning(apiPath, isMyOrder(call || {}), isProductApi(call)) && sameItems(eventPath, apiPath, payload, body, isMyOrder(call || {}), isProductApi(call)));
     return { event_path: eventPath, api_path: matches.length === 1 ? matches[0] : '', type: 'json',
       reason: matches.length > 1 ? 'Có nhiều trường API cùng nghĩa; chọn trường cần so sánh.' : !matches.length ? 'Chưa tìm thấy trường API tương ứng; cần chọn lại hoặc kiểm tra dữ liệu.' : 'Tự ghép theo tên trường hoặc mã định danh; giữ nguyên kiểu dữ liệu.' };
   });

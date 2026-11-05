@@ -6,7 +6,7 @@ import { redactApiData, apiCallSummary } from './api-log.mjs';
 import { isTp2Endpoint } from './tp2.mjs';
 import { affiliateStage, isMyOrder, orderIdentity, sharesIdentity, suggestTp2Fields } from './tp2-auto.mjs';
 
-export const TP2_LABELS = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần kiểm tra', CLICK: 'Click affiliate', NO_MAPPING: 'Chọn API để so sánh', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Cần chọn đúng API', DECODE_ERROR: 'Lỗi giải mã' };
+export const TP2_LABELS = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần kiểm tra', CLICK: 'Click affiliate', NO_MAPPING: 'Chưa đủ dữ liệu ghép', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Chưa xác định được API', DECODE_ERROR: 'Lỗi giải mã' };
 export const valueAt = (value, field = '') => field ? String(field).replace(/\[(\d+)\]/g, '.$1').split('.').reduce((node, key) => node != null && Object.hasOwn(Object(node), key) ? node[key] : undefined, value) : value;
 export function fieldPaths(value, prefix = '', out = [], depth = 0) {
   if (out.length >= 500 || depth > 15) return out;
@@ -98,15 +98,31 @@ function compareAutomatic(event, summaries, getCall, result, apiId) {
     && (call.target_id && event.page?.target_id ? call.target_id === event.page.target_id : Boolean(call.page_url && event.page?.url && call.page_url === event.page.url))
     && Date.parse(call.finished_at || call.captured_at) <= at && at - Date.parse(call.finished_at || call.captured_at) <= 1800000);
   base.candidates = eligible.map(call => ({ evidence_id: call.evidence_id, method: call.method, url: call.url, status: call.status, at: call.finished_at || call.captured_at }));
-  if (eligible.length > 200) return { ...base, candidates: base.candidates.slice(-200), status: 'REVIEW', message: 'Có hơn 200 API trong khoảng thời gian này. Chọn API cụ thể để đối chiếu đầy đủ.' };
+  if (eligible.length > 200) return { ...base, candidates: base.candidates.slice(-200), status: 'REVIEW', message: 'Có hơn 200 API trong khoảng thời gian này; chưa đủ chắc chắn để kết luận tự động.' };
   const calls = eligible.map(call => getCall(call.evidence_id)).filter(call => call && (apiId || sharesIdentity(event, call) || stage === 'purchase' && isMyOrder(call)));
   base.candidates = base.candidates.filter(summary => calls.some(call => call.evidence_id === summary.evidence_id));
   const complete = calls.filter(call => call.ok && !call.incomplete && call.response?.body?.json && !call.response.body.omitted && !call.response.body.truncated);
-  if (!complete.length) return { ...base, status: calls.length ? 'REVIEW' : stage === 'click' ? 'CLICK' : 'NO_API', message: calls.length ? 'API chưa có Response JSON thành công, đầy đủ để đối chiếu.' : stage === 'click' ? 'Đã ghi nhận click affiliate. Chưa có API cùng mã để so sánh; click không bắt buộc có đơn hàng.' : 'Chưa tìm thấy API liên quan trước event này trong cùng tab. Chọn một API đã bắt để tự ghép trường hoặc thu thập tiếp luồng cần kiểm tra.' };
+  if (!complete.length) return { ...base, status: calls.length ? 'REVIEW' : stage === 'click' ? 'CLICK' : 'NO_API', message: calls.length ? 'API chưa có Response JSON thành công, đầy đủ để đối chiếu.' : stage === 'click' ? 'Đã ghi nhận click affiliate. Chưa có API cùng mã để so sánh; click không bắt buộc có đơn hàng.' : 'Chưa tìm thấy API liên quan trước event này trong cùng tab. Kết quả tự cập nhật khi thu được đủ dữ liệu.' };
   const identity = orderIdentity(event.payload);
   const identified = identity ? complete.filter(call => orderIdentity(call.response.body.json, { orderApi: isMyOrder(call) }) === identity) : [];
-  const candidates = identified.length ? identified : complete;
-  if (candidates.length !== 1) return { ...base, status: 'AMBIGUOUS', message: 'Có nhiều API có thể thuộc các đơn khác nhau. Chọn API bên dưới; ứng dụng sẽ tự ghép trường và so sánh.' };
+  let candidates = identified.length ? identified : complete;
+  if (stage === 'purchase' && candidates.some(isMyOrder)) candidates = candidates.filter(isMyOrder);
+  // Repeated reads of the same identified record use its latest response before TP2.
+  const latest = new Map(), ungrouped = [];
+  for (const call of candidates) {
+    const order = orderIdentity(call.response.body.json, { orderApi: isMyOrder(call) });
+    if (!order && !sharesIdentity(event, call)) { ungrouped.push(call); continue; }
+    const key = `${call.method}|${call.url}|${order || ''}`, previous = latest.get(key);
+    const time = value => Date.parse(value.finished_at || value.captured_at);
+    if (!previous || time(call) > time(previous)) latest.set(key, call);
+    else if (time(call) === time(previous) && !isDeepStrictEqual(call.response.body.json, previous.response.body.json)) ungrouped.push(call);
+  }
+  candidates = [...latest.values(), ...ungrouped];
+  if (candidates.length > 1 && identified.length) {
+    const ranked = candidates.map(call => ({ call, fields: suggestTp2Fields(event, call).fields.filter(field => field.api_path).length })).sort((a, b) => b.fields - a.fields);
+    if (ranked[0].fields > ranked[1].fields) candidates = [ranked[0].call];
+  }
+  if (candidates.length !== 1) return { ...base, status: 'AMBIGUOUS', message: 'Có nhiều API hoặc mã đơn cùng phù hợp; dữ liệu hiện tại chưa xác định được API duy nhất để so sánh tự động.' };
   const call = candidates[0], suggestion = suggestTp2Fields(event, call);
   base.api = apiCallSummary(call);
   base.comparisons = suggestion.fields.map(field => field.api_path ? compareField(event, call.response.body.json, field) : {

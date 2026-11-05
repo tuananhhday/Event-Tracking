@@ -36,8 +36,8 @@ Không cần file đặc tả để bắt đầu.
 2. **Thu thập tự do.** Tab **Event trực tiếp** có bốn cách xem: **Đã gửi lên server** (mặc định: mỗi dòng là một event Google/Insider đã nhận, kèm mã GA4 `G-…`; event gửi lặp có nhãn **⚠ Lặp lại sau X s**), **dataLayer · InsiderQueue (F12)** (từng phần tử theo đúng thứ tự như gõ `dataLayer` / `InsiderQueue` trong F12 Console, kèm đã gửi lên server hay chưa), **Gộp theo event** (số lần, trang, request lỗi) và **Dòng thời gian** (payload từng event). Bấm **⚑ Đặt mốc** trước một thao tác để chỉ xem event phát ra sau đó.
 3. **Không thấy request?** Tab **Endpoint** liệt kê request trông giống tracking nhưng chưa nằm trong allowlist (chỉ host + path, không lưu payload). Bấm **Theo dõi** để ghi từ request tiếp theo mà không cần mở lại phiên.
 4. **Tạo rule từ event thật.** Bấm **Tạo rule** trên một event: app liệt kê từng trường với giá trị thực tế và đề xuất cách kiểm (bằng / có mặt / kiểu / regex / lấy từ context). Tham số giao thức GA4 và giá trị thay đổi mỗi lần được bỏ tick; trường đã che chỉ kiểm có mặt. Đổi sang **lấy từ context** cho giá trị phụ thuộc thao tác (từ khoá, mã sản phẩm). Lưu được ngay khi phiên đang chạy.
-5. **Kiểm từng thao tác.** Chọn case, điền context, **▶ Bắt đầu bước**, thao tác trên website, **■ Hoàn tất bước** để nhận PASS/FAIL từng tầng.
-6. **Kết thúc & xuất** XLSX/HTML/JSON/bug. Chưa có rule vẫn xuất được toàn bộ event.
+5. **Đối chiếu theo luồng.** Nhập đặc tả, mở tab **Đối chiếu đặc tả**, bấm **Chọn luồng kiểm tra** rồi thao tác trên website. Chỉ event xuất hiện từ lúc chọn mới được so với các dòng của luồng đó. **Test lại** mở lượt mới; **Đổi event so sánh** chọn bằng chứng khác trong lượt hiện tại. Không cần ghi/hoàn tất từng bước bằng tay.
+6. **Kết thúc & xuất** HTML/Excel/JSON. Chọn riêng **Danh sách event tracking đã xuất hiện** để xuất tên event, số lần, trang và từng lần xuất hiện, kể cả khi chưa chọn luồng đối chiếu.
 
 ### Báo cáo Excel: sheet "Báo cáo event"
 
@@ -55,20 +55,21 @@ Sheet đầu tiên của `report.xlsx` là bảng báo cáo:
 
 Ở bản AI, bỏ chọn **Kèm nhận xét AI khi xuất** trong phần **Kết thúc & báo cáo** để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo. Các event, kết quả đối chiếu và sheet bằng chứng vẫn được xuất đầy đủ. Khi bật nhận xét AI, các lô được xử lý tối đa hai lô cùng lúc; xuất lại cùng nội dung dùng lại nhận xét đã có.
 
-Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp khi mở app lần sau. **Mỗi lần chạy lại một case cần bắt đầu bước mới**; `within_ms` tính từ lúc bắt đầu bước.
+Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp khi mở app lần sau. **Test lại** không xoá bằng chứng cũ; báo cáo đối chiếu dùng lượt gần nhất của mỗi luồng đã chọn. Luồng tự động vẫn dùng phạm vi bước của Playwright.
 
 Rule tạo từ một lần quan sát chỉ phản ánh hành vi hiện tại của website, không thay thế đặc tả nghiệp vụ. HTTP 200 không xác nhận vendor ingestion.
 
 ## Đối chiếu với file đặc tả (Martech_WebOTA_….xlsx)
 
-Ở bước 2, nhập đường dẫn file đặc tả rồi bấm **Nhập file**. Nhập được cả khi phiên đang chạy, miễn là chưa ghi bước nào. App đọc sheet **Tổng hợp Event tracking** (STT, Nền tảng, Luồng, Event Name, Event Description, DataLayer Sample, Note) và:
+Trong phần **Đặc tả tracking**, chọn file và sheet rồi bấm **Nhập file**. Nhập được cả khi phiên đang chạy, miễn là chưa bắt đầu lượt đối chiếu hoặc bước tự động nào. App đọc sheet **Tổng hợp Event tracking** (STT, Nền tảng, Luồng, Event Name, Event Description, DataLayer Sample, Note) và:
 
-- **tự gắn mọi event bắt được** vào dòng đặc tả cùng nền tảng và tên event, không cần bấm Bắt đầu bước. Khi nhiều luồng cùng tên event (`search_submit`, `listing_page_view`…), luồng được chọn theo giá trị trong payload (`service`, `breadcrumb`, `taxonomy`…) và URL trang (`/flight/`, `/hotel/`…);
+- ban đầu hiển thị **Chưa chọn luồng**. Bấm **Chọn luồng kiểm tra** và chọn luồng cần chạy; app chỉ ghép event mới vào các dòng cùng nền tảng/tên thuộc luồng đã chọn. Event trước thời điểm chọn, lúc tạm dừng hoặc thuộc lượt cũ không dùng để kết luận lượt mới;
+- **Test lại** bắt đầu lượt mới của cùng luồng; **Đổi luồng** chuyển ngữ cảnh; **Tạm dừng đối chiếu** dừng gắn event nhưng phiên vẫn thu thập. **Đổi event so sánh** trên mỗi dòng cho chọn một event khác cùng nền tảng trong lượt này. Nếu khác tên hoặc giá trị thì vẫn báo lệch; có nút trở về cách ghép tự động;
 - **kiểm từng trường trên dữ liệu đã gửi lên server**: event GA4 được kiểm trên hit Google nhận được (kể cả `ecommerce.items[0]`), event Insider kiểm trên dữ liệu push vào InsiderQueue (`value[0].event_parameters.custom`…) khi Insider đã gửi nó đi. Trường website có push nhưng Google không nhận được báo riêng là **Google không nhận** (lỗi cấu hình tag GA4 trong GTM, không phải lỗi Dev website);
 - hiện kết quả ở tab **Đối chiếu đặc tả**: Khớp / Lệch / **Có push, không gửi lên server** / Chưa thấy / Ngoài đặc tả, kèm trường lệch, ghi chú của đặc tả và link tới event;
 - xuất sheet **Spec Coverage** trong `report.xlsx`; mỗi dòng lệch hoặc có push nhưng không gửi thành một bug trong `bugs.md`.
 
-**Nhập tay, không cần file Excel:** ở bước 2 mở **Nhập tay event mong muốn (dán payload mẫu)**, điền tên event (để trống nếu mẫu đã có `event`), chọn GA4 / Insider, luồng, khi nào bắn, rồi dán payload mẫu (ô DataLayer Sample, JSON, `dataLayer.push(...)`, `InsiderQueue.push(...)` hoặc dạng `{event, default_parameters, custom_parameters}` của R1511) và bấm **Thêm vào đặc tả**. App đọc mẫu giống hệt khi nhập một dòng Excel, cho biết sẽ kiểm những trường nào, lưu lại cho lần sau và đối chiếu ngay với event bắt được. Nhập file Excel sau đó vẫn giữ các event nhập tay; sửa cách kiểm từng trường ở **Xem / sửa rule**.
+**Nhập tay, không cần file Excel:** mở **Nhập tay event mong muốn (dán payload mẫu)**, điền tên event (để trống nếu mẫu đã có `event`), nền tảng, luồng và payload mẫu rồi bấm **Thêm vào đặc tả**. Sau đó chọn luồng cần kiểm tra trong bảng đối chiếu. Nhập file Excel vẫn giữ các event nhập tay. Dòng đặc tả đã dùng trong một lượt được giữ cố định đến khi kết thúc phiên.
 
 Mọi sheet có cột Event Name + cột mẫu đều nhập được (chọn sheet ở bước 2), không chỉ sheet tổng hợp. Cách các file Martech được soạn đều đọc được:
 

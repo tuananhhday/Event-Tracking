@@ -35,6 +35,7 @@ try {
   assert.equal(await page.locator('#tp2-mapping-editor').getAttribute('open'), null);
   assert.equal(await page.locator('#tp2-map-fields').count(), 0, 'The default workflow must not require editable JSON');
   await page.waitForFunction(() => document.getElementById('tp2-comparison').textContent.includes('Lệch'));
+  await page.getByText('Đổi API đối chiếu (tuỳ chọn)', { exact: true }).click();
   await page.locator('#tp2-api-choice').selectOption({ index: 1 });
   await page.waitForFunction(() => document.getElementById('tp2-map-pattern').value.includes('/demo/api/products'));
   await page.locator('#tp2-mapping-editor > summary').click();

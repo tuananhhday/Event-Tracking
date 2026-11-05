@@ -14,7 +14,9 @@ Hỗ trợ Base64, Base64URL, `ue_pr` JSON thường, query/form và request JSO
 
 Ứng dụng tìm API đã thu thập trong cùng tab, có response trước TP2 và cách tối đa 30 phút. API liên quan phải có cùng mã đơn, sản phẩm, affiliate, campaign hoặc click; event có tên thể hiện mua hàng (`order`, `purchase`, `transaction`, `conversion`) còn xét endpoint `/myorder`. Không dùng giá hoặc tổng tiền bằng nhau để chọn API. Tên event có `click` nhưng chưa tìm thấy API liên quan được ghi nhận là click affiliate, không bị báo thiếu đơn hàng.
 
-Các trường cùng tên (kể cả camelCase và snake_case) và một số tên tương đương rõ ràng được gợi ý tự động, ví dụ `productCode` / `product_id`, `orderCode` / `order_id`, `quantity` / `qty`. Danh sách sản phẩm ghép theo mã, kể cả khi hai bên khác thứ tự. Không tự lấy `productCode` so với `data.id` của đơn hàng, không ghép mảng chỉ theo vị trí, không chọn trường dựa vào việc giá trị đang bằng nhau. Có nhiều trường hoặc nhiều API chưa phân biệt được thì hiển thị **Cần kiểm tra** hoặc **Cần chọn API**; chọn API trong danh sách để tiếp tục.
+Các trường cùng tên (kể cả camelCase và snake_case) và một số tên tương đương được ghép tự động, ví dụ `productCode` / `product_id`, `orderCode` / `order_id`, `quantity` / `qty`. Sản phẩm ghép theo mã, kể cả khi khác thứ tự hoặc khác số tầng mảng; mã đơn phải khớp khi đi qua mảng đơn hàng. Các lần gọi lại cùng API và cùng mã dùng response gần nhất trước TP2. Luồng mua hàng ưu tiên `myorder`; API cùng mã có đủ trường tương ứng được ưu tiên theo cấu trúc, không theo giá trị khớp/sai.
+
+Không tự lấy `productCode` so với `data.id` của đơn hàng, không ghép mảng theo vị trí hoặc theo giá trị tiền. Còn nhiều trường/API ngang nhau thì hiện **Chưa xác định được API** hoặc **Cần kiểm tra**. Có thể mở **Đổi API đối chiếu (tuỳ chọn)** hoặc **Sửa cách ghép** khi cần; luồng mặc định tự chạy và tự cập nhật khi có dữ liệu.
 
 Kết quả mặc định giữ nguyên kiểu dữ liệu: chuỗi `"100"` khác số `100`. Trường không có bên API, đã che, body bị cắt hoặc chưa đủ bằng chứng đều được hiển thị để kiểm tra. **Khớp** chỉ áp dụng cho các trường đã kiểm tra, không chứng minh toàn bộ nghiệp vụ hoặc vendor đã nhận event. Tự ghép không suy ra được công thức tiền, thuế hay ý nghĩa tên trường riêng của từng website.
 
@@ -47,12 +49,15 @@ Công cụ chỉ tự ghép API cùng tab, đã có response trước event và 
 - **Kết thúc & xuất…:** kết thúc rồi xuất nội dung đã chọn. Hoàn tất bước đang ghi trước khi dùng nút này.
 - **Xuất báo cáo…:** xuất dữ liệu đang có, dùng được cả khi phiên đang chạy hoặc đã kết thúc.
 
-Trong hộp xuất, chọn **Báo cáo event**, **TP2 ↔ API**, **Chi tiết API của phiên**, hoặc nhiều nội dung. Chọn định dạng HTML, Excel, JSON hoặc tất cả. Mỗi nội dung có file riêng:
+Trong hộp xuất, chọn **Báo cáo đối chiếu đặc tả**, **Danh sách event tracking đã xuất hiện**, **TP2 ↔ API**, **Chi tiết API của phiên**, hoặc nhiều nội dung. Chọn định dạng HTML, Excel, JSON hoặc tất cả. Mỗi nội dung có file riêng:
 
 | Nội dung | HTML | Excel | JSON |
 | --- | --- | --- | --- |
 | Event | `report.html` | `report.xlsx` | `comparison.json` |
 | TP2 | `tp2-report.html` | `tp2-report.xlsx` | `tp2-report.json` |
+| Danh sách tracking | `tracking-report.html` | `tracking-report.xlsx` | `tracking-report.json` |
+
+Tab **Event trực tiếp** còn có nút **Xuất danh sách event** để chọn sẵn nội dung tracking. Danh sách này độc lập với đặc tả và luồng đang kiểm tra: một dòng cho mỗi nền tảng/tên event, số lần xuất hiện, số lần gửi, trang và thời điểm đầu/cuối. Mở chi tiết để xem từng lần và payload/bằng chứng. Push và request đã ghép chỉ tính một lần; response không tạo thêm event, bản ghi cấu hình hệ thống không tính là event nghiệp vụ.
 | API | `api-report.html` | `api-report.xlsx` | `api-report.json` |
 
 Chỉ chọn API + HTML sẽ tạo một file `api-report.html`, không dựng báo cáo event hoặc Excel. File API chứa method, URL/query, thời gian, HTTP, trang/bước và request/response headers/body đã thu thập. Excel có sheet **Chi tiết đầy đủ**, chia giá trị dài thành nhiều phần để giữ nội dung. Thông tin nhạy cảm được che; giới hạn capture hiện có vẫn áp dụng: 3.000 API/phiên, 1 triệu ký tự/body và khoảng 300 MB/phiên. Phần không lưu hoặc bị cắt có nhãn rõ ràng.

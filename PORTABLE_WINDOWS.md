@@ -10,13 +10,15 @@ Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không 
 
 Bản AI được mở bằng `CHAY_EVENT_QA_AI.cmd` sẽ dùng kho chứng chỉ tin cậy của Windows và proxy `HTTPS_PROXY`/`HTTP_PROXY` nếu đã khai báo trong môi trường hoặc `.env`. Có thể khai báo file CA do IT cung cấp qua `NODE_EXTRA_CA_CERTS`. Dừng và mở lại ứng dụng sau khi đổi cấu hình mạng. Tab **Trợ lý AI → Kiểm tra kết nối AI** phân biệt lỗi chứng chỉ, DNS, kết nối và proxy 403/407; xem [hướng dẫn mạng công ty](docs/AI.md#khi-dùng-mạng-công-ty).
 
-Thư viện JavaScript trong bản tải được gộp thành vài bundle, giảm hàng nghìn file nhỏ khi giải nén trên Windows. License các thư viện được giữ trong `node_modules/THIRD_PARTY_LICENSES.txt`.
+Gói tải chứa đầy đủ thư viện JavaScript theo lockfile cùng license trong từng thư viện. Cần giải nén toàn bộ thư mục trước khi chạy.
 
-Bản hiện tại có tab **TP2 ↔ API**, giải mã `ue_px` và lưu cấu hình ghép trường để đối chiếu. **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo event, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
+Bản hiện tại chỉ đối chiếu đặc tả sau khi **Chọn luồng kiểm tra**. **Test lại** tạo lượt mới; **Đổi event so sánh** chọn bằng chứng trong lượt đang xem. Giao diện dùng toàn chiều rộng, chữ lớn và ngắt dòng. Tab **TP2 ↔ API** tự giải mã `ue_px`, tìm API và ghép trường theo mã đơn/sản phẩm, gồm các lần gọi lại `myorder`.
+
+**Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo đối chiếu, danh sách event tracking đã xuất hiện, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Tab event có nút **Xuất danh sách event**. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
 
 Để tạo bản ít file, cài esbuild 0.25.12 riêng cho máy build, chạy `scripts/bundle-portable-deps.mjs` với đường dẫn module esbuild và thư mục output; đặt `EVENTQA_PACKAGED_DEPS` trỏ đến output đó khi chạy `scripts/build-portable.py`. Đây chỉ là bước build; người dùng gói tải không cần cài thêm gì.
 
-Giao diện workspace của bản portable trước được khôi phục. Bấm tên event để xem **Event Details → Default Parameters → Custom Parameters**; dữ liệu lồng nhau có **Show Details**. JSON và payload gốc có tab riêng. GA4 được giải mã danh sách sản phẩm thay vì chỉ hiện chuỗi `pr1`. Danh sách hoạt động ghép queue/request phù hợp thành một dòng, giữ nguyên bằng chứng gốc và mọi request phát lặp.
+Bấm tên event để xem **Event Details → Default Parameters → Custom Parameters**; dữ liệu lồng nhau có **Show Details**. JSON và payload gốc có tab riêng. GA4 được giải mã danh sách sản phẩm thay vì chỉ hiện chuỗi `pr1`. Danh sách hoạt động ghép queue/request phù hợp thành một dòng, giữ nguyên bằng chứng gốc và mọi request phát lặp.
 
 Gói có thể kèm danh mục tham khảo khi build với đối số `CATALOGUE_DIR`, nạp sẵn dưới dạng draft; JSON và Excel nằm trong `event-catalogue/`. Mẫu App SDK cần xác nhận mapping sang Web trước khi dùng để kết luận website đúng/sai. Bản portable lưu trong Git không kèm dữ liệu workbook của người dùng; nhập JSON/XLSX riêng ở bước Đặc tả tracking khi cần.
 

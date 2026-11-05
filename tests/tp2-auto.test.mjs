@@ -95,3 +95,30 @@ test('different number/string types and absent business data are not silently ac
   assert.equal(compare(event({ totalAmount: '100' }), [call({ data: { totalPrice: 100 } })]).status, 'MISMATCH');
   assert.equal(compare(event({}), [call({ data: {} })]).status, 'REVIEW');
 });
+
+test('repeated myorder reads use the latest response for the same order without choosing by equal price', () => {
+  const tp2 = event({ orderCode: 'ORDER-01', totalAmount: 100 });
+  const old = call({ data: { id: 'ORDER-01', totalPrice: 100 } }, { evidence_id: 'OLD', finished_at: at(100) });
+  const latest = call({ data: { id: 'ORDER-01', totalPrice: 200 } }, { evidence_id: 'LATEST' });
+  const result = compare(tp2, [old, latest]);
+  assert.equal(result.api.evidence_id, 'LATEST'); assert.equal(result.status, 'MISMATCH');
+  const conflicting = call({ data: { id: 'ORDER-01', totalPrice: 300 } }, { evidence_id: 'CONFLICT' });
+  assert.equal(compare(tp2, [latest, conflicting]).status, 'AMBIGUOUS');
+});
+
+test('scalar product identity joins a nested API item; extra order-array levels require the order identity too', () => {
+  const tp2 = event({ orderCode: 'ORDER-01', productCode: 'ROOM-1', price: 100 });
+  const api = call({ data: { orders: [{ orderCode: 'ORDER-02', items: [{ productCode: 'ROOM-1', price: 100 }] },
+    { orderCode: 'ORDER-01', items: [{ productCode: 'ROOM-1', price: 200 }] }] } });
+  const result = compare(tp2, [api]);
+  assert.equal(result.comparisons.find(field => field.field === 'event_params.price').api_field, 'data.orders.1.items.0.price');
+  assert.equal(result.status, 'MISMATCH');
+  assert.equal(compare(event({ productCode: 'ROOM-1', price: 100 }), [api]).status, 'REVIEW');
+});
+
+test('an item order ID cannot authorize matching another product with the same order ID', () => {
+  const tp2 = event({ orderCode: 'ORDER-01', items: [{ orderCode: 'ORDER-01', productCode: 'A', price: 10 }] });
+  const api = call({ data: { id: 'ORDER-01', items: [{ orderCode: 'ORDER-01', productCode: 'B', price: 10 }] } });
+  const result = compare(tp2, [api]);
+  assert.equal(result.comparisons.find(field => field.field === 'event_params.items.0.price').status, 'REVIEW');
+});

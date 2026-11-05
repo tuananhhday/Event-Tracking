@@ -94,6 +94,7 @@ test('browser upload lists sheets, imports R1511 and exposes missing fields and 
   assert.equal(imported.cases.length, 2);
   assert.equal(imported.cases[0].source, 'INSIDER', 'uploaded filename retains source hint');
   app.manager.start({ environment: 'CONTRACT_TEST' });
+  app.manager.startComparison('Golf');
   const e = app.manager.emit(event({ ...payload, custom_parameters: {} }));
   const detail = await (await fetch(`${base}/api/event?id=${e.evidence_id}`)).json();
   assert.equal(detail.spec.event_name, 'listing_page_view');

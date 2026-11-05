@@ -8,9 +8,10 @@ import { SessionManager } from './core/session.mjs';
 import { redact } from './core/privacy.mjs';
 import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
-import { specCoverage, matchTracked, sessionRows } from './core/catalog.mjs';
+import { matchTracked, compareSelectedEvent, trackedView, sessionRows } from './core/catalog.mjs';
+import { comparisonCoverage } from './core/comparison.mjs';
 import { linkDeliveries, deliveryStatus, notForwarded, isRequest } from './core/delivery.mjs';
-import { eventKind } from './core/event-kind.mjs';
+import { eventKind, isBusinessEvent } from './core/event-kind.mjs';
 import { firingChecks } from './core/firing.mjs';
 import { activityEvent, activityEntries } from './core/activity.mjs';
 import { priceChecks } from './core/api-prices.mjs';
@@ -33,6 +34,7 @@ const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), '
 // Each mode has its own screen; styling and client logic are shared assets.
 const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html' };
 const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'],
+  '/assets/workspace.css': ['shared/workspace.css', 'text/css; charset=utf-8'],
   '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'],
   '/assets/inspection.css': ['shared/inspection.css', 'text/css; charset=utf-8'], '/assets/inspection.js': ['shared/inspection.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
@@ -154,10 +156,10 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   };
   // Event-to-specification matches, reset whenever the cases change.
   let coverageCases = null, coverageCache = new Map();
-  const coverage = events => {
+  const coverage = (events, { all = false } = {}) => {
     if (!manager.cases.length) return null;
     if (coverageCases !== manager.cases) { coverageCases = manager.cases; coverageCache = new Map(); }
-    return specCoverage(manager.cases, events, coverageCache, { links: deliveryLinks(events) });
+    return comparisonCoverage(manager.cases, events, manager.session?.spec_comparison, { all, cache: coverageCache, steps: manager.steps });
   };
   const statuses = []; let collector = null, browserHandle = null, testPage = null, exported = null, mutating = false;
   let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
@@ -174,12 +176,15 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   // One captured event with the specification row it matched (field-by-field outcome), its firing
   // checks, and its delivery: the website push, the vendor hit that sent it, and for GA4 the pushed
   // fields Google did not receive.
-  function eventDetail(id) {
+  function eventDetail(id, caseId) {
     const snapshot = manager.snapshot(), events = snapshot.events;
     const event = events.find(candidate => candidate.evidence_id === id);
     if (!event) return null;
     const links = deliveryLinks(events);
-    const match = manager.cases.length ? matchTracked(manager.cases, event, { links }) : null;
+    const attempt = manager.session?.spec_comparison?.attempts.find(attempt => attempt.id === event.comparison_attempt_id);
+    const scopedCases = manager.cases.filter(testCase => attempt?.case_ids.includes(testCase.id) || event.step_id && testCase.id === event.test_case_id);
+    const selectedCase = caseId && scopedCases.find(testCase => testCase.id === caseId);
+    const match = selectedCase ? compareSelectedEvent(selectedCase, event, { links }) : scopedCases.length ? matchTracked(scopedCases, event, { links }) : null;
     const testCase = match && manager.cases.find(c => c.id === match.case_id);
     const spec = match ? { ...match, event_name: testCase?.rules?.[0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
     const push = event.layer === 'JS_QUEUE' ? event : links.pushOf.get(event.evidence_id) ?? null;
@@ -187,7 +192,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const delivery = { status: deliveryStatus(push ?? event, links), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
     const activity = activityEntries(events, { links }).find(row => row.evidence_ids.includes(event.evidence_id)) ?? activityEvent(event);
     const priced = prices(events, snapshot.api).checks.filter(check => check.evidence_id === activity.evidence_id);
-    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
+    return { event, spec, comparison_payload: trackedView(hit || event), firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
   }
   // What the AI reads to review a session: the QC's requirement, the specification rows the session is
   // about (rows with evidence and the unseen rows of the same flows), the tool's verdict per row, what
@@ -195,8 +200,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   function sessionReviewInput(events, requirement) {
     const links = deliveryLinks(events), now = Date.now();
     const rows = activityEntries(events, { links, now }).filter(row => row.event_kind === 'business');
-    const covered = coverage(events);
-    const relevant = covered ? sessionRows(covered).slice(0, 80) : [];
+    const covered = coverage(events, { all: true });
+    const relevant = covered ? (covered.explicit ? covered.rows.filter(row => row.status !== 'NOT_SELECTED') : sessionRows(covered)).slice(0, 80) : [];
     const caseById = new Map(manager.cases.map(testCase => [testCase.id, testCase]));
     const where = url => { try { const parsed = new URL(url); return parsed.pathname + parsed.search.slice(0, 80); } catch { return ''; } };
     return {
@@ -539,8 +544,16 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         return send(res, 200, { call: record, nearby });
       }
       if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
+      if (req.method === 'GET' && url.pathname === '/api/comparison/candidates') {
+        const selection = manager.session?.spec_comparison, attempt = selection?.attempts.find(attempt => attempt.id === selection.view_id);
+        const testCase = manager.cases.find(testCase => testCase.id === url.searchParams.get('case_id'));
+        if (!attempt || !testCase || !attempt.case_ids.includes(testCase.id)) throw new Error('Chọn luồng có dòng đặc tả này trước.');
+        const sources = new Set([testCase.source, ...testCase.rules.map(rule => rule.source)].filter(Boolean).map(source => String(source).toUpperCase()));
+        const events = manager.snapshot().events.filter(event => event.comparison_attempt_id === attempt.id && isBusinessEvent(event) && (!event.network?.phase || event.network.phase === 'request') && sources.has(String(event.source).toUpperCase()));
+        return send(res, 200, { attempt, events: events.reverse().map(event => ({ evidence_id: event.evidence_id, event_name: event.event_name, source: event.source, layer: event.layer, captured_at: event.captured_at, page: event.page, payload: trackedView(event) })) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/event') {
-        const detail = eventDetail(url.searchParams.get('id'));
+        const detail = eventDetail(url.searchParams.get('id'), url.searchParams.get('case_id'));
         if (!detail) return send(res, 404, { error: 'Không có event này trong phiên.' });
         return send(res, 200, detail);
       }
@@ -619,9 +632,18 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
             const sheets = ext === '.xlsx' ? await specSheets(file) : [];
             return send(res, 200, { path: file, sheets });
           } catch (error) { await fs.rm(file, { force: true }); throw error; }
+        } else if (url.pathname === '/api/comparison/start' || url.pathname === '/api/comparison/retest') {
+          const previous = manager.session?.spec_comparison;
+          const flow = url.pathname.endsWith('/retest') ? previous?.attempts.find(attempt => attempt.id === previous.view_id)?.flow : String(data.flow || '');
+          if (!flow) throw new Error('Chọn luồng cần kiểm tra trước.');
+          const attempt = manager.startComparison(flow); status(`Đang đối chiếu luồng ${attempt.flow}. Chỉ dùng event xuất hiện từ lượt này.`);
+        } else if (url.pathname === '/api/comparison/stop') {
+          manager.stopComparison(); status('Đã tạm dừng đối chiếu. Event vẫn được thu thập trong phiên.');
+        } else if (url.pathname === '/api/comparison/event') {
+          manager.selectComparisonEvent(String(data.case_id), data.evidence_id ? String(data.evidence_id) : null); status('Đã đổi event so sánh cho dòng đặc tả.');
         } else if (url.pathname === '/api/import') {
           // A specification can arrive after exploring the site, as long as no step depends on the old one.
-          if (manager.session?.status === 'RUNNING' && manager.steps.length) throw new Error('Phiên đã có bước dùng đặc tả hiện tại; kết thúc phiên trước khi đổi file đặc tả.');
+          if (manager.session?.status === 'RUNNING' && (manager.steps.length || manager.session.spec_comparison?.attempts.length)) throw new Error('Phiên đã có lượt đối chiếu; kết thúc phiên trước khi đổi file đặc tả.');
           if (!['.xlsx', '.json'].includes(path.extname(String(data.path)).toLowerCase())) throw new Error('Chỉ nhận XLSX hoặc JSON.');
           const imported = await importSpec(path.resolve(String(data.path)), { sheet: data.sheet || undefined });
           if (!imported.cases.length) throw new Error('Không tìm thấy test case hợp lệ.');
@@ -637,6 +659,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           // Rules may be written from evidence while the logged-in session keeps running.
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi sửa rule.');
           const testCase = validateTestCase(data.case);
+          if (manager.session?.status === 'RUNNING' && manager.session.spec_comparison?.attempts.some(attempt => attempt.case_ids.includes(testCase.id))) throw new Error('Dòng đặc tả đã có lượt đối chiếu. Kết thúc phiên trước khi sửa mẫu mong đợi.');
           const index = manager.cases.findIndex(c => c.id === testCase.id);
           manager.cases = index === -1 ? [...manager.cases, testCase] : manager.cases.map((c, i) => i === index ? testCase : c);
           await fs.mkdir(path.dirname(reviewedPath), { recursive: true });
@@ -656,6 +679,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname === '/api/delete-case') {
           if (manager.currentStep) throw new Error('Hoàn tất bước đang ghi trước khi xoá case.');
           const id = String(data.id);
+          if (manager.session?.status === 'RUNNING' && manager.session.spec_comparison?.attempts.some(attempt => attempt.case_ids.includes(id))) throw new Error('Dòng đặc tả đã có lượt đối chiếu; kết thúc phiên trước khi xoá.');
           if (manager.steps.some(step => step.test_case_id === id)) throw new Error('Case đã có bước trong phiên này nên không xoá được; xoá sau khi kết thúc phiên.');
           manager.cases = manager.cases.filter(c => c.id !== id);
           await fs.mkdir(path.dirname(reviewedPath), { recursive: true });

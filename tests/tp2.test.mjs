@@ -61,7 +61,7 @@ test('ambiguous IDs, masked/truncated data and absent mappings do not silently p
   assert.equal(compare(event(), [duplicate]).status, 'AMBIGUOUS');
   const truncated = call(); truncated.response.body = { truncated: true, text: '{}' };
   assert.equal(compare(event(), [truncated]).status, 'REVIEW');
-  assert.equal(compare(event(), [call()], []).status, 'REVIEW'); // Related product data exists, but automatic array joins are not certain.
+  assert.equal(compare(event(), [call()], []).status, 'MATCH'); // Scalar product identity now joins the unique API item automatically.
   assert.equal(compare(event({ price: 1 }), [call()]).status, 'REVIEW');
   const missing = compare(event({ product_id: 'SKU-01' }), [call()]); assert.equal(missing.status, 'MISMATCH');
   const masked = compare(event({ product_id: 'SKU-01', price: '[REDACTED]', quantity: 2 }), [call()]); assert.equal(masked.status, 'REVIEW');

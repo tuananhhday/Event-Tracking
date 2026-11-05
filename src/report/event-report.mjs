@@ -13,7 +13,7 @@ import { isGa4Transport } from '../core/ga4-parameters.mjs';
 export const REPORT_LABEL = { MATCH: 'Đủ', MISMATCH: 'Lệch', REVIEW: 'Cần xem', NOT_SENT: 'Không gửi lên server', PENDING: 'Đang chờ gửi', NOT_SEEN: 'Chưa thấy', UNCHECKED: 'Đã gửi, chưa so được', OUTSIDE: 'Ngoài đặc tả', SENT: 'Đã gửi' };
 const PLATFORM = { GA4: 'GA4', INSIDER: 'Insider' };
 const REVIEW_TEXT = { NO_EXPECTED_FIELDS: 'đặc tả chưa có chi tiết payload', SPEC_INCOMPLETE: 'mẫu trong đặc tả chưa đầy đủ', SPEC_PLATFORM_MISMATCH: 'đặc tả viết cho app, event bắn từ web',
-  CAPTURE_INCOMPLETE: 'payload thu chưa đầy đủ', UNEXPECTED_FIELD: 'có trường không được phép', AMBIGUOUS_SPEC: 'nhiều dòng đặc tả cùng phù hợp' };
+  CAPTURE_INCOMPLETE: 'payload thu chưa đầy đủ', UNEXPECTED_FIELD: 'có trường không được phép', AMBIGUOUS_SPEC: 'nhiều dòng đặc tả cùng phù hợp', LAYER_MISMATCH: 'event thực tế khác tầng dữ liệu của đặc tả' };
 const vendorOf = source => source === 'GA4' ? 'Google' : 'Insider';
 const brief = value => { const text = typeof value === 'string' ? value : JSON.stringify(value); return text === undefined ? '—' : text.length > 60 ? `${text.slice(0, 60)}…` : text; };
 const money = value => typeof value === 'number' ? value.toLocaleString('vi-VN') : String(value ?? '—');
@@ -51,7 +51,7 @@ const pretty = value => value === undefined || value === null || value === '' ? 
 
 function toolComment(row) {
   const missing = row.issues.filter(issue => ['MISSING_FIELD', 'NULL_FIELD'].includes(issue.code)).map(issue => issue.path);
-  const wrong = row.issues.filter(issue => ['VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH'].includes(issue.code)).map(issue => `${issue.path} (mong đợi ${brief(issue.expected)}, thực tế ${brief(issue.actual)})`);
+  const wrong = row.issues.filter(issue => ['VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH', 'EVENT_NAME_MISMATCH'].includes(issue.code)).map(issue => `${issue.path} (mong đợi ${brief(issue.expected)}, thực tế ${brief(issue.actual)})`);
   const unforwarded = row.issues.filter(issue => issue.code === 'NOT_FORWARDED').map(issue => issue.path);
   const review = [...new Set(row.issues.filter(issue => REVIEW_TEXT[issue.code]).map(issue => REVIEW_TEXT[issue.code]))];
   const parts = [];
@@ -106,7 +106,7 @@ export function eventReportRows({ cases = [], events = [], api = [], links = lin
   const actualColumns = ({ source, event, evidence, status, sample, platform }) => {
     const actual = { GA4: '', INSIDER: '' };
     for (const vendor of platform ? [platform] : ['GA4', 'INSIDER']) {
-      const id = vendor === source ? evidence : latest(`${vendor}|${event}`);
+      const id = vendor === source ? evidence : suppliedCoverage?.explicit ? null : latest(`${vendor}|${event}`);
       if (id) actual[vendor] = `${vendor === source && status === 'NOT_SENT' ? `(Website push nhưng không gửi lên ${vendorOf(vendor)})\n` : ''}${viewOf(id, sample)}`;
     }
     if (!actual.GA4 && !actual.INSIDER) actual[(platform ?? source) === 'GA4' ? 'GA4' : 'INSIDER'] = 'Chưa thấy event';
@@ -119,12 +119,12 @@ export function eventReportRows({ cases = [], events = [], api = [], links = lin
     // A row written as an InsiderQueue push matches no hit of a session that saw requests only. What Insider
     // received for it is the last hit of its name on a page of its flow (any page for a row of every flow).
     const unchecked = new Map(coverage.rows.map(row => {
-      if (row.status !== 'NOT_SEEN' || row.layer !== 'JS_QUEUE' || String(row.source).toUpperCase() !== 'INSIDER') return [row.case_id, null];
+      if (coverage.explicit || row.status !== 'NOT_SEEN' || row.layer !== 'JS_QUEUE' || String(row.source).toUpperCase() !== 'INSIDER') return [row.case_id, null];
       const ids = [...received.get(`INSIDER|${row.event_name}`) ?? []].reverse();
       return [row.case_id, ids.find(id => flowHint(row.flow, byId.get(id)) > 0) ?? (specificFlow(row.flow) ? null : ids[0]) ?? null];
     }));
     const shown = new Set(coverage.rows.filter(row => unchecked.get(row.case_id)).map(row => `INSIDER|${row.event_name}`));
-    for (const row of sessionRows(coverage, coverage.rows.filter(row => unchecked.get(row.case_id)).map(row => row.flow))) {
+    for (const row of coverage.explicit ? coverage.rows : sessionRows(coverage, coverage.rows.filter(row => unchecked.get(row.case_id)).map(row => row.flow))) {
       const testCase = caseById.get(row.case_id), evidence = row.last_fail_evidence_id ?? row.last_evidence_id;
       const fields = Object.keys(testCase?.rules?.[0]?.fields ?? {}).filter(path => !(row.capture_platform === 'APP_SDK' && APP_ONLY_FIELD.test(path)));
       // An issue on a sensitive field (email, token…) keeps its field name only.

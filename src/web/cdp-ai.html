@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/assets/eventqa.css">
 <link rel="stylesheet" href="/assets/automation.css">
 <link rel="stylesheet" href="/assets/inspection.css">
+<link rel="stylesheet" href="/assets/workspace.css">
 </head>
 <body data-mode="cdp-ai">
 <nav class="app-rail" aria-label="Điều hướng chính"><a class="rail-logo" href="http://127.0.0.1:4172/" title="Chọn chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 13 4-7 4 12 4-12 4 7"/></svg></a><span class="rail-divider"></span><button type="button" data-workspace-tab="events" title="Event trực tiếp" aria-label="Event trực tiếp" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Event</span></button><button type="button" data-workspace-tab="spec" title="Đối chiếu đặc tả" aria-label="Đối chiếu đặc tả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>Đặc tả</span></button><button type="button" data-workspace-tab="results" title="Kết quả" aria-label="Kết quả"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg><span>Kết quả</span></button><button type="button" data-setup-stage="report" title="Xuất báo cáo" aria-label="Xuất báo cáo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><span>Xuất</span></button><div class="rail-bottom"><button type="button" data-setup-stage="session" title="Thiết lập phiên" aria-label="Thiết lập phiên"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button><a href="http://127.0.0.1:4172/" title="Đổi chế độ" aria-label="Đổi chế độ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a></div></nav>
@@ -81,7 +82,7 @@
         <div class="row" style="margin-top:12px"><button type="button" class="btn primary" id="import" data-action="import">Nhập file</button><button type="button" class="btn" data-action="open-ai">✦ Tạo rule bằng AI</button></div>
         <p class="hint">Nhập file thay toàn bộ case hiện có (giữ các event nhập tay). Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
         <details class="more manual-event"><summary>Nhập tay event mong muốn (dán payload mẫu)</summary>
-          <p class="hint" style="margin-top:6px">Không có file Excel, hoặc cần thêm một event? Điền tên event và dán payload mẫu (như ô DataLayer Sample trong Excel, JSON, <code>dataLayer.push(...)</code> hoặc <code>InsiderQueue.push(...)</code>). App đọc mẫu giống khi nhập file Excel; event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.</p>
+          <p class="hint" style="margin-top:6px">Điền tên event và dán payload mẫu (JSON, <code>dataLayer.push(...)</code> hoặc <code>InsiderQueue.push(...)</code>), rồi chọn luồng trong bảng Đối chiếu đặc tả để kiểm tra.</p>
           <div class="ai-form-grid">
             <div><label for="manual-event">Tên event <span class="hint">(để trống nếu mẫu có event)</span></label><input id="manual-event" placeholder="view_item" autocomplete="off"></div>
             <div><label for="manual-source">Nền tảng</label><select id="manual-source"><option value="GA4">GA4 (dataLayer)</option><option value="INSIDER">Insider</option></select></div>
@@ -182,6 +183,7 @@
         </div>
         <div class="toolbar">
           <button type="button" class="btn small" data-action="set-marker">⚑ Đặt mốc</button>
+          <button type="button" class="btn small" data-action="export-tracking">Xuất danh sách event</button>
           <label class="check hidden" style="margin:0"><input id="ev-marked" type="checkbox"> Chỉ event sau <span id="marker-label"></span></label>
           <button type="button" class="btn ghost small" data-action="clear-marker">Bỏ mốc</button>
           <label class="check" style="margin:0 0 0 auto"><input id="ev-system" type="checkbox"> Hiện event hệ thống <span class="hint">(gtm.*, ecommerce_reset, insider_init…)</span></label>
@@ -197,14 +199,15 @@
         <div id="events" class="hidden"></div>
       </div>
       <div class="tabpanel hidden" data-panel="spec">
+        <div id="comparison-controls" class="comparison-controls"></div>
         <div id="spec-totals" class="kv"></div>
         <div class="toolbar" style="margin-top:12px">
-          <select id="spec-flow" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
+          <select id="spec-flow" class="hidden" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
           <select id="spec-platform" aria-label="Lọc theo nền tảng"><option value="">Mọi nền tảng</option><option value="GA4">GA4</option><option value="INSIDER">Insider</option></select>
           <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SENT">Có push, không gửi lên server</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
-        <p class="hint" style="margin:0 0 8px">Mỗi event bắt được tự gắn vào dòng đặc tả cùng nền tảng + tên event; luồng được chọn theo giá trị trong payload (service, breadcrumb, taxonomy…) và URL trang. Không cần bấm Bắt đầu bước.</p>
+        <p class="hint">Chọn luồng, thao tác trên website rồi xem kết quả ngay tại bảng này. Test lại bắt đầu lượt mới; Đổi event so sánh cho phép chọn một event khác của lượt hiện tại.</p>
         <div id="spec-format-note" class="banner warn hidden"><p>File có mẫu AppOTA với default_parameters/custom_parameters. Website phải phát đúng cấu trúc này mới đối chiếu được; app không tự biến InsiderQueue thành event AppOTA. Giá trị mẫu như ngày, thiết bị, giá tiền là ví dụ: mặc định kiểm trường và kiểu; muốn so đúng giá trị thực tế, cần duyệt rule/context.</p></div>
         <div id="spec-table"></div>
       </div>
@@ -325,6 +328,7 @@
 <dialog id="spec-detail-dialog" class="spec-dialog">
 <div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
 <dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
+__INSPECTION__
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';
@@ -515,7 +519,6 @@ EventQA.boot({ token, mode: 'cdp-ai', hooks: {
 </script>
 <script src="/assets/automation.js"></script>
 
-__INSPECTION__
 <script src="/assets/inspection.js"></script>
 </body>
 </html>
