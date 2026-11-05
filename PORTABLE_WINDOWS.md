@@ -16,6 +16,8 @@ Bản hiện tại chỉ đối chiếu đặc tả sau khi **Chọn luồng ki�
 
 Chữ và nút dùng kích thước cũ; tên dài được ngắt dòng. Danh sách sheet có ô tìm kiếm và vùng cuộn giới hạn để hiện đủ tên sheet. Dữ liệu cá nhân được nhận diện sẽ được băm HMAC-SHA256 trước mọi lời gọi AI; mật khẩu/token tiếp tục được che. Xem [cơ chế bảo vệ dữ liệu AI](docs/AI.md).
 
+Đối chiếu đặc tả mở trực tiếp hai khung JSON **Đặc tả / Event thực tế**, tô màu ngay các dòng khác nhau. Kết luận PASS/FAIL giữ theo bộ kiểm tra, bao gồm tên event tương đương hợp lệ. Hộp đổi event cho xem trước rồi mới áp dụng. Các nút **Kết thúc phiên**, **Kết thúc và xuất báo cáo**, **Xuất báo cáo** hiện đủ chữ trên từng dòng riêng.
+
 **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo đối chiếu, danh sách event tracking đã xuất hiện, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Tab event có nút **Xuất danh sách event**. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
 
 Để tạo bản ít file, cài esbuild 0.25.12 riêng cho máy build, chạy `scripts/bundle-portable-deps.mjs` với đường dẫn module esbuild và thư mục output; đặt `EVENTQA_PACKAGED_DEPS` trỏ đến output đó khi chạy `scripts/build-portable.py`. Đây chỉ là bước build; người dùng gói tải không cần cài thêm gì.

@@ -50,10 +50,11 @@ try {
         await page.setViewportSize({ width, height: 1000 });
         const layout = await page.locator('[data-stage="report"]').evaluate(stage => ({
           width: document.documentElement.scrollWidth, viewport: innerWidth,
-          buttons: [...stage.querySelectorAll('.stage-body button')].map(button => ({ label: button.textContent.trim(), width: button.clientWidth, clipped: button.scrollHeight > button.clientHeight + 1 || button.scrollWidth > button.clientWidth + 1, font: getComputedStyle(button).fontSize })),
+          buttons: [...stage.querySelectorAll('.stage-body button')].map(button => ({ label: button.textContent.trim(), width: button.clientWidth, height: button.clientHeight, clipped: button.scrollHeight > button.clientHeight + 1 || button.scrollWidth > button.clientWidth + 1, font: getComputedStyle(button).fontSize })),
         }));
         assert.ok(layout.width <= layout.viewport + 1, `${mode}: overflow at ${width}`);
-        assert.ok(layout.buttons.every(button => !button.clipped && button.width < 300 && parseFloat(button.font) >= 12 && parseFloat(button.font) <= 14), JSON.stringify(layout));
+        assert.ok(layout.buttons.every(button => !button.clipped && button.width <= 340 && button.height >= 38 && button.height <= 64 && button.font === '14px'), JSON.stringify(layout));
+        assert.deepEqual(layout.buttons.map(button => button.label), ['Kết thúc phiên', 'Kết thúc và xuất báo cáo', 'Xuất báo cáo']);
         await page.locator('#sheet-picker-button').click();
         assert.ok(await page.locator('#sheet-choices').getByRole('option', { name: chosen, exact: true }).count());
         await page.locator('#sheet-search').press('Escape');

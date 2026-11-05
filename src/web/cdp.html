@@ -142,7 +142,7 @@
     <li class="stage" data-stage="report">
       <button type="button" class="stage-head" aria-expanded="false"><span class="stage-num"><span>4</span></span><span class="stage-title"><strong>Kết thúc &amp; báo cáo</strong><small id="sum-report">—</small></span><span class="chev">›</span></button>
       <div class="stage-body">
-        <div class="row"><button type="button" class="btn primary" id="finish" data-action="finish-only">Kết thúc</button><button type="button" class="btn" id="finish-export" data-action="finish">Kết thúc &amp; xuất…</button><button type="button" class="btn" id="export" data-action="export">Xuất báo cáo…</button></div>
+        <div class="row report-actions"><button type="button" class="btn primary" id="finish" data-action="finish-only">Kết thúc phiên</button><button type="button" class="btn" id="finish-export" data-action="finish">Kết thúc và xuất báo cáo</button><button type="button" class="btn" id="export" data-action="export">Xuất báo cáo</button></div>
         <div id="downloads" class="downloads"></div>
         <p id="run-dir" class="hint"></p>
         <p class="hint">Báo cáo vẫn xuất được khi chưa có rule: toàn bộ event thu thập nằm trong sheet Actual Events. HTTP thành công chỉ là bằng chứng tầng request.</p>
@@ -248,6 +248,7 @@
 <div class="spec-dialog-head"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg> CHI TIẾT ĐỐI CHIẾU</span><button type="button" class="btn small" id="spec-detail-close" aria-label="Đóng chi tiết đặc tả">Đóng ✕</button></div><div id="spec-detail-content"></div></dialog>
 <dialog id="activity-dialog" class="spec-dialog activity-dialog"><div class="spec-dialog-head"><span>EVENT THỰC TẾ · JSON</span><button type="button" class="btn small" id="activity-close">Đóng ✕</button></div><div id="activity-content"></div></dialog>
 __INSPECTION__
+<script src="/assets/comparison-view.js"></script>
 <script src="/assets/eventqa.js"></script>
 <script>
 const token='__CSRF__';

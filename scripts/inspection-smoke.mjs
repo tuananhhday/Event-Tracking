@@ -50,7 +50,7 @@ try {
   await mobile.close();
   await fs.mkdir('.tmp', { recursive: true }); await page.screenshot({ path: '.tmp/tp2-tab.png', fullPage: true });
   await page.locator('#tp2-close').click();
-  await page.getByRole('button', { name: 'Xuất báo cáo…', exact: true }).click();
+  await page.locator('#export').click();
   await page.locator('#export-events').uncheck(); await page.locator('#export-api').check(); await page.locator('#export-format').selectOption('html');
   await page.locator('#export-confirm').click(); await page.locator('#export-dialog').waitFor({ state: 'hidden' });
   const state = app.state(); assert.deepEqual(Object.keys(state.exported), ['api_html']);

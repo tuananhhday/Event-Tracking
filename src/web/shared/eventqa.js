@@ -666,17 +666,40 @@
     $('comparison-flow-search').value = ''; renderFlowChoices(); $('comparison-flow-dialog').showModal(); $('comparison-flow-search').focus();
   }
   let eventChoices = null;
+  let previewSequence = 0;
   function renderEventChoices() {
     const query = $('comparison-event-search').value.trim().toLowerCase();
     const events = (eventChoices?.events || []).filter(event => `${event.event_name} ${event.page?.url || ''} ${event.evidence_id}`.toLowerCase().includes(query));
-    $('comparison-event-list').innerHTML = `<button type="button" class="btn" data-choose-comparison-event="auto">Dùng lại cách ghép tự động theo tên event</button>` + events.map(event => `<article class="event-choice"><div><strong>${esc(event.event_name)}</strong><span>${esc(clock(event.captured_at))} · ${esc(event.source)} · ${esc(LAYER_TEXT[event.layer] || event.layer)}</span><small>${esc(event.page?.url || '')}</small><small>${esc(event.evidence_id)}</small></div><button type="button" class="btn primary" data-choose-comparison-event="${esc(event.evidence_id)}">So sánh event này</button><details><summary>Xem dữ liệu</summary><pre>${esc(JSON.stringify(event.payload, null, 2))}</pre></details></article>`).join('') + (!events.length ? '<p class="empty">Chưa có event phù hợp trong lượt này. Thao tác trên website rồi mở lại danh sách.</p>' : '');
+    if (!$('comparison-candidates')) $('comparison-event-list').innerHTML = '<div class="comparison-picker"><aside id="comparison-candidates" aria-label="Event trong lượt hiện tại"></aside><section id="comparison-preview" aria-live="polite"></section></div>';
+    const selected = events.find(event => event.evidence_id === eventChoices.previewId) || events[0];
+    $('comparison-candidates').innerHTML = `<button type="button" class="btn" data-choose-comparison-event="auto">Ghép tự động</button>` + events.map(event => `<button type="button" class="comparison-candidate" data-preview-comparison="${esc(event.evidence_id)}" aria-pressed="${selected?.evidence_id === event.evidence_id}"><strong>${esc(event.event_name)}</strong><span>${esc(clock(event.captured_at))} · ${esc(event.source)} · ${esc(LAYER_TEXT[event.layer] || event.layer)}</span><small>${esc(event.page?.url || '')}</small></button>`).join('');
+    if (selected) void previewComparison(selected.evidence_id);
+    else { previewSequence++; $('comparison-preview').innerHTML = '<div class="empty"><strong>Chưa có event phù hợp</strong>Thao tác trên website rồi mở lại danh sách.</div>'; }
+  }
+  async function previewComparison(id) {
+    const seq = ++previewSequence, choices = eventChoices, host = $('comparison-preview');
+    choices.previewId = id;
+    for (const button of $$('[data-preview-comparison]')) button.setAttribute('aria-pressed', String(button.dataset.previewComparison === id));
+    host.innerHTML = '<p role="status">Đang mở so sánh…</p>';
+    try {
+      let detail = choices.cache.get(id);
+      if (!detail) {
+        const response = await fetch(`/api/event?id=${encodeURIComponent(id)}&case_id=${encodeURIComponent(choices.case_id)}`);
+        if (!response.ok) throw new Error('Không tải được event. Bấm chọn lại để thử lại.');
+        detail = await response.json(); choices.cache.set(id, detail);
+      }
+      if (seq !== previewSequence || eventChoices !== choices || !host.isConnected || !$('comparison-event-dialog').open) return;
+      const model = window.EventQAComparison.build(caseById(choices.case_id), detail);
+      host.innerHTML = `<div class="comparison-preview-title"><div><strong>${esc(detail.event.event_name)}</strong><small>${esc(clock(detail.event.captured_at))} · ${esc(detail.event.evidence_id)}</small></div><button type="button" class="btn primary" data-choose-comparison-event="${esc(id)}">Dùng event này</button></div>${window.EventQAComparison.render(model, { owner: 'preview' })}`;
+    } catch (error) { if (seq === previewSequence && host.isConnected) host.innerHTML = `<p role="alert">${esc(error.message)}</p>`; }
   }
   async function openEventPicker(caseId) {
     const response = await fetch(`/api/comparison/candidates?case_id=${encodeURIComponent(caseId)}`), data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Không đọc được event của lượt này.');
-    eventChoices = { ...data, case_id: caseId }; $('comparison-event-search').value = '';
-    $('comparison-event-hint').textContent = `Đặc tả: ${caseById(caseId)?.rules[0]?.event_name} · Luồng ${data.attempt.flow}. Chọn event thực tế cùng nền tảng; khác tên sẽ được báo lệch.`;
-    renderEventChoices(); $('comparison-event-dialog').showModal();
+    const row = ui.state.specCoverage?.rows.find(row => row.case_id === caseId);
+    previewSequence++; eventChoices = { ...data, case_id: caseId, previewId: row?.last_fail_evidence_id || row?.last_evidence_id, cache: new Map() }; $('comparison-event-search').value = '';
+    $('comparison-event-hint').textContent = `Đặc tả: ${caseById(caseId)?.rules[0]?.event_name} · Luồng ${data.attempt.flow}. Bấm event để xem khác biệt trước khi chọn.`;
+    $('comparison-event-list').innerHTML = ''; $('comparison-event-dialog').showModal(); renderEventChoices();
   }
   function renderComparisonControls(s) {
     const host = $('comparison-controls'); if (!host) return;
@@ -695,25 +718,23 @@
     }
     return current;
   };
+  let detailSequence = 0;
   async function openSpecDetail(id) {
     const c = caseById(id); if (!c) return;
+    const seq = ++detailSequence, dialog = $('spec-detail-dialog');
+    $('spec-detail-content').innerHTML = '<p role="status">Đang mở so sánh…</p>';
+    if (!dialog.open) dialog.showModal();
     const row = ui.state.specCoverage?.rows.find(r => r.case_id === id);
     const evidence = row?.last_fail_evidence_id || row?.last_evidence_id;
-    const loaded = evidence ? await (await fetch(`/api/event?id=${encodeURIComponent(evidence)}&case_id=${encodeURIComponent(id)}`)).json() : null;
-    const event = loaded?.event;
-    const rule = c.rules[0];
-    const comparisons = Object.entries(rule?.fields || {}).map(([path, field]) => {
-      const actual = event ? valueAt(loaded.comparison_payload ?? event.payload, path) : undefined;
-      const issue = loaded?.spec?.issues.find(i => i.path === path);
-      const verdict = !event ? 'Chưa có event' : issue ? (ISSUE_TEXT[issue.code] || issue.code) : field.op === 'ignore' ? 'Bỏ qua' : 'Đúng theo rule';
-      return `<tr><td><code>${esc(path)}</code></td><td>${formatValue(valueAt(c.sample, path))}</td><td>${esc(field.op)}${field.value !== undefined ? ` · ${esc(short(field.value, 100))}` : ''}</td><td>${actual === undefined ? '<span class="hint">Chưa có / thiếu trường</span>' : formatValue(actual)}</td><td>${esc(verdict)}</td></tr>`;
-    }).join('');
-    $('spec-detail-content').innerHTML = `<h2>${esc(rule?.event_name || c.name)}</h2><p><b>${esc(whereSpec(c.provenance?.sheet, c.provenance?.row))}</b> · ${esc(c.flow)} · ${esc(c.source)} · ${esc(LAYER_TEXT[rule?.layer] || rule?.layer)}</p><p style="white-space:pre-wrap">${esc(c.description)}</p>
-      <p class="hint">Mẫu giữ nguyên theo file. Các giá trị ví dụ không tự trở thành giá trị bắt buộc: cột Quy tắc cho biết đang kiểm kiểu, có mặt hay giá trị chính xác. Event thực tế giữ nguyên tên và payload đã thu thập.</p>
-      ${event ? `<p><b>Event thực tế:</b> ${esc(event.event_name)} · ${esc(event.evidence_id)}</p>` : '<p class="banner info">Chưa thu được event đúng nguồn/tầng/tên cho dòng này. Payload mẫu bên dưới không phải bằng chứng đã bắn.</p>'}
-      <div class="table-scroll"><table class="params"><thead><tr><th>Trường</th><th>Ví dụ trong đặc tả</th><th>Quy tắc hiện tại</th><th>Thực tế</th><th>Đối chiếu</th></tr></thead><tbody>${comparisons || '<tr><td colspan="5">Chưa có chi tiết payload để kiểm.</td></tr>'}</tbody></table></div>
-      <div class="contract-columns"><section><h3>Chi tiết event · đặc tả</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre></section><section><h3>Payload · thực tế</h3><pre>${esc(event ? JSON.stringify(event.payload, null, 2) : 'Chưa có event')}</pre></section></div>`;
-    $('spec-detail-dialog').showModal();
+    try {
+      const response = evidence ? await fetch(`/api/event?id=${encodeURIComponent(evidence)}&case_id=${encodeURIComponent(id)}`) : null;
+      if (response && !response.ok) throw new Error('Không tải được event. Bấm Thử lại để mở lại.');
+      const loaded = response ? await response.json() : null;
+      if (seq !== detailSequence || !dialog.open) return;
+      const model = window.EventQAComparison.build(c, loaded, row);
+      $('spec-detail-content').innerHTML = `<div class="event-comparison-title"><div><span class="eyebrow">${esc(c.source)} · ${esc(c.flow)}</span><h2>${esc(c.rules[0]?.event_name || c.name)}</h2><small>${esc(whereSpec(c.provenance?.sheet, c.provenance?.row))}${evidence ? ` · ${esc(clock(loaded.event.captured_at))}` : ''}</small></div>${row?.attempt_id && !row.attempt_id.startsWith('step:') ? `<button type="button" class="btn" data-change-comparison-event="${esc(id)}">Đổi event so sánh</button>` : ''}</div>${window.EventQAComparison.render(model)}
+        <details class="comparison-extra"><summary>Ghi chú, quy tắc và JSON gốc</summary><p>${esc(c.description)}</p><p>${esc(c.notes)}</p><div class="contract-columns"><section><h3>Đặc tả gốc</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre><h3>Quy tắc</h3><pre>${esc(JSON.stringify(c.rules, null, 2))}</pre></section><section><h3>Event gốc</h3><pre>${esc(loaded ? JSON.stringify(loaded.event.payload, null, 2) : 'Chưa có event')}</pre>${loaded?.delivery?.push ? `<h3>Website đã push</h3><pre>${esc(JSON.stringify(loaded.delivery.push.payload, null, 2))}</pre>` : ''}</section></div></details>`;
+    } catch (error) { if (seq === detailSequence && dialog.open) $('spec-detail-content').innerHTML = `<p role="alert">${esc(error.message)}</p><button type="button" class="btn" data-spec-detail="${esc(id)}">Thử lại</button>`; }
   }
   const SPEC_STATUS = { NOT_SELECTED: ['', 'Chưa chọn luồng'], MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy trong lượt này'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
   function renderSpec(s) {
@@ -736,16 +757,12 @@
       // Rows with evidence first (mismatches and pushes never sent on top), then the rest in specification order.
       .sort((a, b) => (b.seen > 0 || b.not_sent > 0) - (a.seen > 0 || a.not_sent > 0) || ['MISMATCH', 'NOT_SENT'].includes(b.status) - ['MISMATCH', 'NOT_SENT'].includes(a.status) || 0);
     const unmatched = (!f.status || f.status === 'UNMATCHED') && !f.flow ? cov.unmatched.filter(u => (!f.platform || u.source === f.platform) && (!f.query || u.event_name.toLowerCase().includes(f.query))) : [];
-    const issueText = r => (r.not_sent ? `<div class="issue"><b>Website push ${r.not_sent} lần nhưng không gửi lên ${vendorName(r.source)}</b></div>` : '')
-      + r.issues.slice(0, 5).map(i => `<div class="issue"><b>${esc(ISSUE_TEXT[i.code] || i.code)}</b> <code>${esc(i.path || '')}</code>${['VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH'].includes(i.code) ? `<div class="diff"><span>Mong đợi</span><code>${esc(short(i.expected, 60))}</code><span>Thực tế</span><code>${esc(short(i.actual, 60))}</code></div>` : ''}${i.code === 'NOT_FORWARDED' ? `<div class="diff"><span>Website push</span><code>${esc(short(i.pushed, 60))}</code><span>Google nhận</span><code>(không có)</code></div>` : ''}</div>`).join('') + (r.issues.length > 5 ? `<small class="hint">+${r.issues.length - 5} trường khác</small>` : '');
-    host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks"><thead><tr><th>STT</th><th>Nền tảng · Luồng</th><th>Event</th><th>Trạng thái</th><th>Số lần</th><th>Trường lệch</th><th>Ghi chú đặc tả</th></tr></thead><tbody>
-      ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status]; const evidence = r.last_fail_evidence_id || r.last_evidence_id; return `<tr>
-        <td>${esc(r.stt || r.row || '')}</td><td><span class="pill">${esc(r.source)}</span><br><small>${esc(r.flow)}</small></td>
-        <td><b>${esc(r.event_name)}</b>${r.layer === 'TRACKING_REQUEST' ? ' <span class="pill layer">Request</span>' : ''}<br><small class="hint">${esc(whereSpec(r.sheet, r.row))} · ${esc(r.description)}</small><br><button type="button" class="evlink" data-spec-detail="${esc(r.case_id)}">Xem chi tiết đặc tả</button>${r.attempt_id && !r.attempt_id.startsWith('step:') ? `<br><button type="button" class="btn small" data-change-comparison-event="${esc(r.case_id)}">Đổi event so sánh</button>` : ''}</td>
-        <td><span class="pill ${cls}">${label}</span>${r.manual ? '<br><small>Event bạn chọn</small>' : ''}</td><td>${r.seen ? `<b>${r.seen}</b>${r.fail ? `<br><small class="hint">${r.fail} lệch</small>` : ''}` : '—'}</td>
-        <td>${issueText(r) || (r.seen ? '<span class="hint">Đủ trường theo sample</span>' : '')}${evidence ? `<button type="button" class="evlink" data-evidence="${esc(evidence)}">Xem event</button>` : ''}</td>
-        <td><small>${esc(r.notes)}</small></td></tr>`; }).join('')}
-      ${unmatched.map(u => `<tr><td>—</td><td><span class="pill">${esc(u.source)}</span></td><td><b>${esc(u.event_name)}</b></td><td><span class="pill warn">Ngoài đặc tả</span></td><td><b>${u.count}</b></td><td><button type="button" class="evlink" data-evidence="${esc(u.last_evidence_id)}">Xem event</button></td><td><small class="hint">Event bắn ra nhưng file đặc tả không có</small></td></tr>`).join('')}
+    host.innerHTML = (rows.length || unmatched.length) ? `<div class="table-scroll"><table class="checks spec-overview"><thead><tr><th>STT</th><th>Event</th><th>Nền tảng</th><th>Kết quả</th><th>Số lần</th><th>So sánh</th></tr></thead><tbody>
+      ${rows.map(r => { const [cls, label] = SPEC_STATUS[r.status] || ['', r.status]; return `<tr><td>${esc(r.stt || r.row || '')}</td>
+        <td><button type="button" class="spec-event-name" data-spec-detail="${esc(r.case_id)}">${esc(r.event_name)}</button><small class="spec-event-location">${esc(r.flow)} · ${esc(whereSpec(r.sheet, r.row))}</small></td>
+        <td><span class="pill">${esc(r.source)}</span></td><td><span class="pill ${esc(cls)}">${esc(label)}</span>${r.manual ? '<small class="spec-event-location">Event bạn chọn</small>' : ''}</td><td>${esc(r.seen || 0)}</td>
+        <td><button type="button" class="btn" data-spec-detail="${esc(r.case_id)}">Xem so sánh</button></td></tr>`; }).join('')}
+      ${unmatched.map(u => `<tr><td>—</td><td>${esc(u.event_name)}</td><td><span class="pill">${esc(u.source)}</span></td><td><span class="pill warn">Ngoài đặc tả</span></td><td>${u.count}</td><td><button type="button" class="btn" data-evidence="${esc(u.last_evidence_id)}">Xem event</button></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty"><strong>Không có dòng khớp bộ lọc</strong></div>';
   }
 
@@ -1259,12 +1276,24 @@
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
-      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage], [data-activity-id], [data-activity-view], [data-choose-flow], [data-change-comparison-event], [data-choose-comparison-event]');
+      const target = event.target.closest('[data-action], [data-case], [data-evidence], .stage-head, .tab, [data-browser], [data-url], [data-view], [data-build], [data-group-view], [data-add-endpoint], [data-target-mode], [data-expand], [data-spec-detail], [data-workspace-tab], [data-setup-stage], [data-activity-id], [data-activity-view], [data-choose-flow], [data-change-comparison-event], [data-choose-comparison-event], [data-preview-comparison], button[data-comparison-mode]');
       if (!target || target.disabled) return;
       const d = target.dataset;
       if (d.chooseFlow) return run(async () => { await api('comparison/start', { flow: d.chooseFlow }, 'comparison-start'); $('comparison-flow-dialog').close(); for (const id of ['spec-flow', 'spec-status', 'spec-platform', 'spec-search']) $(id).value = ''; ui.sig.spec = null; selectTab('spec'); toast('Đã bắt đầu đối chiếu. Thao tác luồng này trên website để nhận event mới.', 'ok'); })();
+      if (d.comparisonMode) {
+        const view = target.closest('.event-comparison'); view.dataset.comparisonMode = d.comparisonMode;
+        for (const button of $$('button[data-comparison-mode]', view)) button.setAttribute('aria-pressed', String(button === target)); return;
+      }
+      if (d.previewComparison) return run(() => previewComparison(d.previewComparison))();
       if (d.changeComparisonEvent) return run(() => openEventPicker(d.changeComparisonEvent))();
-      if (d.chooseComparisonEvent) return run(async () => { await api('comparison/event', { case_id: eventChoices.case_id, evidence_id: d.chooseComparisonEvent === 'auto' ? null : d.chooseComparisonEvent }, 'comparison-event'); $('comparison-event-dialog').close(); toast('Đã cập nhật event đối chiếu.', 'ok'); })();
+      if (d.chooseComparisonEvent) return run(async () => {
+        if (ui.busy) return;
+        const caseId = eventChoices.case_id; target.disabled = true;
+        try {
+          await api('comparison/event', { case_id: caseId, evidence_id: d.chooseComparisonEvent === 'auto' ? null : d.chooseComparisonEvent }, 'comparison-event');
+          $('comparison-event-dialog').close(); await openSpecDetail(caseId); toast('Đã cập nhật event đối chiếu.', 'ok');
+        } finally { if (target.isConnected) target.disabled = false; }
+      })();
       if (d.activityId) return run(() => openActivity(d.activityId))();
       if (d.activityView) {
         for (const button of $$('[data-activity-view]')) button.setAttribute('aria-pressed', String(button === target));

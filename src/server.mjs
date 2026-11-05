@@ -34,6 +34,7 @@ const readWeb = name => fs.readFile(new URL(`./web/${name}`, import.meta.url), '
 // Each mode has its own screen; styling and client logic are shared assets.
 const MODE_PAGES = { cdp: 'cdp.html', 'cdp-ai': 'cdp-ai.html' };
 const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charset=utf-8'], '/assets/eventqa.js': ['shared/eventqa.js', 'text/javascript; charset=utf-8'],
+  '/assets/comparison-view.js': ['shared/comparison-view.js', 'text/javascript; charset=utf-8'],
   '/assets/workspace.css': ['shared/workspace.css', 'text/css; charset=utf-8'],
   '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'],
   '/assets/inspection.css': ['shared/inspection.css', 'text/css; charset=utf-8'], '/assets/inspection.js': ['shared/inspection.js', 'text/javascript; charset=utf-8'] };
