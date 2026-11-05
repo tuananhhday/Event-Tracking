@@ -20,6 +20,7 @@
     "smoke:automation-guide": "node scripts/automation-guide-smoke.mjs",
     "smoke:inspection": "node scripts/inspection-smoke.mjs",
     "smoke:comparison": "node scripts/comparison-smoke.mjs",
+    "smoke:sheet-layout": "node scripts/sheet-layout-smoke.mjs",
     "smoke:network": "node scripts/network-smoke.mjs",
     "smoke:network-ui": "node scripts/ai-network-ui-smoke.mjs",
     "test": "node --test",

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import Ajv from 'ajv';
 import { redact } from '../core/privacy.mjs';
+import { createAiPrivacy, AI_PRIVACY } from './privacy.mjs';
 import { normalizeModel, routingCandidates } from './routing.mjs';
 import { networkFailure, networkRuntime, isNetworkReason, permanentNetworkReason } from './network.mjs';
 
@@ -118,6 +119,7 @@ function sanitizeDraft(value) {
 
 /** Optional, explicit AI assistance. All errors return unavailable; core verdicts stay local. */
 export class OpenRouterClient {
+  #privacy = createAiPrivacy();
   constructor(options = {}) {
     this.enabled = flag(options.enabled ?? process.env.AI_ENABLED ?? false);
     const primary = options.apiKey ?? process.env.OPENROUTER_API_KEY ?? '';
@@ -167,6 +169,7 @@ export class OpenRouterClient {
       max_prompt_usd_per_million: this.maxPromptUsdPerMillion, max_completion_usd_per_million: this.maxCompletionUsdPerMillion,
       request_budget_usd: this.requestBudgetUsd, max_model_attempts: this.maxModelAttempts, max_completion_requests: this.maxCompletionRequests, max_free_attempts: this.maxFreeAttempts,
       max_output_tokens: this.maxOutputTokens,
+      privacy: { ...AI_PRIVACY },
       keys: this.keyStates.map(key => ({ label: key.label, available: key.disabledUntil <= Date.now(), paid_available: key.disabledUntil <= Date.now() && key.paidDisabledUntil <= Date.now(), reason: key.reason })),
       last_trace: structuredClone(this.lastTrace), last_result: this.lastResult,
       network: { ...networkRuntime(), last_error: this.lastNetworkError ? { ...this.lastNetworkError } : null },
@@ -179,6 +182,7 @@ export class OpenRouterClient {
     this.closed = true;
     this.lifecycleController.abort(new Error('AI_CANCELLED'));
     this.cache.clear();
+    this.#privacy.close();
   }
 
   cancel() { this.close(); }
@@ -309,7 +313,7 @@ export class OpenRouterClient {
   async complete(model, system, input, schema, validateOutput) {
     const reason = this.unavailable();
     if (reason) return { available: false, reason };
-    const sanitized = redact(structuredClone(input));
+    const sanitized = this.#privacy.sanitize(structuredClone(input));
     if (JSON.stringify(sanitized).length > 150000) return { available: false, reason: 'AI_INPUT_TOO_LARGE' };
     const key = fingerprint({ model, system, sanitized, schema });
     if (this.cache.has(key)) return structuredClone(this.cache.get(key));
@@ -343,7 +347,7 @@ export class OpenRouterClient {
           const response = await this.request('/chat/completions', {
             method: 'POST', body: JSON.stringify({
               model: candidate.id, temperature: 0.1, max_tokens: this.maxOutputTokens,
-              messages: [{ role: 'system', content: `${system}\nOutput JSON must satisfy this schema: ${JSON.stringify(schema)}` }, { role: 'user', content: JSON.stringify(sanitized) }],
+              messages: [{ role: 'system', content: `${system}\nGiá trị [PII:...] là mã băm thay thế dữ liệu cá nhân. Chỉ so sánh các mã; không suy đoán hoặc khôi phục danh tính.\nOutput JSON must satisfy this schema: ${JSON.stringify(schema)}` }, { role: 'user', content: JSON.stringify(sanitized) }],
               response_format: jsonMode === 'json_schema' ? { type: 'json_schema', json_schema: { name: 'eventqa_output', strict: false, schema } } : { type: 'json_object' },
               ...(candidate.reasoning_control.request ? { reasoning: candidate.reasoning_control.request } : {}),
               provider: { sort: 'price', require_parameters: true, data_collection: 'deny', allow_fallbacks: true,

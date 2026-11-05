@@ -12,7 +12,9 @@ Bản AI được mở bằng `CHAY_EVENT_QA_AI.cmd` sẽ dùng kho chứng ch�
 
 Gói tải chứa đầy đủ thư viện JavaScript theo lockfile cùng license trong từng thư viện. Cần giải nén toàn bộ thư mục trước khi chạy.
 
-Bản hiện tại chỉ đối chiếu đặc tả sau khi **Chọn luồng kiểm tra**. **Test lại** tạo lượt mới; **Đổi event so sánh** chọn bằng chứng trong lượt đang xem. Giao diện dùng toàn chiều rộng, chữ lớn và ngắt dòng. Tab **TP2 ↔ API** tự giải mã `ue_px`, tìm API và ghép trường theo mã đơn/sản phẩm, gồm các lần gọi lại `myorder`.
+Bản hiện tại chỉ đối chiếu đặc tả sau khi **Chọn luồng kiểm tra**. **Test lại** tạo lượt mới; **Đổi event so sánh** chọn bằng chứng trong lượt đang xem. Giao diện giữ bố cục cũ với thanh thiết lập bên trái và bảng event bên phải. Tab **TP2 ↔ API** tự giải mã `ue_px`, tìm API và ghép trường theo mã đơn/sản phẩm, gồm các lần gọi lại `myorder`.
+
+Chữ và nút dùng kích thước cũ; tên dài được ngắt dòng. Danh sách sheet có ô tìm kiếm và vùng cuộn giới hạn để hiện đủ tên sheet. Dữ liệu cá nhân được nhận diện sẽ được băm HMAC-SHA256 trước mọi lời gọi AI; mật khẩu/token tiếp tục được che. Xem [cơ chế bảo vệ dữ liệu AI](docs/AI.md).
 
 **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo đối chiếu, danh sách event tracking đã xuất hiện, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Tab event có nút **Xuất danh sách event**. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
 

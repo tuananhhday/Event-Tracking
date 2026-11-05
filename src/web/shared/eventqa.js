@@ -1193,6 +1193,18 @@
     },
   };
 
+  function closeSheetPicker() {
+    $('sheet-picker-popup')?.classList.add('hidden'); $('sheet-picker-button')?.setAttribute('aria-expanded', 'false');
+  }
+  function renderSheetChoices() {
+    const normalize = value => value.normalize('NFD').replace(/\p{M}/gu, '').replace(/đ/gi, 'd').toLowerCase();
+    const query = normalize($('sheet-search').value.trim()), selected = $('sheet').value;
+    const names = (ui.sheetNames || []).filter(name => normalize(name).includes(query));
+    $('sheet-choices').innerHTML = names.map(name => `<button type="button" role="option" aria-selected="${name === selected}" data-sheet-choice="${esc(name)}">${esc(name)}</button>`).join('') || '<p class="hint">Không tìm thấy sheet phù hợp.</p>';
+  }
+  function selectSheet(name) {
+    $('sheet').value = name; $('sheet-select').value = name; $('sheet-selected').textContent = name || 'Tự nhận diện sheet';
+  }
   function bindCommon() {
     // Keep the rule editor available as an advanced tool; manual per-step controls are retired.
     const editor = $('rule-editor'), specSetup = document.querySelector('[data-stage="spec"] .stage-body');
@@ -1203,7 +1215,31 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
     $('setup-toggle')?.addEventListener('click', () => toggleSetup());
     $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
-    $('sheet-select')?.addEventListener('change', () => { $('sheet').value = $('sheet-select').value; });
+    $('sheet-select')?.addEventListener('change', () => selectSheet($('sheet-select').value));
+    $('sheet')?.addEventListener('input', () => { $('sheet-selected').textContent = $('sheet').value || 'Tự nhận diện sheet'; });
+    $('sheet-picker-button')?.addEventListener('click', () => {
+      if ($('sheet-picker-button').getAttribute('aria-expanded') === 'true') return closeSheetPicker();
+      $('sheet-search').value = ''; renderSheetChoices(); $('sheet-picker-popup').classList.remove('hidden');
+      const box = $('sheet-picker-button').getBoundingClientRect(), above = box.top - 12, below = innerHeight - box.bottom - 12, upward = below < 300 && above > below;
+      $('sheet-picker-popup').classList.toggle('above', upward);
+      $('sheet-picker-popup').style.setProperty('--sheet-list-height', `${Math.max(80, Math.min(240, (upward ? above : below) - 76))}px`);
+      $('sheet-picker-button').setAttribute('aria-expanded', 'true'); $('sheet-search').focus({ preventScroll: true });
+    });
+    $('sheet-search')?.addEventListener('input', renderSheetChoices);
+    $('sheet-picker')?.addEventListener('keydown', event => {
+      if ($('sheet-picker-popup').classList.contains('hidden')) return;
+      if (event.key === 'Escape') { event.preventDefault(); closeSheetPicker(); $('sheet-picker-button').focus(); }
+      if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault(); const buttons = [...$('sheet-choices').querySelectorAll('button')];
+        const current = buttons.indexOf(document.activeElement), next = current < 0 ? event.key === 'ArrowDown' ? 0 : buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      }
+    });
+    document.addEventListener('click', event => {
+      const choice = event.target.closest('[data-sheet-choice]');
+      if (choice) { selectSheet(choice.dataset.sheetChoice); closeSheetPicker(); $('sheet-picker-button').focus({ preventScroll: true }); }
+      else if (!event.target.closest('#sheet-picker')) closeSheetPicker();
+    });
     $('spec-file')?.addEventListener('change', run(async () => {
       const file = $('spec-file').files[0]; if (!file) return;
       if (file.size > 3 * 1024 * 1024) throw new Error('Chọn file nhỏ hơn 3 MB.');
@@ -1211,9 +1247,11 @@
       const uploaded = await api('spec-upload', { name: file.name, content }, 'spec-upload');
       $('spec-path').value = uploaded.path;
       const names = uploaded.sheets.map(s => s.name);
+      ui.sheetNames = names; closeSheetPicker();
       const selected = names.includes('R1511') ? 'R1511' : names.includes('Tổng hợp Event tracking') ? 'Tổng hợp Event tracking' : names[0] || '';
       $('sheet-select').innerHTML = names.map(name => `<option>${esc(name)}</option>`).join('') || '<option>JSON — không có sheet</option>';
       $('sheet-select').disabled = !names.length; $('sheet-select').value = selected;
+      $('sheet-picker-button').disabled = !names.length; $('sheet-selected').textContent = selected || 'JSON · không có sheet';
       $('sheet-list').innerHTML = names.map(name => `<option value="${esc(name)}"></option>`).join('');
       $('sheet').value = selected;
       $('spec-file-status').textContent = `${file.name} · ${names.length} sheet. Đã chọn ${selected || 'JSON'}; bấm Nhập file để áp dụng.`;

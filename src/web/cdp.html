@@ -71,14 +71,19 @@
         <p class="hint" style="margin-top:0">Không có file đặc tả? Cứ thu thập, rồi bấm <b>Tạo rule</b> trên event thật ở tab Event. Rule đã lưu được tự nạp lại lần sau.</p>
         <label class="file-drop" for="spec-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg><strong>Chọn file đặc tả</strong><span>Excel (.xlsx) hoặc JSON · tối đa 3 MB</span><input id="spec-file" type="file" accept=".xlsx,.json" aria-label="Chọn file đặc tả Excel hoặc JSON"></label>
         <p class="hint" id="spec-file-status" role="status">Chọn file, chọn sheet rồi bấm Nhập file. Hỗ trợ cột Chi tiết event.</p>
-        <label for="sheet-select">Sheet trong file đã chọn</label><select id="sheet-select" disabled><option value="">Chọn file Excel trước</option></select>
+        <label for="sheet-picker-button">Sheet trong file đã chọn</label>
+        <div id="sheet-picker" class="sheet-picker">
+          <button type="button" id="sheet-picker-button" class="sheet-picker-button" aria-haspopup="listbox" aria-expanded="false" aria-controls="sheet-picker-popup" disabled><span id="sheet-selected">Chọn file Excel trước</span><span aria-hidden="true">▾</span></button>
+          <div id="sheet-picker-popup" class="sheet-picker-popup hidden"><label for="sheet-search" class="sr-only">Tìm sheet</label><input id="sheet-search" type="search" placeholder="Tìm tên sheet…" autocomplete="off"><div id="sheet-choices" role="listbox" aria-label="Các sheet trong file"></div></div>
+        </div>
+        <select id="sheet-select" class="hidden" tabindex="-1" aria-hidden="true" disabled><option value="">Chọn file Excel trước</option></select>
         <details class="more manual-spec"><summary>Nhập đường dẫn hoặc tên sheet thủ công</summary>        <label for="spec-path">Hoặc đường dẫn file trên máy</label>
         <input id="spec-path" placeholder="F:\...\Martech_WebOTA_20260501.xlsx" autocomplete="off">
         <label for="sheet">Sheet <span class="hint">(để trống: tự nhận diện)</span></label>
-        <input id="sheet" list="sheet-list" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
+        <input id="sheet" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
 </details>
         <button type="button" class="btn primary" id="import" data-action="import" style="margin-top:12px">Nhập file</button>
-        <p class="hint">Nhập file thay toàn bộ case hiện có (giữ các event nhập tay). Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+        <p class="hint">Nhập file rồi chọn luồng cần kiểm tra trong bảng đối chiếu. Có thể đổi file trước khi bắt đầu lượt đối chiếu; các event nhập tay được giữ lại.</p>
         <details class="more manual-event"><summary>Nhập tay event mong muốn (dán payload mẫu)</summary>
           <p class="hint" style="margin-top:6px">Điền tên event và dán payload mẫu (JSON, <code>dataLayer.push(...)</code> hoặc <code>InsiderQueue.push(...)</code>), rồi chọn luồng trong bảng Đối chiếu đặc tả để kiểm tra.</p>
           <div class="ai-form-grid">

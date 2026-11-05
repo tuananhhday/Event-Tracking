@@ -64,7 +64,7 @@ try {
         await page.setViewportSize({ width, height: 1080 });
         const size = await page.evaluate(() => ({ body: document.documentElement.scrollWidth, viewport: innerWidth, text: getComputedStyle(document.querySelector('#spec-table td')).fontSize }));
         assert.ok(size.body <= size.viewport + 1, `${mode} has page overflow at ${width}: ${JSON.stringify(size)}`);
-        assert.ok(parseFloat(size.text) >= 14);
+        assert.ok(parseFloat(size.text) >= 12 && parseFloat(size.text) <= 14, 'Keep the original compact table typography');
       }
       await page.setViewportSize({ width: 1440, height: 1080 });
       await page.evaluate(() => scrollTo(0, 0));
