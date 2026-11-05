@@ -23,14 +23,14 @@
   // GA4 Measurement Protocol parameters: transport metadata, not business fields.
   const GA4_PROTOCOL = new Set(['v', 'tid', 'gtm', 'gcd', 'npa', 'dma', 'dma_cps', 'cid', 'ul', 'sr', 'uaa', 'uab', 'uafvl', 'uamb', 'uam', 'uap', 'uapv', 'uaw', 'are', 'frm', 'pscdl', 'sid', 'sct', 'seg', 'dl', 'dr', 'dt', 'tfd', 'ec_mode', 'tag_exp', 'ngs', 'gcs', 'gcu', 'richsstsse', 'pae', 'ir', 'tt', 'apve', 'apvf', 'gtm_up', 'gcut', 'dp', 'ecid', 'en']);
   const ISSUE_TEXT = {
-    EVENT_NAME_MISMATCH: 'Tên event khác đặc tả', LAYER_MISMATCH: 'Tầng dữ liệu khác đặc tả',
-    MISSING_EVENT: 'Không thấy event', DUPLICATE_EVENT: 'Event bị lặp', MISSING_FIELD: 'Thiếu trường', NULL_FIELD: 'Trường rỗng (null)',
-    UNEXPECTED_FIELD: 'Có trường không được phép', VALUE_MISMATCH: 'Sai giá trị', DYNAMIC_VALUE_MISMATCH: 'Không khớp context', WRONG_TYPE: 'Sai kiểu dữ liệu',
+    EVENT_NAME_MISMATCH: 'Tên event không đúng đặc tả', LAYER_MISMATCH: 'Chọn sai dữ liệu trên website hoặc dữ liệu đã gửi',
+    MISSING_EVENT: 'Chưa thấy event', DUPLICATE_EVENT: 'Event bị lặp', MISSING_FIELD: 'Thiếu thông tin bắt buộc', NULL_FIELD: 'Thông tin này đang trống',
+    UNEXPECTED_FIELD: 'Có thông tin không được phép xuất hiện', VALUE_MISMATCH: 'Giá trị không đúng yêu cầu', DYNAMIC_VALUE_MISMATCH: 'Không giống thông tin đã nhập trên website', WRONG_TYPE: 'Sai kiểu dữ liệu',
     HTTP_ERROR: 'Request lỗi HTTP', REQUEST_FAILED: 'Request thất bại', TIMING_EXCEEDED: 'Quá thời gian cho phép', MISSING_TIMING: 'Thiếu mốc thời gian',
-    OUT_OF_ORDER: 'Sai thứ tự', ORDER_PREDECESSOR_MISSING: 'Thiếu event đứng trước', MISSING_CONTEXT: 'Context chưa có giá trị này',
-    INVALID_RULE: 'Rule không hợp lệ', RULE_NEEDS_REVIEW: 'Rule chưa được duyệt', LAYER_UNAVAILABLE: 'Phương án này không quan sát được tầng này',
-    VALUE_TOO_LARGE: 'Giá trị quá lớn để so khớp', REVIEW: 'Cần QC review', NO_EXPECTED_FIELDS: 'Đặc tả chưa có chi tiết payload', INCOMPLETE_CAPTURE: 'Payload thu chưa đầy đủ',
-    NOT_FORWARDED: 'Website có push nhưng Google không nhận', NOT_SENT: 'Có push nhưng không gửi lên server', PENDING_DELIVERY: 'Đang chờ request gửi đi',
+    OUT_OF_ORDER: 'Sai thứ tự', ORDER_PREDECESSOR_MISSING: 'Thiếu event đứng trước', MISSING_CONTEXT: 'Chưa có thông tin đã nhập trên website để so sánh',
+    INVALID_RULE: 'Cách kiểm tra chưa hợp lệ', RULE_NEEDS_REVIEW: 'Cách kiểm tra chưa được xác nhận', LAYER_UNAVAILABLE: 'Chưa thu thập được loại dữ liệu này',
+    VALUE_TOO_LARGE: 'Dữ liệu quá lớn để so sánh', REVIEW: 'Cần kiểm tra thêm', NO_EXPECTED_FIELDS: 'Chưa có yêu cầu để kiểm tra event này', INCOMPLETE_CAPTURE: 'Chưa thu được đầy đủ dữ liệu',
+    NOT_FORWARDED: 'Website có thông tin này nhưng chưa gửi đi', NOT_SENT: 'Website đã tạo event nhưng chưa thấy gửi đi', PENDING_DELIVERY: 'Đang chờ website gửi event',
   };
   // Whether a pushed event left the browser (src/core/delivery.mjs).
   const vendorName = source => source === 'GA4' ? 'Google' : source === 'INSIDER' ? 'Insider' : 'server';
@@ -373,7 +373,7 @@
     const head = `<div class="ev-head"><div><span class="ev-title">${esc(e.event_name)}</span>
         <span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span> <span class="pill">${esc(e.source)}</span>
         <div class="hint">${esc(clock(e.captured_at))} · ${esc(pageUrl)}${e.network?.status ? ` · HTTP ${esc(e.network.status)}` : ''}</div></div>
-      ${spec ? `<div class="ev-spec"><span class="pill ${spec.verdict}">${spec.verdict === 'PASS' ? 'Khớp đặc tả' : spec.verdict === 'FAIL' ? 'Lệch đặc tả' : 'Cần xem'}</span><div class="hint">Đặc tả #${esc(spec.stt)} · ${esc(spec.flow)}</div></div>`
+      ${spec ? `<div class="ev-spec"><span class="pill ${spec.verdict}">${spec.verdict === 'PASS' ? 'Chưa thấy lỗi' : spec.verdict === 'FAIL' ? 'Có lỗi' : 'Cần kiểm tra thêm'}</span><div class="hint">Đặc tả #${esc(spec.stt)} · ${esc(spec.flow)}</div></div>`
         : (ui.state?.cases.length ? '<div class="ev-spec"><span class="pill warn">Ngoài đặc tả</span></div>' : '')}</div>`;
     const scalar = rows.filter(row => !row.list);
     const lists = rows.filter(row => row.list);
@@ -698,7 +698,7 @@
     if (!response.ok) throw new Error(data.error || 'Không đọc được event của lượt này.');
     const row = ui.state.specCoverage?.rows.find(row => row.case_id === caseId);
     previewSequence++; eventChoices = { ...data, case_id: caseId, previewId: row?.last_fail_evidence_id || row?.last_evidence_id, cache: new Map() }; $('comparison-event-search').value = '';
-    $('comparison-event-hint').textContent = `Đặc tả: ${caseById(caseId)?.rules[0]?.event_name} · Luồng ${data.attempt.flow}. Bấm event để xem khác biệt trước khi chọn.`;
+    $('comparison-event-hint').textContent = `${caseById(caseId)?.source} · ${caseById(caseId)?.rules[0]?.event_name} · Luồng ${data.attempt.flow}. Chọn event để xem thử, rồi bấm “Dùng event này”.`;
     $('comparison-event-list').innerHTML = ''; $('comparison-event-dialog').showModal(); renderEventChoices();
   }
   function renderComparisonControls(s) {
@@ -733,10 +733,10 @@
       if (seq !== detailSequence || !dialog.open) return;
       const model = window.EventQAComparison.build(c, loaded, row);
       $('spec-detail-content').innerHTML = `<div class="event-comparison-title"><div><span class="eyebrow">${esc(c.source)} · ${esc(c.flow)}</span><h2>${esc(c.rules[0]?.event_name || c.name)}</h2><small>${esc(whereSpec(c.provenance?.sheet, c.provenance?.row))}${evidence ? ` · ${esc(clock(loaded.event.captured_at))}` : ''}</small></div>${row?.attempt_id && !row.attempt_id.startsWith('step:') ? `<button type="button" class="btn" data-change-comparison-event="${esc(id)}">Đổi event so sánh</button>` : ''}</div>${window.EventQAComparison.render(model)}
-        <details class="comparison-extra"><summary>Ghi chú, quy tắc và JSON gốc</summary><p>${esc(c.description)}</p><p>${esc(c.notes)}</p><div class="contract-columns"><section><h3>Đặc tả gốc</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre><h3>Quy tắc</h3><pre>${esc(JSON.stringify(c.rules, null, 2))}</pre></section><section><h3>Event gốc · ${esc(loaded?.event.source || c.source)}</h3><pre>${esc(loaded ? JSON.stringify(loaded.event.payload, null, 2) : 'Chưa có event')}</pre>${loaded?.delivery?.push && loaded.delivery.push.evidence_id !== loaded.event.evidence_id ? `<h3>Website đã push · ${esc(loaded.delivery.push.source)}</h3><pre>${esc(JSON.stringify(loaded.delivery.push.payload, null, 2))}</pre>` : ''}${loaded?.delivery?.hit ? `<h3>Request gửi đi · ${esc(loaded.delivery.hit.source)}</h3><pre>${esc(JSON.stringify(loaded.delivery.hit.payload, null, 2))}</pre>` : ''}</section></div></details>`;
+        <details class="comparison-extra"><summary>Ghi chú và dữ liệu gốc</summary><p>${esc(c.description)}</p><p>${esc(c.notes)}</p><div class="contract-columns"><section><h3>Đặc tả gốc</h3><pre>${esc(c.sample_text || JSON.stringify(c.sample || {}, null, 2))}</pre><h3>Cách kiểm tra (nâng cao)</h3><pre>${esc(JSON.stringify(c.rules, null, 2))}</pre></section><section><h3>Event gốc · ${esc(loaded?.event.source || c.source)}</h3><pre>${esc(loaded ? JSON.stringify(loaded.event.payload, null, 2) : 'Chưa có event')}</pre>${loaded?.delivery?.push && loaded.delivery.push.evidence_id !== loaded.event.evidence_id ? `<h3>Dữ liệu trên website · ${esc(loaded.delivery.push.source)}</h3><pre>${esc(JSON.stringify(loaded.delivery.push.payload, null, 2))}</pre>` : ''}${loaded?.delivery?.hit ? `<h3>Dữ liệu đã gửi · ${esc(loaded.delivery.hit.source)}</h3><pre>${esc(JSON.stringify(loaded.delivery.hit.payload, null, 2))}</pre>` : ''}</section></div></details>`;
     } catch (error) { if (seq === detailSequence && dialog.open) $('spec-detail-content').innerHTML = `<p role="alert">${esc(error.message)}</p><button type="button" class="btn" data-spec-detail="${esc(id)}">Thử lại</button>`; }
   }
-  const SPEC_STATUS = { NOT_SELECTED: ['', 'Chưa chọn luồng'], MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], REVIEW: ['REVIEW', 'Cần xem'], NOT_SEEN: ['', 'Chưa thấy trong lượt này'], NOT_SENT: ['FAIL', 'Có push, không gửi lên server'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
+  const SPEC_STATUS = { NOT_SELECTED: ['', 'Chưa chọn luồng'], MATCH: ['PASS', 'Chưa thấy lỗi'], MISMATCH: ['FAIL', 'Có lỗi'], REVIEW: ['REVIEW', 'Cần kiểm tra thêm'], NOT_SEEN: ['', 'Chưa thấy trong lượt này'], NOT_SENT: ['FAIL', 'Chưa thấy gửi đi'], PENDING: ['REVIEW', 'Đang chờ gửi'] };
   function renderSpec(s) {
     const host = $('spec-table'); if (!host) return;
     const cov = s.specCoverage;
@@ -747,7 +747,7 @@
     setText('spec-count', cov ? `${cov.totals.seen}/${cov.totals.rows}` : '0');
     if (!cov) { $('spec-totals').innerHTML = ''; host.innerHTML = '<div class="empty"><strong>Chưa có đặc tả</strong>Nhập file Excel hoặc JSON trong phần Đặc tả, sau đó chọn luồng cần kiểm tra.</div>'; return; }
     const t = cov.totals;
-    $('spec-totals').innerHTML = [['Dòng đặc tả', t.rows], ['Đã gửi lên server', t.seen], ['Khớp', t.match], ['Lệch', t.mismatch], ['Có push, không gửi', t.not_sent ?? 0], ['Chưa thấy', t.not_seen], ['Ngoài đặc tả', t.unmatched]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    $('spec-totals').innerHTML = [['Cần kiểm tra', t.rows], ['Đã gửi', t.seen], ['Chưa thấy lỗi', t.match], ['Có lỗi', t.mismatch], ['Chưa thấy gửi đi', t.not_sent ?? 0], ['Chưa có event', t.not_seen], ['Không có trong đặc tả', t.unmatched]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     const flows = [...new Set(cov.rows.map(r => r.flow).filter(Boolean))];
     const select = $('spec-flow'); const flowSig = flows.join('|');
     if (select.dataset.sig !== flowSig) { const current = select.value; select.innerHTML = '<option value="">Mọi luồng</option>' + flows.map(fl => `<option>${esc(fl)}</option>`).join(''); select.value = flows.includes(current) ? current : ''; select.dataset.sig = flowSig; }

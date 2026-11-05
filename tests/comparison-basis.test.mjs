@@ -45,14 +45,16 @@ test('web Insider comparison displays the exact queue payload checked, while pre
 
   const context = { window: {} }; vm.runInNewContext(await fs.readFile(new URL('../src/web/shared/comparison-view.js', import.meta.url), 'utf8'), context);
   const model = context.window.EventQAComparison.build(selected, result), html = context.window.EventQAComparison.render(model);
-  assert.equal(model.actualLabel, 'INSIDER · InsiderQueue');
-  assert.equal(model.expectedLabel, 'Đặc tả INSIDER');
+  assert.equal(model.actualLabel, 'Thực tế · Insider');
+  assert.equal(model.expectedLabel, 'Theo đặc tả · Insider');
+  assert.match(model.basisNote, /dữ liệu Insider trên website/);
   assert.equal(model.errors, 0);
   assert.equal(model.checked, Object.keys(selected.rules[0].fields).length);
   assert.ok(!model.lines.some(line => line.path.startsWith('default_parameters') || line.path === 'event'));
   const row = model.lines.find(line => line.path === 'value.unit_price');
-  assert.match(row.left, /180000/); assert.match(row.right, /250000/); assert.match(row.note, /Đạt kiểu số nguyên/);
-  assert.match(html, /Đạt quy tắc/); assert.match(html, /giá trị đó chưa được xác nhận với API/);
+  assert.match(row.left, /180000/); assert.match(row.right, /250000/); assert.match(row.note, /Đúng kiểu dữ liệu: số nguyên/);
+  assert.match(html, /Chưa thấy lỗi/); assert.match(row.note, /Chưa kiểm tra nội dung/);
+  assert.match(html, /chưa được xác nhận đúng\/sai/);
 });
 
 test('fixed-value Insider rules fail on actual queue values, even when a linked request exists', async t => {

@@ -27,7 +27,7 @@ test('missing received fields remain visibly absent and are never filled from th
   actual.delivery.push = { event_name: 'page_view', layer: 'JS_QUEUE', payload: expected.sample };
   const model = build(expected, actual), row = model.lines.find(line => line.path === 'page_type' && !line.context);
   assert.equal(model.verdict, 'FAIL'); assert.equal(row.right, null); assert.equal(row.state, 'error');
-  assert.match(row.left, /listing/); assert.match(row.note, /server không nhận/);
+  assert.match(row.left, /listing/); assert.match(row.note, /Website có thông tin này nhưng chưa gửi đi/);
   assert.match(render(model), /data-comparison-mode="differences"/);
 });
 
@@ -62,7 +62,7 @@ test('unselected, unseen and push-only states retain delivery meaning instead of
   assert.equal(build(spec({}), null).verdict, 'NOT_SEEN');
   const push = { event_name: 'page_view', layer: 'JS_QUEUE', payload: { event: 'page_view' } };
   const model = build(spec(push.payload), { event: push, comparison_payload: push.payload, delivery: { hit: null, push }, spec: { verdict: 'NOT_SENT', issues: [] } });
-  assert.equal(model.verdict, 'NOT_SENT'); assert.match(model.actualLabel, /chưa có request/);
+  assert.equal(model.verdict, 'NOT_SENT'); assert.match(model.basisNote, /Chưa thấy event được gửi đi/);
 });
 
 test('ignored subtrees do not become visual mismatches, and unsafe values are escaped', () => {

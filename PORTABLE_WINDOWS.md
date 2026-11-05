@@ -1,6 +1,6 @@
 # Windows: giải nén rồi bấm chạy
 
-Tải [bản Windows đầy đủ](https://codeload.github.com/tuananhhday/Event-Tracking/zip/refs/heads/download/windows-full-insider-basis-20261105). Giải nén một lần để có ứng dụng, Node và thư viện. Repo cũng lưu [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip).
+Tải [bản Windows đầy đủ](https://codeload.github.com/tuananhhday/Event-Tracking/zip/refs/heads/download/windows-full-simple-comparison-20261105). Giải nén một lần để có ứng dụng, Node và thư viện. Repo cũng lưu [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip).
 
 1. Giải nén **toàn bộ** ZIP vào một thư mục có quyền ghi.
 2. Bấm **CHAY_EVENT_QA.cmd**. Giao diện bản thường tự mở trong trình duyệt. Muốn dùng bản AI, bấm **CHAY_EVENT_QA_AI.cmd**; lần đầu mở tab **✦ Trợ lý AI**, dán key OpenRouter rồi bấm **Bật AI**.
@@ -18,7 +18,7 @@ Bản hiện tại chỉ đối chiếu đặc tả sau khi **Chọn luồng ki�
 
 Chữ và nút dùng kích thước cũ; tên dài được ngắt dòng. Danh sách sheet có ô tìm kiếm và vùng cuộn giới hạn để hiện đủ tên sheet. Dữ liệu cá nhân được nhận diện sẽ được băm HMAC-SHA256 trước mọi lời gọi AI; mật khẩu/token tiếp tục được che. Xem [cơ chế bảo vệ dữ liệu AI](docs/AI.md).
 
-Đối chiếu đặc tả mở trực tiếp hai khung JSON **Đặc tả / Event thực tế**, tô màu ngay các dòng khác nhau. GA4 chỉ so GA4, Insider chỉ so Insider. Hai khung hiển thị cùng cấu trúc đã dùng để kiểm tra: mẫu Web InsiderQueue giữ `{ type, value }`, request giữ đúng dạng rule tương ứng. Header ghi nền tảng và tầng dữ liệu; request gốc xem riêng trong phần chi tiết. **Đạt quy tắc** chỉ xác nhận các điều kiện đã khai báo: kiểm kiểu cho phép khác ví dụ, `eq` mới buộc bằng giá trị. Số quy tắc đạt và lời giải thích từng trường được hiển thị ngay trong khung so sánh; giá trị động chưa được xác nhận với API. Hộp đổi event cho xem trước rồi mới áp dụng. Các nút **Kết thúc phiên**, **Kết thúc và xuất báo cáo**, **Xuất báo cáo** hiện đủ chữ trên từng dòng riêng.
+Đối chiếu đặc tả mở hai cột **Theo đặc tả / Thực tế**, ghi rõ GA4 hoặc Insider. Kết quả dùng **Chưa thấy lỗi**, **Có lỗi**, **Cần kiểm tra thêm**. Dòng chỉ kiểm kiểu ghi **Đúng kiểu dữ liệu… Chưa kiểm tra nội dung**; mục chưa được kiểm ghi **Chưa kiểm tra nội dung này**. Màu đỏ là lỗi cần sửa; màu vàng là khác mẫu, có giải thích ngay dưới từng mục. GA4 chỉ so GA4, Insider chỉ so Insider. Dữ liệu gốc và cách kiểm tra nâng cao nằm trong phần mở rộng. Hộp đổi event cho xem trước rồi mới áp dụng. Phần TP2 ↔ API dùng **Giống API**, **Khác API**, **Chưa kết luận**. Các nút **Kết thúc phiên**, **Kết thúc và xuất báo cáo**, **Xuất báo cáo** hiện đủ chữ trên từng dòng riêng.
 
 **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo đối chiếu, danh sách event tracking đã xuất hiện, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Tab event có nút **Xuất danh sách event**. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
 

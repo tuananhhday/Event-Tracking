@@ -202,11 +202,11 @@
         <div class="toolbar" style="margin-top:12px">
           <select id="spec-flow" class="hidden" aria-label="Lọc theo luồng"><option value="">Mọi luồng</option></select>
           <select id="spec-platform" aria-label="Lọc theo nền tảng"><option value="">Mọi nền tảng</option><option value="GA4">GA4</option><option value="INSIDER">Insider</option></select>
-          <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Mọi trạng thái</option><option value="FIRED">Đã bắn</option><option value="MATCH">Đã bắn · khớp</option><option value="MISMATCH">Đã bắn · lệch</option><option value="NOT_SENT">Có push, không gửi lên server</option><option value="NOT_SEEN">Chưa thấy</option><option value="UNMATCHED">Ngoài đặc tả</option></select>
+          <select id="spec-status" aria-label="Lọc theo trạng thái"><option value="">Tất cả kết quả</option><option value="FIRED">Đã gửi</option><option value="MATCH">Chưa thấy lỗi</option><option value="MISMATCH">Có lỗi</option><option value="NOT_SENT">Chưa thấy gửi đi</option><option value="NOT_SEEN">Chưa có event</option><option value="UNMATCHED">Không có trong đặc tả</option></select>
           <input id="spec-search" type="text" placeholder="Tìm event, ghi chú…" aria-label="Tìm trong đặc tả">
         </div>
-        <p class="hint">Chọn luồng, thao tác trên website rồi xem kết quả ngay tại bảng này. Test lại bắt đầu lượt mới; Đổi event so sánh cho phép chọn một event khác của lượt hiện tại.</p>
-        <div id="spec-format-note" class="banner warn hidden"><p>File có mẫu AppOTA với default_parameters/custom_parameters. Website phải phát đúng cấu trúc này mới đối chiếu được; app không tự biến InsiderQueue thành event AppOTA. Giá trị mẫu như ngày, thiết bị, giá tiền là ví dụ: mặc định kiểm trường và kiểu; muốn so đúng giá trị thực tế, cần duyệt rule/context.</p></div>
+        <p class="hint">Chọn luồng → thao tác trên website → bấm tên event để xem kết quả. GA4 so với GA4, Insider so với Insider. Bấm <b>Test lại</b> để làm lại từ đầu.</p>
+        <div id="spec-format-note" class="banner warn hidden"><p>File có mẫu dành cho ứng dụng. Kết quả trên website có thể chưa đủ thông tin; xem ghi chú dưới từng mục.</p></div>
         <div id="spec-table"></div>
       </div>
       <div class="tabpanel hidden" data-panel="firing">

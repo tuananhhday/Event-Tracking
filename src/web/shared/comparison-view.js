@@ -8,11 +8,11 @@
   const own = (value, key) => object(value) && Object.hasOwn(value, key);
   const pathOf = path => String(path || '').replace(/\[(\d+)\]/g, '.$1');
   const failureCodes = new Set(['MISSING_FIELD', 'NULL_FIELD', 'VALUE_MISMATCH', 'WRONG_TYPE', 'DYNAMIC_VALUE_MISMATCH', 'NOT_FORWARDED', 'UNEXPECTED_FIELD']);
-  const messages = { MISSING_FIELD: 'Thiếu trường bắt buộc', NULL_FIELD: 'Giá trị đang rỗng', VALUE_MISMATCH: 'Giá trị khác quy tắc', WRONG_TYPE: 'Sai kiểu dữ liệu', DYNAMIC_VALUE_MISMATCH: 'Khác dữ liệu của thao tác',
-    NOT_FORWARDED: 'Website đã push trường này nhưng server không nhận', UNEXPECTED_FIELD: 'Trường không được phép', EVENT_NAME_MISMATCH: 'Tên event không đúng đặc tả',
-    NOT_SENT: 'Website đã push nhưng chưa có request gửi đi', PENDING_DELIVERY: 'Đang chờ request gửi đi', CAPTURE_INCOMPLETE: 'Dữ liệu thu thập chưa đầy đủ', NO_EXPECTED_FIELDS: 'Đặc tả chưa có quy tắc kiểm từng trường', LAYER_MISMATCH: 'Event thuộc tầng dữ liệu khác đặc tả', SOURCE_MISMATCH: 'Sai nền tảng: GA4 chỉ so với GA4, Insider chỉ so với Insider',
-    SPEC_PLATFORM_MISMATCH: 'Mẫu dành cho ứng dụng; cần kiểm tra cách ghép với dữ liệu website', SPEC_INCOMPLETE: 'Mẫu đặc tả chưa đầy đủ', AMBIGUOUS_SPEC: 'Nhiều dòng đặc tả cùng phù hợp', MISSING_CONTEXT: 'Chưa có dữ liệu ngữ cảnh để kết luận' };
-  const statuses = { PASS: ['PASS', 'Đạt quy tắc'], FAIL: ['FAIL', 'Lệch quy tắc'], REVIEW: ['REVIEW', 'Cần kiểm tra'], NOT_SENT: ['FAIL', 'Có push, chưa gửi server'], PENDING: ['REVIEW', 'Đang chờ gửi'], NOT_SELECTED: ['', 'Chưa chọn luồng'], NOT_SEEN: ['', 'Chưa có event trong lượt này'] };
+  const messages = { MISSING_FIELD: 'Thiếu thông tin bắt buộc', NULL_FIELD: 'Thông tin này đang trống', VALUE_MISMATCH: 'Giá trị không đúng yêu cầu', WRONG_TYPE: 'Sai kiểu dữ liệu', DYNAMIC_VALUE_MISMATCH: 'Không giống thông tin đã nhập trên website',
+    NOT_FORWARDED: 'Website có thông tin này nhưng chưa gửi đi', UNEXPECTED_FIELD: 'Thông tin này không được phép xuất hiện', EVENT_NAME_MISMATCH: 'Tên event không đúng đặc tả',
+    NOT_SENT: 'Website đã tạo event nhưng chưa thấy gửi đi', PENDING_DELIVERY: 'Đang chờ website gửi event', CAPTURE_INCOMPLETE: 'Chưa thu được đầy đủ dữ liệu. Hãy thử lại', NO_EXPECTED_FIELDS: 'Chưa có yêu cầu để kiểm tra event này', LAYER_MISMATCH: 'Cần chọn đúng dữ liệu trên website hoặc dữ liệu đã gửi', SOURCE_MISMATCH: 'Chọn sai nền tảng. GA4 so với GA4, Insider so với Insider',
+    SPEC_PLATFORM_MISMATCH: 'Mẫu dành cho ứng dụng; chưa đủ thông tin để kiểm tra website', SPEC_INCOMPLETE: 'Mẫu trong file chưa đầy đủ', AMBIGUOUS_SPEC: 'Có nhiều dòng đặc tả phù hợp; chưa biết dùng dòng nào', MISSING_CONTEXT: 'Chưa có thông tin đã nhập trên website để so sánh', INVALID_RULE: 'Cách kiểm tra chưa hợp lệ' };
+  const statuses = { PASS: ['PASS', 'Chưa thấy lỗi'], FAIL: ['FAIL', 'Có lỗi'], REVIEW: ['REVIEW', 'Cần kiểm tra thêm'], NOT_SENT: ['FAIL', 'Chưa thấy gửi đi'], PENDING: ['REVIEW', 'Đang chờ gửi'], NOT_SELECTED: ['', 'Chưa chọn luồng'], NOT_SEEN: ['', 'Chưa có event trong lượt này'] };
   const verdicts = { MATCH: 'PASS', MISMATCH: 'FAIL' };
 
   // Dotted parameter names follow the same paths as field rules. Null prototypes
@@ -42,17 +42,19 @@
     return keys.length === Object.keys(b).length && keys.every(key => own(b, key) && equal(a[key], b[key]));
   }
   const issueText = issue => messages[issue.code] || issue.code || 'Cần kiểm tra';
-  const typeText = value => [].concat(value).map(type => ({ string: 'chuỗi', number: 'số', integer: 'số nguyên', boolean: 'boolean', array: 'mảng', object: 'object', null: 'null' }[type] || type)).join(' / ');
+  const typeText = value => [].concat(value).map(type => ({ string: 'văn bản', number: 'số', integer: 'số nguyên', boolean: 'đúng / sai', array: 'danh sách', object: 'nhóm thông tin', null: 'giá trị trống' }[type] || type)).join(' hoặc ');
+  const sourceText = source => source === 'INSIDER' ? 'Insider' : source;
   function fieldNote(field, check) {
-    if (!field || field.op === 'ignore') return 'Trường này chưa có quy tắc kiểm giá trị.';
-    if (field.op === 'type') return `${check?.verdict === 'PASS' ? 'Đạt' : 'Yêu cầu'} kiểu ${typeText(field.value)}. Giá trị trong mẫu chỉ là ví dụ.`;
-    if (field.op === 'exists' || field.op === 'ref' && check?.op === 'exists') return 'Chỉ kiểm tra trường có dữ liệu; chưa đối chiếu giá trị với API hoặc thao tác.';
-    if (field.op === 'eq') return `Phải bằng ${JSON.stringify(field.value)}.`;
-    if (field.op === 'one_of') return `Phải thuộc ${JSON.stringify(field.value)}.`;
-    if (field.op === 'subset') return `Phải chứa ${JSON.stringify(field.value)}.`;
-    if (field.op === 'range') return `Phải nằm trong khoảng ${JSON.stringify(field.value)}.`;
-    if (field.op === 'regex') return `Phải đúng mẫu ${field.value}.`;
-    return 'Kiểm tra theo quy tắc đã khai báo.';
+    if (!field || field.op === 'ignore') return 'Chưa kiểm tra nội dung này.';
+    if (field.op === 'type') return `${check?.verdict === 'PASS' ? 'Đúng kiểu dữ liệu' : 'Cần kiểu dữ liệu'}: ${typeText(field.value)}. Chưa kiểm tra nội dung.`;
+    if (field.op === 'exists' || field.op === 'ref' && check?.op === 'exists') return 'Chỉ kiểm tra có dữ liệu. Chưa kiểm tra nội dung.';
+    if (field.op === 'eq') return `Cần đúng giá trị: ${JSON.stringify(field.value)}.`;
+    if (field.op === 'one_of') return `Chấp nhận một trong các giá trị: ${JSON.stringify(field.value)}.`;
+    if (field.op === 'subset') return `Cần có: ${JSON.stringify(field.value)}.`;
+    if (field.op === 'range') return field.value?.min != null && field.value?.max != null ? `Cho phép từ ${field.value.min} đến ${field.value.max}.`
+      : field.value?.min != null ? `Tối thiểu: ${field.value.min}.` : `Tối đa: ${field.value?.max}.`;
+    if (field.op === 'regex') return `Cần đúng định dạng: ${field.value}.`;
+    return 'So với yêu cầu đã lưu.';
   }
 
   function build(testCase, detail, coverage = {}) {
@@ -67,10 +69,9 @@
     const source = String(basis?.source || event?.source || testCase.source || rule.source || '').toUpperCase();
     const expectedSource = String(rule.source || testCase.source || '').toUpperCase();
     const queueBasis = (basis?.layer || event?.layer) === 'JS_QUEUE';
-    const queue = source === 'INSIDER' ? push?.queue_name || 'InsiderQueue' : source === 'GA4' ? 'dataLayer' : 'JS queue';
-    const actualLabel = !event ? 'Chưa thu được event' : queueBasis ? `${source} · ${queue}${!hit ? ' · chưa có request' : ''}` : `${source} · Request gửi đi`;
-    const basisNote = !event ? '' : queueBasis ? `Đang kiểm tra ${queue}. ${hit ? `Đã thấy request ${source} gửi đi; nội dung request được xem riêng bên dưới.` : `Chưa có request ${source} để kiểm tra dữ liệu gửi đi.`}`
-      : `Đang kiểm tra nội dung request ${source} gửi đi${basis?.format === 'GA4_RECEIVED' || basis?.format === 'INSIDER_RECORDED' ? ', đã đổi tên trường về dạng dùng trong đặc tả' : ''}.`;
+    const actualLabel = !event ? 'Chưa thu được event' : `Thực tế · ${sourceText(source)}`;
+    const basisNote = !event ? '' : queueBasis ? `Đang so sánh dữ liệu ${sourceText(source)} trên website. ${hit ? 'Đã thấy event được gửi đi.' : 'Chưa thấy event được gửi đi.'}`
+      : `Đang so sánh dữ liệu đã gửi tới ${sourceText(source)}.`;
     const fields = Object.fromEntries(Object.entries(rule.fields || {}).map(([path, field]) => [pathOf(path), field]));
     // An approved exact rule is the expected value even if its old sample differs.
     for (const [path, field] of Object.entries(fields)) if (object(expected) && field?.op === 'eq' && field.value !== undefined) {
@@ -118,7 +119,7 @@
     visit(expected, actual);
     const [statusClass, statusLabel] = statuses[verdict] || statuses.REVIEW;
     return { verdict, statusClass, statusLabel, lines, changes: changes.size, issues, event, expected, actual: actual === missing ? null : actual,
-      push, hit, actualLabel, expectedLabel: `Đặc tả ${expectedSource}`, basisNote, checked: checks.length, passed: checks.filter(check => check.verdict === 'PASS').length,
+      push, hit, actualLabel, expectedLabel: `Theo đặc tả${expectedSource ? ` · ${sourceText(expectedSource)}` : ''}`, basisNote, checked: checks.length, passed: checks.filter(check => check.verdict === 'PASS').length,
       errors: new Set(failures.filter(issue => issue.path).map(issue => pathOf(issue.path))).size,
       examples: new Set(lines.filter(line => !line.context && line.state === 'different').map(line => line.path)).size, expectedAvailable: testCase.sample != null,
       globalIssues: issues.filter(issue => !issue.path || !lines.some(line => line.path === pathOf(issue.path) || line.path.startsWith(pathOf(issue.path) + '.'))) };
@@ -128,14 +129,14 @@
     let leftNumber = 0, rightNumber = 0;
     const cell = (text, side, state) => `<div class="event-diff-cell ${text === null ? 'is-absent' : ''}"><span class="event-diff-number">${text === null ? '' : side ? ++rightNumber : ++leftNumber}</span><span class="event-diff-mark" aria-hidden="true">${state === 'error' || state === 'different' ? side ? '+' : '−' : ''}</span><code>${text === null ? '<span class="event-diff-missing">—</span>' : esc(text)}</code></div>`;
     return `<section class="event-comparison" data-comparison-owner="${esc(owner)}" data-comparison-mode="${model.changes ? 'differences' : 'all'}">
-      <div class="event-comparison-summary"><span class="pill ${esc(model.statusClass)}" data-comparison-verdict="${esc(model.verdict)}">${esc(model.statusLabel)}</span><span>${model.event ? [model.checked ? `${model.passed}/${model.checked} quy tắc đạt` : '', model.errors ? `${model.errors} trường lệch quy tắc` : '', model.examples ? `${model.examples} trường khác ví dụ` : '', !model.changes && model.verdict === 'PASS' ? 'Không có khác biệt' : ''].filter(Boolean).join(' · ') || 'Xem trạng thái và lưu ý của lượt này' : 'Thao tác trên website để thu event trong lượt này.'}</span></div>
+      <div class="event-comparison-summary"><span class="pill ${esc(model.statusClass)}" data-comparison-verdict="${esc(model.verdict)}">${esc(model.statusLabel)}</span><span>${model.event ? [model.checked ? `Đạt ${model.passed}/${model.checked} yêu cầu` : '', model.errors ? `${model.errors} mục có lỗi` : '', model.examples ? `${model.examples} mục khác mẫu` : '', !model.changes && model.verdict === 'PASS' ? 'Không có chỗ khác trong phần so sánh' : ''].filter(Boolean).join(' · ') || 'Xem ghi chú bên dưới' : 'Thao tác trên website để thu event trong lượt này.'}</span></div>
       ${model.basisNote ? `<p class="event-comparison-basis">${esc(model.basisNote)}</p>` : ''}
       ${model.globalIssues.length ? `<div class="event-comparison-notice">${model.globalIssues.map(issue => `<span>${issue.path ? `<code>${esc(issue.path)}</code>: ` : ''}${esc(issueText(issue))}</span>`).join('')}</div>` : ''}
-      <div class="event-comparison-toolbar"><div class="segmented"><button type="button" data-comparison-mode="differences" aria-pressed="${model.changes > 0}">Chỉ chỗ khác</button><button type="button" data-comparison-mode="all" aria-pressed="${model.changes === 0}">Toàn bộ event</button></div><span>Đỏ: lệch rule · Vàng: khác ví dụ trong đặc tả</span></div>
-      ${!model.expectedAvailable ? '<p class="hint">Đặc tả chưa có JSON mẫu. Xem quy tắc trong phần chi tiết bên dưới.</p>' : ''}
+      <div class="event-comparison-toolbar"><div class="segmented"><button type="button" data-comparison-mode="differences" aria-pressed="${model.changes > 0}">Chỉ xem chỗ khác</button><button type="button" data-comparison-mode="all" aria-pressed="${model.changes === 0}">Xem tất cả</button></div><span>Đỏ: có lỗi · Vàng: khác mẫu, xem ghi chú</span></div>
+      ${!model.expectedAvailable ? '<p class="hint">File chưa có dữ liệu mẫu. Xem yêu cầu kiểm tra bên dưới.</p>' : ''}
       <div class="event-diff-scroll"><div class="event-diff-code" role="table" aria-label="So sánh JSON đặc tả và event thực tế"><div class="event-diff-head" role="row"><div role="columnheader">${esc(model.expectedLabel)}</div><div role="columnheader">${esc(model.actualLabel)}</div></div>
       ${model.lines.map(line => `<div class="event-diff-row is-${line.state} ${line.context ? 'is-context' : ''}" data-changed="${line.changed}" data-diff-path="${esc(line.path)}" role="row">${cell(line.left, 0, line.state)}${cell(line.right, 1, line.state)}${line.note ? `<div class="event-diff-note">${esc(line.note)}</div>` : ''}</div>`).join('')}</div></div>
-      <div class="event-comparison-foot">Đạt quy tắc: đúng nền tảng, đúng tên event (hoặc tên tương đương), đạt các điều kiện đã khai báo. Trường chỉ kiểm kiểu hoặc sự có mặt được phép khác giá trị ví dụ; giá trị đó chưa được xác nhận với API.</div>
+      <div class="event-comparison-foot">“Chưa thấy lỗi” chỉ áp dụng cho phần đã kiểm tra. Mục ghi “Chưa kiểm tra nội dung” chưa được xác nhận đúng/sai.</div>
     </section>`;
   }
   window.EventQAComparison = { build, render };

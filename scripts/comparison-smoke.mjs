@@ -43,8 +43,8 @@ try {
       await page.locator('#comparison-flow-dialog').waitFor({ state: 'hidden' });
       const hotel = emit('hotel'); await page.evaluate(() => EventQA.refresh());
       assert.equal(app.state().specCoverage.rows.length, 1); assert.equal(app.state().specCoverage.rows[0].status, 'MATCH');
-      await page.waitForFunction(() => document.getElementById('spec-table').textContent.includes('Khớp'));
-      assert.ok((await page.locator('#spec-table').textContent()).includes('Khớp'));
+      await page.waitForFunction(() => document.getElementById('spec-table').textContent.includes('Chưa thấy lỗi'));
+      assert.ok((await page.locator('#spec-table').textContent()).includes('Chưa thấy lỗi'));
       await page.locator('[data-action="retest-flow"]').click();
       await page.waitForFunction(() => document.getElementById('spec-table').textContent.includes('Chưa thấy trong lượt này'));
       emit('merch'); const correct = emit('hotel'); await page.evaluate(() => EventQA.refresh());
@@ -56,9 +56,9 @@ try {
       assert.equal(await diff.getAttribute('data-comparison-mode'), 'differences');
       assert.ok(await diff.locator('.event-diff-row.is-error').count());
       assert.equal(await diff.locator('[data-diff-path="event"]').isVisible(), false);
-      await diff.getByRole('button', { name: 'Toàn bộ event', exact: true }).click();
+      await diff.getByRole('button', { name: 'Xem tất cả', exact: true }).click();
       assert.equal(await diff.locator('[data-diff-path="event"]').isVisible(), true);
-      await diff.getByRole('button', { name: 'Chỉ chỗ khác', exact: true }).click();
+      await diff.getByRole('button', { name: 'Chỉ xem chỗ khác', exact: true }).click();
       await fs.mkdir('.tmp', { recursive: true }); await page.screenshot({ path: `.tmp/event-json-diff-${mode}.png` });
       await page.locator('#spec-detail-content [data-change-comparison-event]').click();
       assert.equal(await page.locator(`[data-preview-comparison="${before.evidence_id}"]`).count(), 0);
@@ -80,7 +80,7 @@ try {
       await page.locator('#comparison-flow-dialog').waitFor({ state: 'hidden' });
       assert.equal(app.state().specCoverage.rows[0].status, 'NOT_SEEN'); emit('merch'); await page.evaluate(() => EventQA.refresh());
       assert.equal(app.state().specCoverage.rows[0].case_id, 'MERCH'); assert.equal(app.state().specCoverage.rows[0].status, 'MATCH');
-      await page.waitForFunction(() => document.querySelector('#comparison-controls h2').textContent.includes('Đồ lưu niệm') && document.getElementById('spec-table').textContent.includes('Khớp'));
+      await page.waitForFunction(() => document.querySelector('#comparison-controls h2').textContent.includes('Đồ lưu niệm') && document.getElementById('spec-table').textContent.includes('Chưa thấy lỗi'));
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1080 });
         const size = await page.evaluate(() => ({ body: document.documentElement.scrollWidth, viewport: innerWidth, text: getComputedStyle(document.querySelector('#spec-table td')).fontSize }));
@@ -115,12 +115,14 @@ try {
       await page.waitForFunction(() => document.querySelector('.spec-event-name')?.textContent === 'product_detail_page_view');
       await page.locator('.spec-event-name').click(); await page.locator('#spec-detail-content [data-comparison-verdict="PASS"]').waitFor();
       const productDiff = page.locator('#spec-detail-content .event-comparison');
-      assert.equal(await productDiff.locator('.event-diff-head').textContent(), 'Đặc tả INSIDERINSIDER · InsiderQueue');
+      assert.equal(await productDiff.locator('.event-diff-head').textContent(), 'Theo đặc tả · InsiderThực tế · Insider');
+      assert.ok((await productDiff.locator('.event-comparison-basis').textContent()).includes('dữ liệu Insider trên website'));
       assert.equal(await productDiff.locator('[data-diff-path^="default_parameters"]').count(), 0);
       const priceRow = productDiff.locator('[data-diff-path="value.unit_price"]');
       assert.ok((await priceRow.textContent()).includes('180000')); assert.ok((await priceRow.textContent()).includes('250000'));
-      assert.ok((await priceRow.textContent()).includes('Đạt kiểu số nguyên'));
-      assert.ok((await productDiff.textContent()).includes('Đạt quy tắc')); assert.ok((await productDiff.textContent()).includes('chưa được xác nhận với API'));
+      assert.ok((await priceRow.textContent()).includes('Đúng kiểu dữ liệu: số nguyên'));
+      assert.ok((await productDiff.textContent()).includes('Chưa thấy lỗi')); assert.ok((await priceRow.textContent()).includes('Chưa kiểm tra nội dung'));
+      assert.ok((await productDiff.textContent()).includes('chưa được xác nhận đúng/sai'));
       assert.equal(await productDiff.locator('.event-diff-row.is-error').count(), 0);
       const sourceCheck = await page.evaluate(async ({ id, selected }) => (await (await fetch(`/api/event?id=${id}&case_id=${selected}`)).json()).spec,
         { id: wrongVendor.evidence_id, selected: productCase.id });
@@ -130,7 +132,7 @@ try {
       assert.equal(await page.locator(`[data-preview-comparison="${wrongVendor.evidence_id}"]`).count(), 0);
       await page.locator(`[data-preview-comparison="${productPush.evidence_id}"]`).click();
       await page.locator('#comparison-preview [data-comparison-verdict="PASS"]').waitFor();
-      assert.ok((await page.locator('#comparison-preview .event-diff-head').textContent()).includes('INSIDER · InsiderQueue'));
+      assert.ok((await page.locator('#comparison-preview .event-diff-head').textContent()).includes('Thực tế · Insider'));
       await page.locator('#comparison-event-dialog [data-action="close-event-picker"]').click(); await page.locator('#spec-detail-close').click();
       await page.getByRole('tab', { name: /Event trực tiếp/ }).click(); await page.locator('[data-action="export-tracking"]').click();
       assert.equal(await page.locator('#export-tracking').isChecked(), true); assert.equal(await page.locator('#export-events').isChecked(), false);
