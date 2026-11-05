@@ -24,6 +24,7 @@ import { loadDemoCases } from './demo.mjs';
 import { AutomationController } from './automation/controller.mjs';
 import { TP2_ENDPOINTS } from './core/tp2.mjs';
 import { Tp2MappingStore, compareTp2Event, tp2Events, fieldPaths } from './core/tp2-compare.mjs';
+import { suggestTp2Fields } from './core/tp2-auto.mjs';
 import { exportSelection, normalizeSelection } from './report/selection.mjs';
 
 const rootDir = fileURLToPath(new URL('../', import.meta.url));
@@ -97,18 +98,18 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     if (!apiBodyCache.has(id)) { apiBodyCache.set(id, manager.apiCall(id)); if (apiBodyCache.size > 30) apiBodyCache.delete(apiBodyCache.keys().next().value); }
     return apiBodyCache.get(id);
   }
-  function tp2State({ id, apiId, mappingId, q = '', status: outcome = '', page = 0 } = {}) {
+  function tp2State({ id, apiId, mappingId, automatic = false, side = 'response', recordPath = '', q = '', status: outcome = '', page = 0 } = {}) {
     const snapshot = manager.snapshot(), all = tp2Events(snapshot.events), mappings = tp2Mappings.list();
     const version = JSON.stringify([snapshot.session?.id, snapshot.events.length, snapshot.apiCalls.length, mappings]);
     const compare = event => {
-      const key = `${version}|${event.evidence_id}|${apiId || ''}|${mappingId || ''}`;
-      if (!tp2ComparisonCache.has(key)) { tp2ComparisonCache.set(key, compareTp2Event(event, snapshot.apiCalls, apiBody, mappings, { apiId, mappingId })); if (tp2ComparisonCache.size > 500) tp2ComparisonCache.delete(tp2ComparisonCache.keys().next().value); }
+      const key = `${version}|${event.evidence_id}|${apiId || ''}|${mappingId || ''}|${automatic}`;
+      if (!tp2ComparisonCache.has(key)) { tp2ComparisonCache.set(key, compareTp2Event(event, snapshot.apiCalls, apiBody, mappings, { apiId, mappingId, automatic })); if (tp2ComparisonCache.size > 500) tp2ComparisonCache.delete(tp2ComparisonCache.keys().next().value); }
       return tp2ComparisonCache.get(key);
     };
     if (id) {
       const event = all.find(item => item.evidence_id === id); if (!event) return null;
       const comparison = compare(event), api = comparison.api ? apiBody(comparison.api.evidence_id) : apiId ? apiBody(apiId) : null;
-      return { event, comparison, api, event_paths: fieldPaths(event.payload), api_paths: fieldPaths(api?.response?.body?.json ?? {}) };
+      return { event, comparison, api, event_paths: fieldPaths(event.payload), suggestions: suggestTp2Fields(event, api, { side, recordPath }), api_paths: fieldPaths(api?.response?.body?.json ?? {}) };
     }
     const responses = new Map();
     for (const item of snapshot.events) if (item.network?.request_id && item.network.phase === 'response') responses.set(`${item.page?.target_id ?? ''}|${item.network.request_id}`, item.network.status);
@@ -480,7 +481,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (req.method === 'GET' && url.pathname === '/api/tp2') return send(res, 200, tp2State({ q: (url.searchParams.get('q') || '').slice(0, 200), status: url.searchParams.get('status') || '', page: Math.max(0, Math.min(10000, Number(url.searchParams.get('page')) || 0)) }));
       if (req.method === 'GET' && url.pathname === '/api/tp2/detail') {
         if (!url.searchParams.get('id')) return send(res, 400, { error: 'Chọn một event TP2 để xem chi tiết.' });
-        const detail = tp2State({ id: url.searchParams.get('id'), apiId: url.searchParams.get('api_id'), mappingId: url.searchParams.get('mapping_id') });
+        const detail = tp2State({ id: url.searchParams.get('id'), apiId: url.searchParams.get('api_id'), mappingId: url.searchParams.get('mapping_id'), automatic: url.searchParams.get('auto') === '1', side: url.searchParams.get('side') || 'response', recordPath: url.searchParams.get('record') || '' });
         return detail ? send(res, 200, detail) : send(res, 404, { error: 'Không tìm thấy event TP2.' });
       }
       if (req.method === 'GET' && url.pathname === '/api/automation/state') return automation

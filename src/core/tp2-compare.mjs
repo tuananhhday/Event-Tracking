@@ -4,8 +4,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { redactApiData, apiCallSummary } from './api-log.mjs';
 import { isTp2Endpoint } from './tp2.mjs';
+import { affiliateStage, isMyOrder, orderIdentity, sharesIdentity, suggestTp2Fields } from './tp2-auto.mjs';
 
-export const TP2_LABELS = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Chưa đủ dữ liệu', NO_MAPPING: 'Chưa có cấu hình', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Cần chọn đúng API', DECODE_ERROR: 'Lỗi giải mã' };
+export const TP2_LABELS = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần kiểm tra', CLICK: 'Click affiliate', NO_MAPPING: 'Chọn API để so sánh', NO_API: 'Chưa tìm thấy API', AMBIGUOUS: 'Cần chọn đúng API', DECODE_ERROR: 'Lỗi giải mã' };
 export const valueAt = (value, field = '') => field ? String(field).replace(/\[(\d+)\]/g, '.$1').split('.').reduce((node, key) => node != null && Object.hasOwn(Object(node), key) ? node[key] : undefined, value) : value;
 export function fieldPaths(value, prefix = '', out = [], depth = 0) {
   if (out.length >= 500 || depth > 15) return out;
@@ -21,7 +22,7 @@ export function validateTp2Mapping(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Cấu hình đối chiếu phải là JSON object.');
   const result = { id: input.id || `TP2-${randomUUID()}`, name: String(input.name || 'Đối chiếu TP2').trim(), event_name: String(input.event_name || '*').trim(),
     api_pattern: String(input.api_pattern || '').trim(), api_side: input.api_side ?? 'response', record_path: String(input.record_path || ''),
-    event_id_path: String(input.event_id_path || ''), api_id_path: String(input.api_id_path || ''), window_ms: input.window_ms ?? 1800000, fields: input.fields };
+    event_id_path: String(input.event_id_path || ''), api_id_path: String(input.api_id_path || ''), window_ms: input.window_ms ?? 1800000, dynamic_items: input.dynamic_items === true, fields: input.fields };
   if (!/^[\w-]{1,100}$/.test(result.id) || !result.name || result.name.length > 200) throw new Error('Mã hoặc tên cấu hình không hợp lệ.');
   if (!result.api_pattern || result.api_pattern.length > 300) throw new Error('Nhập đường dẫn hoặc regex của API cần so sánh.');
   try { new RegExp(result.api_pattern, 'i'); } catch { throw new Error('Regex API không hợp lệ.'); }
@@ -90,12 +91,39 @@ function compareField(event, record, field) {
   return { field: field.event_path, api_field: field.api_path, actual: actual ?? null, expected: expected ?? null, status, reason };
 }
 
-export function compareTp2Event(event, summaries, getCall, mappings, { apiId, mappingId } = {}) {
-  const mapping = mappingId ? mappings.find(item => item.id === mappingId) : mappings.find(item => item.event_name === event.event_name) ?? mappings.find(item => item.event_name === '*');
+function compareAutomatic(event, summaries, getCall, result, apiId) {
+  const stage = affiliateStage(event), base = { ...result, automatic: true, stage };
+  const at = Date.parse(event.tp2?.event_at || event.captured_at);
+  const eligible = summaries.filter(call => (!apiId || call.evidence_id === apiId) && !isTp2Endpoint(call.url)
+    && (call.target_id && event.page?.target_id ? call.target_id === event.page.target_id : Boolean(call.page_url && event.page?.url && call.page_url === event.page.url))
+    && Date.parse(call.finished_at || call.captured_at) <= at && at - Date.parse(call.finished_at || call.captured_at) <= 1800000);
+  base.candidates = eligible.map(call => ({ evidence_id: call.evidence_id, method: call.method, url: call.url, status: call.status, at: call.finished_at || call.captured_at }));
+  if (eligible.length > 200) return { ...base, candidates: base.candidates.slice(-200), status: 'REVIEW', message: 'Có hơn 200 API trong khoảng thời gian này. Chọn API cụ thể để đối chiếu đầy đủ.' };
+  const calls = eligible.map(call => getCall(call.evidence_id)).filter(call => call && (apiId || sharesIdentity(event, call) || stage === 'purchase' && isMyOrder(call)));
+  base.candidates = base.candidates.filter(summary => calls.some(call => call.evidence_id === summary.evidence_id));
+  const complete = calls.filter(call => call.ok && !call.incomplete && call.response?.body?.json && !call.response.body.omitted && !call.response.body.truncated);
+  if (!complete.length) return { ...base, status: calls.length ? 'REVIEW' : stage === 'click' ? 'CLICK' : 'NO_API', message: calls.length ? 'API chưa có Response JSON thành công, đầy đủ để đối chiếu.' : stage === 'click' ? 'Đã ghi nhận click affiliate. Chưa có API cùng mã để so sánh; click không bắt buộc có đơn hàng.' : 'Chưa tìm thấy API liên quan trước event này trong cùng tab. Chọn một API đã bắt để tự ghép trường hoặc thu thập tiếp luồng cần kiểm tra.' };
+  const identity = orderIdentity(event.payload);
+  const identified = identity ? complete.filter(call => orderIdentity(call.response.body.json, { orderApi: isMyOrder(call) }) === identity) : [];
+  const candidates = identified.length ? identified : complete;
+  if (candidates.length !== 1) return { ...base, status: 'AMBIGUOUS', message: 'Có nhiều API có thể thuộc các đơn khác nhau. Chọn API bên dưới; ứng dụng sẽ tự ghép trường và so sánh.' };
+  const call = candidates[0], suggestion = suggestTp2Fields(event, call);
+  base.api = apiCallSummary(call);
+  base.comparisons = suggestion.fields.map(field => field.api_path ? compareField(event, call.response.body.json, field) : {
+    field: field.event_path, api_field: '', actual: valueAt(event.payload, field.event_path) ?? null, expected: null, status: 'REVIEW', reason: field.reason,
+  });
+  base.status = base.comparisons.some(field => field.status === 'MISMATCH') ? 'MISMATCH'
+    : !base.comparisons.length || suggestion.limited || base.comparisons.some(field => field.status === 'REVIEW') ? 'REVIEW' : 'MATCH';
+  base.message = suggestion.limited ? 'Dữ liệu lớn: chỉ gợi ý tối đa 100 trường TP2 và 500 trường API. Chưa thể kết luận toàn bộ.' : 'Tự ghép theo tên trường và mã sản phẩm. Trường chưa rõ được đánh dấu để kiểm tra; kết quả chỉ áp dụng cho các trường hiển thị.';
+  return redactApiData(base);
+}
+
+export function compareTp2Event(event, summaries, getCall, mappings, { apiId, mappingId, automatic = false } = {}) {
+  const mapping = automatic ? null : mappingId ? mappings.find(item => item.id === mappingId) : mappings.find(item => item.event_name === event.event_name) ?? mappings.find(item => item.event_name === '*');
   const result = { evidence_id: event.evidence_id, event_name: event.event_name, captured_at: event.captured_at, page: event.page,
     schema: event.tp2?.schema, decode_status: event.tp2?.decode_status, status: 'NO_MAPPING', comparisons: [], candidates: [], mapping_id: mapping?.id };
   if (event.tp2?.decode_status !== 'DECODED') return { ...result, status: 'DECODE_ERROR', message: event.tp2?.error };
-  if (!mapping) return result;
+  if (!mapping) return compareAutomatic(event, summaries, getCall, result, apiId);
   const at = Date.parse(event.tp2?.event_at || event.captured_at), pattern = new RegExp(mapping.api_pattern, 'i');
   const identity = mapping.event_id_path ? valueAt(event.payload, mapping.event_id_path) : undefined;
   if (mapping.event_id_path && (identity == null || masked(identity))) return { ...result, status: 'REVIEW', message: 'TP2 thiếu mã định danh hoặc mã đã được che.' };
@@ -117,7 +145,19 @@ export function compareTp2Event(event, summaries, getCall, mappings, { apiId, ma
   if (candidates.length > 1 && (!mapping.event_id_path || candidates[0].at === candidates[1].at)) return { ...result, status: 'AMBIGUOUS', message: 'Có nhiều bản ghi phù hợp. Chọn API hoặc bổ sung mã định danh.' };
   const chosen = candidates[0];
   result.api = apiCallSummary(chosen.call);
-  result.comparisons = mapping.fields.map(field => compareField(event, chosen.record, field));
+  const indexed = field => /(?:\.|\[)\d+(?:\.|\])/.test(field);
+  const template = field => field.replace(/\[(\d+)\]/g, '.$1').replace(/\.\d+(?=\.|$)/g, '.*');
+  const suggestions = mapping.dynamic_items ? suggestTp2Fields(event, chosen.call, { side: mapping.api_side, recordPath: mapping.record_path }).fields : [];
+  const seen = new Set();
+  result.comparisons = mapping.fields.flatMap(field => {
+    if (!mapping.dynamic_items || !indexed(field.event_path) && !indexed(field.api_path)) return [compareField(event, chosen.record, field)];
+    const key = `${template(field.event_path)}|${template(field.api_path)}`;
+    if (seen.has(key)) return []; seen.add(key);
+    const matches = suggestions.filter(item => template(item.event_path) === template(field.event_path));
+    if (!matches.length) return [{ field: field.event_path, api_field: '', actual: null, expected: null, status: 'REVIEW', reason: 'Không tìm thấy phần tử TP2 để ghép theo mã sản phẩm.' }];
+    return matches.map(item => item.api_path && template(item.api_path) === template(field.api_path) ? compareField(event, chosen.record, { ...item, type: field.type })
+      : { field: item.event_path, api_field: '', actual: valueAt(event.payload, item.event_path) ?? null, expected: null, status: 'REVIEW', reason: 'Chưa ghép được phần tử API theo mã sản phẩm; không dùng vị trí mảng cũ.' });
+  });
   result.status = result.comparisons.some(field => field.status === 'MISMATCH') ? 'MISMATCH' : result.comparisons.some(field => field.status === 'REVIEW') ? 'REVIEW' : 'MATCH';
   return redactApiData(result);
 }

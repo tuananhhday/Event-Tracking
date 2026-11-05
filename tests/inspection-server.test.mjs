@@ -28,6 +28,25 @@ async function fixture(t) {
 }
 const mapping = { name: 'Giá đơn hàng', event_name: 'purchase', api_pattern: '/orders', event_id_path: 'product_id', api_id_path: 'data.id', fields: [{ event_path: 'price', api_path: 'data.price', type: 'number' }] };
 
+test('TP2 detail and exported report automatically compare ue_px order data with myorder without saving a mapping', async t => {
+  const { app, base, event, post } = await fixture(t);
+  const at = Date.parse(event.captured_at);
+  app.manager.emitApiCall(apiCallRecord({ request: { method: 'GET', url: 'https://api.example.test/api/myorder/ORDER-1' },
+    response: { status: 200, mimeType: 'application/json' }, page: event.page,
+    startedAt: new Date(at - 200).toISOString(), finishedAt: new Date(at - 100).toISOString(),
+    responseBody: JSON.stringify({ data: { id: 'ORDER-1', totalPrice: 600000 } }) }));
+  const order = app.manager.emit({ ...event, evidence_id: undefined, event_name: 'order', payload: { event_params: { orderCode: 'ORDER-1', totalAmount: 500000 } } });
+  const detail = await (await fetch(`${base}/api/tp2/detail?id=${order.evidence_id}`)).json();
+  assert.equal(detail.comparison.automatic, true); assert.equal(detail.comparison.status, 'MISMATCH');
+  assert.ok(detail.api.path.includes('/myorder/')); assert.equal(detail.suggestions.fields.length, 2);
+  const state = await (await fetch(`${base}/api/tp2`)).json();
+  assert.equal(state.mappings.length, 0); assert.equal(state.events.find(row => row.evidence_id === order.evidence_id).status, 'MISMATCH');
+  const exported = await post('export', { selection: { contents: ['tp2'], formats: ['json'] } });
+  assert.equal(exported.status, 200);
+  const report = JSON.parse(await fs.readFile(path.join(app.manager.runDir, 'tp2-report.json'), 'utf8'));
+  assert.equal(report.comparisons.find(row => row.evidence_id === order.evidence_id).status, 'MISMATCH');
+});
+
 test('finish without export closes the session immediately, preserves evidence and creates no report files', async t => {
   const { app, post } = await fixture(t);
   const response = await post('finish', { exportReport: false });
@@ -52,7 +71,7 @@ test('API-only HTML export creates exactly one readable offline file with comple
 test('TP2 tab exposes one request event, correlates response status and compares persisted field mappings', async t => {
   const { app, base, event, post } = await fixture(t);
   let state = await (await fetch(`${base}/api/tp2`)).json();
-  assert.equal(state.total, 1); assert.equal(state.events[0].http_status, 204); assert.equal(state.events[0].status, 'NO_MAPPING');
+  assert.equal(state.total, 1); assert.equal(state.events[0].http_status, 204); assert.equal(state.events[0].status, 'NO_API');
   const saved = await post('tp2/mapping', { mapping }); assert.equal(saved.status, 200);
   state = await (await fetch(`${base}/api/tp2`)).json();
   assert.equal(state.events[0].status, 'MISMATCH'); assert.equal(state.events[0].comparisons[0].expected, 600000);

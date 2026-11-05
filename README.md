@@ -219,7 +219,7 @@ Tab **Luồng tự động** nhận hướng dẫn TXT/Markdown hoặc kịch b�
 
 ## TP2 và xuất riêng API
 
-Tab **TP2 ↔ API** tự bắt request `/tp2`, giải mã `ue_px` Base64 thành JSON và đối chiếu các trường với request/response API theo cấu hình đã lưu. Không cần AI cho các thao tác này. Nút **Kết thúc** lưu bằng chứng mà không xuất file; **Kết thúc & xuất…** và **Xuất báo cáo…** cho chọn riêng Event, TP2 hoặc API, định dạng HTML/Excel/JSON. HTML mở offline, có tìm kiếm, phân trang, xem chi tiết và chỉnh cột như bảng Excel. Xem [hướng dẫn và ví dụ cấu hình](docs/TP2_AND_EXPORT.md).
+Tab **TP2 ↔ API** tự bắt request `/tp2`, đọc `ue_px` và tìm API liên quan theo mã đơn, sản phẩm hoặc affiliate trong cùng tab; event mua hàng còn xét `myorder`. Bấm **Xem / đối chiếu** để thấy ngay giá trị hai bên và kết quả, không cần nhập JSON. Trường chưa rõ được đánh dấu để kiểm tra; có thể chọn lại trong **Sửa cách ghép**. Không cần AI. Nút **Kết thúc** lưu bằng chứng mà không xuất file; **Kết thúc & xuất…** và **Xuất báo cáo…** cho chọn riêng Event, TP2 hoặc API, định dạng HTML/Excel/JSON. Xem [hướng dẫn](docs/TP2_AND_EXPORT.md).
 
 ## Kiểm chứng
 

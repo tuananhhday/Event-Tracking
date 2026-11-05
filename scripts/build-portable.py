@@ -88,7 +88,7 @@ with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as targ
         "Danh muc event JSON/Excel nam trong event-catalogue neu duoc dong kem.\n"
         "Mau App SDK can xac nhan mapping sang Web; khong tu dien tham so thieu.\n"
         "Ban AI: lan dau mo tab Tro ly AI, dan key OpenRouter (openrouter.ai -> Keys) roi bam Bat AI.\n"
-        "Goi da duoc chay thu tren Windows 11: ca ban thuong va ban AI.\n"
+        "Dong goi khong dong nghia da chay thu tren Windows; xem ket qua kiem thu kem ban phat hanh.\n"
         f"Source commit: {commit}\n"
     ).replace("\n", "\r\n"))
 

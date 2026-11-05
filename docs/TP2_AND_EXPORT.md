@@ -6,16 +6,26 @@ Tính năng có ở cả bản thường và bản AI. Việc bắt TP2, giải 
 
 1. Mở website bằng trình duyệt test của ứng dụng. Giữ bật **Lưu API Request/Response** và mẫu host API phù hợp để có dữ liệu đối chiếu. Mẫu mặc định hỗ trợ API Vinpearl UAT/PROD; website khác cần thêm mẫu host API.
 2. Thao tác như bình thường. Đường dẫn kết thúc bằng `/tp2` được thu thập tự động, kể cả khi thay đổi allowlist tracking giữa phiên. Nếu website chỉ gửi khi đặt hàng, TP2 xuất hiện sau thao tác đó. Không có TP2 trong danh sách chưa phải kết luận thiếu event.
-3. Mở tab **TP2 ↔ API**, bấm **Xem / đối chiếu**. Phần dữ liệu giải mã hiển thị object nghiệp vụ bên trong `ue_px`; schema và tham số request nằm ở phần thông tin chi tiết.
+3. Mở tab **TP2 ↔ API**, bấm **Xem / đối chiếu**. **Kết quả so sánh** hiện ngay đầu cửa sổ, gồm tên trường, giá trị TP2, giá trị API và Khớp / Lệch / Cần kiểm tra. Không cần nhập JSON hoặc tạo cấu hình trước. Dữ liệu giải mã, schema và request gốc nằm trong các phần chi tiết có thể mở thêm.
 
 Hỗ trợ Base64, Base64URL, `ue_pr` JSON thường, query/form và request JSON chứa nhiều event trong `data`. Mỗi event của batch là một dòng riêng. Base64/JSON sai được đánh dấu **Lỗi giải mã** và giữ thông tin chẩn đoán. Request/response của cùng một event chỉ tạo một dòng ở tab TP2.
 
-## Lưu cấu hình đối chiếu một lần
+## Tự tìm API và ghép trường
 
-Trong chi tiết TP2, chọn API cần xem, mở **Tạo / sửa cấu hình đối chiếu**:
+Ứng dụng tìm API đã thu thập trong cùng tab, có response trước TP2 và cách tối đa 30 phút. API liên quan phải có cùng mã đơn, sản phẩm, affiliate, campaign hoặc click; event có tên thể hiện mua hàng (`order`, `purchase`, `transaction`, `conversion`) còn xét endpoint `/myorder`. Không dùng giá hoặc tổng tiền bằng nhau để chọn API. Tên event có `click` nhưng chưa tìm thấy API liên quan được ghi nhận là click affiliate, không bị báo thiếu đơn hàng.
+
+Các trường cùng tên (kể cả camelCase và snake_case) và một số tên tương đương rõ ràng được gợi ý tự động, ví dụ `productCode` / `product_id`, `orderCode` / `order_id`, `quantity` / `qty`. Danh sách sản phẩm ghép theo mã, kể cả khi hai bên khác thứ tự. Không tự lấy `productCode` so với `data.id` của đơn hàng, không ghép mảng chỉ theo vị trí, không chọn trường dựa vào việc giá trị đang bằng nhau. Có nhiều trường hoặc nhiều API chưa phân biệt được thì hiển thị **Cần kiểm tra** hoặc **Cần chọn API**; chọn API trong danh sách để tiếp tục.
+
+Kết quả mặc định giữ nguyên kiểu dữ liệu: chuỗi `"100"` khác số `100`. Trường không có bên API, đã che, body bị cắt hoặc chưa đủ bằng chứng đều được hiển thị để kiểm tra. **Khớp** chỉ áp dụng cho các trường đã kiểm tra, không chứng minh toàn bộ nghiệp vụ hoặc vendor đã nhận event. Tự ghép không suy ra được công thức tiền, thuế hay ý nghĩa tên trường riêng của từng website.
+
+## Sửa và lưu cách ghép khi cần
+
+Mở **Sửa cách ghép (nếu cần)** để chọn trường API từ danh sách và xem giá trị ngay cạnh TP2. Không còn ô JSON. Giữ tick các trường muốn kiểm tra; trường chưa ghép cần chọn lại hoặc chủ động bỏ tick. Bấm **Lưu cách ghép và so sánh** để dùng lại cho các event cùng tên. Với gợi ý có mảng, phần tử được tìm lại bằng mã sản phẩm trong các event sau, không tái sử dụng vị trí mảng cũ.
+
+Trong **Tuỳ chỉnh nâng cao**:
 
 - Điền tên event và đường dẫn hoặc regex API; chọn dữ liệu từ response hoặc request JSON.
-- Thêm từng cặp trường TP2 ↔ API. Có gợi ý các trường cùng tên để duyệt trước khi lưu.
+- Có thể thêm từng cặp trường TP2 ↔ API hoặc bấm **Tự ghép lại** để lấy gợi ý mới.
 - Chọn kiểu so sánh: đúng kiểu và giá trị JSON, số, chữ hoặc ngày. Số có thể so `"500000"` với `500000`; ngày so theo ngày lịch Việt Nam, ví dụ `2026-11-03T18:00:00Z` khớp `2026-11-04`.
 - Nếu API trả một mảng, điền đường dẫn mảng và hai trường mã định danh để chọn đúng sản phẩm/đơn hàng. Đường dẫn trường API lúc này tính từ từng phần tử của mảng.
 
@@ -55,7 +65,7 @@ HTML là file độc lập, mở được khi không chạy ứng dụng và kh�
 
 ## Chạy thử an toàn trên localhost
 
-Mở website demo của ứng dụng, tìm phần TP2, chọn **Gửi giá TP2 sai** rồi bấm **Gửi TP2 thử**. Demo đọc API sản phẩm localhost và tạo `purchase_demo`; không tạo đơn hàng ngoài hệ thống. Tạo mapping `price` ↔ `data.price`, mã `product_id` ↔ `data.id`, regex `/demo/api/products` để thấy kết quả **Lệch**.
+Mở website demo của ứng dụng, tìm phần TP2, chọn **Gửi giá TP2 sai** rồi bấm **Gửi TP2 thử**. Demo đọc API sản phẩm localhost và tạo `purchase_demo`; không tạo đơn hàng ngoài hệ thống. Mở event trong tab TP2 để thấy giá **Lệch** tự động, không cần tạo mapping. Trường `quantity` trong demo không có bên API được đánh dấu **Cần kiểm tra**.
 
 Kiểm thử tự động toàn bộ thao tác trên Chrome:
 
