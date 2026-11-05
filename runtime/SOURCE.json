@@ -1,0 +1,7 @@
+{
+  "version": "24.19.0",
+  "platform": "win-x64",
+  "sha256": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73",
+  "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
+  "source_commit": "290b7d0ea0015dc5392f715e10f8a477fb5347e0"
+}
