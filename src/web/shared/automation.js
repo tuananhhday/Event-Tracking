@@ -64,6 +64,7 @@
   }
   function updateControls() {
     const blocked = localBusy || active();
+    $('new').disabled = blocked;
     for (const button of panel.querySelectorAll('[data-auto-idle]')) button.disabled = blocked;
     $('save').disabled = blocked || needsPlan || !$('json').value.trim();
     $('save').textContent = draftBatch.length > 1 ? `Lưu ${draftBatch.length} luồng` : 'Lưu luồng';
@@ -75,7 +76,7 @@
     $('select-all').checked = !!state.workflows.length && selected.size === state.workflows.length;
     $('select-all').indeterminate = selected.size > 0 && selected.size < state.workflows.length;
     $('cancel').classList.toggle('hidden', !active()); $('cancel').disabled = localBusy;
-    for (const control of panel.querySelectorAll('[data-auto-select], [data-auto-run], [data-auto-delete]')) control.disabled = blocked || (control.hasAttribute('data-auto-run') && (!!state.session_running || dirty && control.dataset.autoRun === currentWorkflow?.id));
+    for (const control of panel.querySelectorAll('[data-auto-select], [data-auto-open], [data-auto-run], [data-auto-delete]')) control.disabled = blocked || (control.hasAttribute('data-auto-run') && (!!state.session_running || dirty && control.dataset.autoRun === currentWorkflow?.id));
     for (const control of panel.querySelectorAll('input:not([data-auto-select]),textarea,select')) control.disabled = blocked;
     $('session-hint').textContent = state.session_running && !active() ? 'Đang có phiên thu thập thủ công. Kết thúc phiên đó trước khi chạy luồng tự động.' : 'Các luồng trong cùng lượt chạy lần lượt, dùng cùng một trình duyệt.';
     $('draft-badge').classList.toggle('hidden', !dirty);
