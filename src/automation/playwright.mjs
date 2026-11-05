@@ -14,7 +14,7 @@ function abortable(operation, signal, onAbort = () => {}) {
   });
 }
 
-function locate(page, locator) {
+function locate(page, locator, visible = true) {
   if (!locator || typeof locator.value !== 'string') throw new Error('Thiếu locator cho thao tác.');
   const options = locator.exact === undefined ? {} : { exact: locator.exact };
   let target;
@@ -27,6 +27,7 @@ function locate(page, locator) {
     case 'css': target = page.locator(locator.value); break;
     default: throw new Error('Loại locator không được hỗ trợ.');
   }
+  if (visible) target = target.filter({ visible: true });
   return locator.nth === undefined ? target : target.nth(locator.nth);
 }
 
@@ -74,7 +75,9 @@ export async function connectAutomationBrowser({ port, targetId, signal, timeout
     return {
       async inspect({ signal: inspectSignal } = {}) {
         const inspectionSignal = AbortSignal.any([...(inspectSignal ? [inspectSignal] : []), AbortSignal.timeout(30000)]);
-        return perform(() => page.evaluate(() => {
+        return perform(async () => {
+          await page.locator('input,textarea,select,button,a[href],[role="button"],[role="combobox"]').filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 7000 }).catch(() => {});
+          return page.evaluate(() => {
           const clean = (value, max = 180) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
           const safeText = node => {
             if (node.matches?.('input,textarea,select,output,[contenteditable]')) return '';
@@ -101,22 +104,30 @@ export async function connectAutomationBrowser({ port, targetId, signal, timeout
               ...(label ? { label } : {}), ...(text ? { text } : {}), ...(testId ? { testId } : {}), ...(placeholder ? { placeholder } : {}), disabled: Boolean(element.disabled),
               ...(element.type === 'password' ? { sensitive: true } : {}) };
             if (testId) item.locator = { by: 'testId', value: testId };
-            else if (label) item.locator = { by: 'label', value: label, exact: false };
+            else if (label) item.locator = { by: 'label', value: label, exact: true };
             else if (placeholder) item.locator = { by: 'placeholder', value: placeholder, exact: true };
             else if (text && (tag === 'button' || role === 'button')) item.locator = { by: 'role', role: 'button', value: text, exact: true };
             else if (text && (tag === 'a' || role === 'link')) item.locator = { by: 'role', role: 'link', value: text, exact: true };
             else if (element.id) item.locator = { by: 'css', value: `#${CSS.escape(element.id)}` };
             controls.push(item);
           }
+          const counts = new Map();
+          for (const item of controls) if (item.locator) { const signature = JSON.stringify(item.locator); counts.set(signature, (counts.get(signature) || 0) + 1); }
+          const indexes = new Map();
+          for (const item of controls) if (item.locator) {
+            const signature = JSON.stringify(item.locator);
+            if (counts.get(signature) > 1) { item.locator.nth = indexes.get(signature) || 0; indexes.set(signature, item.locator.nth + 1); }
+          }
           return { url: location.href, title: clean(document.title), controls, truncated: controls.length === 160 || visited > 2000 };
-        }), inspectionSignal);
+          });
+        }, inspectionSignal);
       },
       async execute(action, { signal: actionSignal } = {}) {
         const timeout = Math.min(action.type === 'goto' ? 30000 : 60000, Math.max(1, action.timeout_ms ?? 30000));
         return perform(async () => {
           if (action.type === 'goto') { await page.goto(action.url, { waitUntil: 'domcontentloaded', timeout }); return; }
           if (action.type === 'assert_url') { await page.waitForURL(url => url.href === action.url, { timeout, waitUntil: 'domcontentloaded' }); return; }
-          const target = locate(page, action.locator);
+          const target = locate(page, action.locator, !(action.type === 'wait_for' && action.state === 'hidden'));
           switch (action.type) {
             case 'click': await target.click({ timeout }); break;
             case 'fill': await target.fill(String(action.value), { timeout }); break;

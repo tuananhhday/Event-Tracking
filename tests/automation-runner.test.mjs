@@ -83,7 +83,8 @@ test('step and action timeouts fail and propagate cancellation to the driver', a
         return new Promise((resolve, reject) => { signal.addEventListener('abort', () => { stopped = true; reject(signal.reason); }, { once: true }); });
       } },
     });
-    assert.equal(result.status, 'FAILED'); assert.equal(stopped, true); assert.match(result.error, /vượt quá/);
+    assert.equal(result.status, 'FAILED'); assert.equal(stopped, true); assert.match(result.error, /thời gian chờ/);
+    assert.equal(result.steps[0].actions.at(-1).error_code, 'AUTOMATION_ACTION_TIMEOUT');
   }
 });
 
@@ -93,4 +94,13 @@ test('a cancelled workflow starts no actions and progress failures do not fail v
   assert.equal(cancelled.status, 'CANCELLED'); assert.equal(called, false); assert.deepEqual(cancelled.steps, []);
   const completed = await runWorkflow(workflow([step('noop', [])]), { driver: { async execute() {} }, onProgress: () => { throw new Error('UI disconnected'); } });
   assert.equal(completed.status, 'COMPLETED');
+});
+
+test('locator ambiguity identifies the failed action in Vietnamese without logging filled values', async () => {
+  const result = await runWorkflow(workflow([step('search', [{ type: 'fill', locator: { by: 'label', value: 'Điểm đến' }, value: 'PRIVATE_VALUE' }])]), {
+    driver: { async execute(action) { if (action.type === 'fill') throw new Error('strict mode violation: locator resolved to 2 elements'); } },
+  });
+  assert.equal(result.status, 'FAILED'); assert.match(result.error, /Điểm đến.*nhiều thành phần/);
+  assert.equal(result.steps[0].actions.at(-1).error_code, 'AUTOMATION_AMBIGUOUS_CONTROL');
+  assert.equal(JSON.stringify(result).includes('PRIVATE_VALUE'), false);
 });

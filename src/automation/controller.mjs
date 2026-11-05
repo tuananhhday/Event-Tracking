@@ -29,6 +29,7 @@ export class AutomationController {
         source: testCase.source, event_names: testCase.rules.map(rule => rule.event_name) })) };
   }
   async save(input) { await this.store.save(validateWorkflow(input)); return this.state(); }
+  async saveMany(input) { const saved = await this.store.saveMany(input); return { ...this.state(), saved_ids: saved.map(workflow => workflow.id) }; }
   async delete(id) { await this.store.delete(String(id)); return this.state(); }
   async inspect({ url, browser = 'chrome' } = {}) {
     if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên đang chạy trước khi quan sát trang tạo luồng.');
@@ -44,8 +45,13 @@ export class AutomationController {
     } finally { await driver.disconnect(); }
   }
   async draft(input) {
+    if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên đang chạy trước khi lập luồng mới.');
+    const reason = this.getAi()?.unavailable?.();
+    if (reason) return { available: false, reason };
+    if (input.autoInspect) await this.inspect(input);
     const page = (this.inspection?.url === String(input.url) || this.inspection?.url === (() => { try { return new URL(input.url).toString(); } catch { return ''; } })())
       ? this.inspection.page : null;
+    if (input.autoInspect && !page?.controls?.length) return { available: false, reason: 'PAGE_NO_CONTROLS', message: 'Chưa đọc được ô nhập hoặc nút bấm trên website. Kiểm tra trang trong cửa sổ test, hoàn tất đăng nhập nếu cần, rồi lập kế hoạch lại.' };
     return draftWorkflow(this.getAi(), { ...input, page, cases: this.manager.cases });
   }
   async enqueue(ids, { variables = {}, aiNotes = false, trigger = 'manual', scheduled_date, exportReport } = {}) {
@@ -118,7 +124,7 @@ export class AutomationController {
             }
           },
           waitForEvents: async (expected, { timeoutMs = 15000, signal: stepSignal } = {}) => {
-            const deadline = Date.now() + timeoutMs;
+            const deadline = Date.now() + Math.min(30000, Math.max(1, timeoutMs - 150));
             while (true) {
               stepSignal?.throwIfAborted(); signal.throwIfAborted();
               const observed = this.manager.store?.events() ?? [];

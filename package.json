@@ -17,6 +17,7 @@
     "smoke:ai": "node --env-file=.env scripts/ai-smoke.mjs",
     "smoke:automation": "node scripts/automation-smoke.mjs",
     "smoke:automation-app": "node scripts/automation-app-smoke.mjs",
+    "smoke:automation-guide": "node scripts/automation-guide-smoke.mjs",
     "smoke:inspection": "node scripts/inspection-smoke.mjs",
     "test": "node --test",
     "check": "node scripts/check.mjs"
@@ -25,6 +26,7 @@
     "ajv": "^8.17.1",
     "exceljs": "^4.4.0",
     "json5": "^2.2.3",
+    "jszip": "3.10.2",
     "playwright-core": "^1.64.1"
   }
 }

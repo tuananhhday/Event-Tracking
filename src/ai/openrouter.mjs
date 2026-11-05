@@ -345,6 +345,7 @@ export class OpenRouterClient {
           }, { keyIndex, retries: explicitRetries, onAttempt: () => { if (completionRequests >= this.maxCompletionRequests) throw new Error('AI_MAX_COMPLETION_REQUESTS'); completionRequests++; } });
           trace.response = safeResponseSummary(response);
           const messageContent = response.choices?.[0]?.message?.content;
+          if (response.choices?.[0]?.finish_reason === 'length') throw new Error('INVALID_AI_OUTPUT_LIMIT');
           const content = Array.isArray(messageContent) ? messageContent.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('') : messageContent;
           if (typeof content !== 'string') throw new Error('INVALID_AI_RESPONSE');
           let data;

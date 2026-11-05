@@ -28,7 +28,6 @@ try {
   const workflow = JSON.parse(await fs.readFile(new URL('../examples/automation-demo.json', import.meta.url), 'utf8'));
   workflow.url = `${origin}/demo`; workflow.steps[1].case_id = 'TC-HOTEL-SEARCH-001';
   await page.locator('#automation-file').setInputFiles({ name: 'demo.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(workflow)) });
-  await page.locator('#automation-load-json').click();
   await page.locator('#automation-save').click();
   await page.locator('#automation-run-current').waitFor({ state: 'visible' });
   await page.waitForFunction(() => !document.getElementById('automation-run-current').disabled);

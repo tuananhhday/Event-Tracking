@@ -22,6 +22,7 @@ import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/laun
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
 import { AutomationController } from './automation/controller.mjs';
+import { readInstructions } from './automation/instructions.mjs';
 import { TP2_ENDPOINTS } from './core/tp2.mjs';
 import { Tp2MappingStore, compareTp2Event, tp2Events, fieldPaths } from './core/tp2-compare.mjs';
 import { suggestTp2Fields } from './core/tp2-auto.mjs';
@@ -454,11 +455,11 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     getAi: () => ai, onStatus: status, isAvailable: () => !mutating && !closing && !stoppingSession,
     capture: automationOptions.capture ?? (workflow => startCapture({ url: workflow.url, browser: workflow.browser,
       debugPort: automationOptions.debugPort ?? (workflow.browser === 'edge' ? 9225 : 9223) }, { navigate: false, profileDir: automationOptions.profileDir })),
-    openInspection: async ({ browser }) => {
+    openInspection: automationOptions.openInspection ?? (async ({ browser }) => {
       const debugPort = automationOptions.debugPort ?? (browser === 'edge' ? 9225 : 9223);
       const opened = await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: automationOptions.profileDir ?? path.join(rootDir, 'profiles', `${mode}-${browser}`) });
       return { port: debugPort, targetId: opened.targetId };
-    },
+    }),
     finish: () => stopSession({ exportReport: false }),
     exportReport: async options => { await exportWithNotes(manager.snapshot(), options); return Object.fromEntries(Object.entries(exported ?? {}).map(([key, file]) => [key, `/download/${path.basename(file)}`])); },
     ...(automationOptions.connectDriver ? { connectDriver: automationOptions.connectDriver } : {}),
@@ -596,9 +597,11 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname.startsWith('/api/automation/')) {
           if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
           const action = url.pathname.slice('/api/automation/'.length);
+          if (action === 'import') return send(res, 200, await readInstructions(data));
           if (action === 'inspect') return send(res, 200, await automation.inspect(data));
           if (action === 'draft') return send(res, 200, await automation.draft(data));
           if (action === 'save') return send(res, 200, await automation.save(data.workflow));
+          if (action === 'save-many') return send(res, 200, await automation.saveMany(data.workflows));
           if (action === 'delete') return send(res, 200, await automation.delete(data.id));
           if (action === 'run') return send(res, 202, await automation.enqueue(data.ids, { variables: data.variables ?? {}, aiNotes: data.aiNotes === true }));
           throw new Error('Không có thao tác luồng tự động này.');

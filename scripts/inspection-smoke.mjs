@@ -24,7 +24,7 @@ try {
     { type: 'click', locator: { by: 'css', value: '#tp2-send' } },
   ], expected_events: [{ event_name: 'purchase_demo', source: 'TP2', layer: 'TRACKING_REQUEST' }] }] };
   await page.locator('#automation-file').setInputFiles({ name: 'tp2.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(workflow)) });
-  await page.locator('#automation-load-json').click(); await page.locator('#automation-save').click();
+  await page.locator('#automation-save').click();
   await page.waitForFunction(() => !document.getElementById('automation-run-current').disabled);
   const started = page.waitForResponse(response => response.url().endsWith('/api/automation/run') && response.request().method() === 'POST');
   await page.locator('#automation-run-current').click(); assert.equal((await started).status(), 202); await app.automation.wait();

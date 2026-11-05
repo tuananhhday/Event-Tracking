@@ -20,6 +20,7 @@ async function fixture(t, options = {}) {
     async reportNotes() { aiCalls++; throw new Error('Automatic runs must not call AI'); }, ...options.ai };
   app = await createApp({ mode: options.mode ?? 'cdp-ai', port: 0, runsDir: directory, initialCases: [testCase], aiClient: ai,
     automationOptions: { capture: async () => { app.manager.start({ environment: 'MOCK_ONLY' }); return { port: 9223, targetId: 'TEST-TAB' }; },
+      openInspection: async () => ({ port: 9223, targetId: 'INSPECT-TAB' }),
       connectDriver: async () => { connections++; return {
         async execute(action, context) {
           calls.push(action);
@@ -28,7 +29,7 @@ async function fixture(t, options = {}) {
           if (action.type === 'click') app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'search_submit',
             page: { target_id: 'TEST-TAB', url: 'https://example.test/hotel' }, payload: { event: 'search_submit', search_term: value },
             network: { phase: 'request', method: 'POST', url: 'https://tracking.example.test/collect' } });
-        }, async disconnect() {},
+        }, async inspect() { return { url: 'https://example.test/hotel', title: 'Search', controls: [{ tag: 'button', text: 'Search', locator: { by: 'role', role: 'button', value: 'Search' } }] }; }, async disconnect() {},
       }; },
     } });
   const base = await app.listen();
@@ -137,6 +138,36 @@ test('automation mutations require the session token and reject invalid scripts 
   assert.equal((await post('automation/run', { ids: ['hotel'], variables: { term: null } })).status, 400);
   assert.equal(calls.length, 0);
   assert.equal(app.manager.session, undefined);
+});
+
+test('one AI action inspects the real page, drafts multiple workflows and saves all atomically without running them', async t => {
+  let aiInput;
+  const { app, post, calls } = await fixture(t, { ai: { modelSpec: 'MOCK', async complete(_model, _prompt, input, _schema, validate) {
+    aiInput = input; const data = { workflows: [workflow('AI-ID'), workflow('OTHER-ID')] };
+    assert.equal(validate(data), null); return { available: true, data };
+  } } });
+  const instructions = 'Luồng 1: tìm khách sạn.\nLuồng 2: tìm lại với snack.';
+  const drafted = await post('automation/draft', { url: 'https://example.test/hotel', instructions, autoInspect: true, multiple: true, page: { controls: ['forged'] } });
+  assert.equal(drafted.status, 200); assert.equal(drafted.body.workflows.length, 2);
+  assert.equal(aiInput.page.title, 'Search'); assert.equal(drafted.body.workflows[0].id, undefined);
+  assert.equal(drafted.body.workflows[0].instructions, instructions);
+  assert.deepEqual(calls.map(action => action.type), ['goto']); assert.equal(app.manager.session, undefined);
+  const invalid = { ...drafted.body.workflows[1], steps: [{ name: 'Invalid', actions: [{ type: 'evaluate' }] }] };
+  assert.equal((await post('automation/save-many', { workflows: [drafted.body.workflows[0], invalid] })).status, 400);
+  assert.equal(app.automation.state().workflows.length, 0);
+  const saved = await post('automation/save-many', { workflows: drafted.body.workflows });
+  assert.equal(saved.status, 200); assert.equal(saved.body.saved_ids.length, 2);
+  assert.equal(app.automation.state().workflows[0].instructions, instructions);
+  assert.equal(app.manager.session, undefined);
+});
+
+test('disabled AI reports the prerequisite before opening the website; importing a description does not run it', async t => {
+  const { app, post, calls } = await fixture(t, { ai: { unavailable: () => 'API_KEY_MISSING' } });
+  const result = await post('automation/draft', { url: 'https://example.test/hotel', instructions: 'Search', autoInspect: true, multiple: true });
+  assert.equal(result.body.reason, 'API_KEY_MISSING'); assert.equal(calls.length, 0);
+  const imported = await post('automation/import', { name: 'flow.txt', content: Buffer.from('Luồng 1: tìm khách sạn').toString('base64') });
+  assert.equal(imported.status, 200); assert.match(imported.body.instructions, /Luồng 1/);
+  assert.equal(app.manager.session, undefined); assert.equal(app.automation.state().workflows.length, 0);
 });
 
 test('the regular edition does not expose automation controls or mutations', async t => {

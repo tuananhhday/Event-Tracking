@@ -65,12 +65,18 @@ export class WorkflowStore {
     return task;
   }
   async save(workflow) {
-    const saved = validateWorkflow(workflow);
-    saved.id ??= `WF-${randomUUID()}`;
+    return (await this.saveMany([workflow]))[0];
+  }
+  async saveMany(workflows) {
+    if (!Array.isArray(workflows) || !workflows.length || workflows.length > 10) throw new Error('Lưu từ 1 đến 10 luồng mỗi lần.');
+    const saved = workflows.map(input => { const workflow = validateWorkflow(input); workflow.id ??= `WF-${randomUUID()}`; return workflow; });
+    if (new Set(saved.map(workflow => workflow.id)).size !== saved.length) throw new Error('Mã luồng trong danh sách bị trùng.');
     return this.queued(async () => {
-      const index = this.workflows.findIndex(item => item.id === saved.id);
       const next = this.list();
-      if (index === -1) next.push(saved); else next[index] = saved;
+      for (const workflow of saved) {
+        const index = next.findIndex(item => item.id === workflow.id);
+        if (index === -1) next.push(workflow); else next[index] = workflow;
+      }
       await atomicJson(path.join(this.directory, 'workflows.json'), { schema_version: '1.0', workflows: next });
       this.workflows = next;
       return structuredClone(saved);

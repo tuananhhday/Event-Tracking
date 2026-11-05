@@ -1,22 +1,24 @@
 # Luồng tự động
 
-Bản AI có tab **Luồng tự động** để thực hiện các thao tác trên website, thu thập event/API bằng collector hiện có và xuất báo cáo sau lượt chạy. Bạn tạo kịch bản từ file hướng dẫn hoặc nạp JSON có sẵn, xem lại rồi lưu để chạy nhiều lần.
+Bản AI có tab **Luồng tự động** theo ba bước: **nhập file hoặc viết mô tả → AI đọc trang và đề xuất các bước → lưu, bấm Chạy để Playwright thực hiện**. Event/API được thu thập trong lúc chạy, không phải chỉ tạo danh sách hướng dẫn.
 
-AI chỉ tham gia khi bấm **AI tạo kịch bản**. Chạy kịch bản đã lưu, chạy theo lịch, quan sát trang và nạp JSON không gọi AI. Báo cáo của lượt chạy tự động dùng nhận xét của công cụ. Nếu cần nhận xét AI, mở phần **Kết thúc & báo cáo**, chọn **Kèm nhận xét AI khi xuất** và xuất lại.
+AI chỉ tham gia khi bấm **AI đọc và lập các bước**. Nút này tự mở và đọc các ô/nút trên website trước khi lập kế hoạch; chưa thực hiện các thao tác nghiệp vụ. Cần bật AI và cấu hình key trong tab **Trợ lý AI**. Chạy luồng đã lưu dùng Playwright, không gọi AI. Báo cáo của lượt chạy tự động dùng nhận xét của công cụ; có thể yêu cầu nhận xét AI khi xuất lại báo cáo.
 
 ## Thử nhanh bằng trang demo
 
 1. Chạy `CHAY_EVENT_QA_AI.cmd`, vào tab **Luồng tự động**.
-2. Bấm **Chọn file hướng dẫn**, chọn [automation-demo.json](../examples/automation-demo.json), rồi bấm **Nạp JSON**.
+2. Bấm **Tải file mô tả luồng**, chọn [automation-demo.json](../examples/automation-demo.json). Các bước tự nạp lên để xem lại, không cần bấm Nạp JSON và không gọi AI.
 3. Xem lại website bắt đầu. File mẫu dùng `http://127.0.0.1:4174/demo`; đổi cổng nếu bạn mở app trên cổng khác.
 4. Bấm **Lưu luồng**, sau đó **Chạy luồng này**.
 5. Theo dõi tiến độ. Khi kết thúc, bấm **Mở phần báo cáo** để tải Excel, HTML, JSON hoặc API của phiên.
 
-File [automation-demo.md](../examples/automation-demo.md) là hướng dẫn bằng lời cho cùng luồng. Có thể dùng file đó để thử **Quan sát trang → AI tạo kịch bản** sau khi bật AI trong tab **Trợ lý AI**.
+Muốn thử nhập bằng lời, bấm **Dùng ví dụ trên demo**, sau đó **AI đọc và lập các bước**. File [automation-demo.md](../examples/automation-demo.md) cũng dùng được. Xem lại rồi lưu trước khi bấm Chạy.
 
 ## Tạo luồng từ hướng dẫn của bạn
 
-Điền tên luồng, website bắt đầu và trình duyệt. Chọn file `.txt`, `.md` hoặc `.json`, tối đa 1 MB; cũng có thể dán nội dung vào ô hướng dẫn. Với Word hoặc Excel, đưa phần hướng dẫn cần dùng sang TXT/Markdown trước khi nhập vào tab này. File đặc tả event Excel vẫn được nhập ở phần đặc tả hiện có.
+Điền website bắt đầu và chọn Chrome/Edge. Tên luồng/nhóm là tuỳ chọn, AI có thể đặt từ mô tả. Nhập tay hoặc chọn Word `.docx`, Excel `.xlsx`, TXT hay Markdown, tối đa 3 MB và 30.000 ký tự hướng dẫn. Word giữ nội dung từng đoạn; Excel giữ tên sheet và các cột/dòng. Không thực thi macro hoặc công thức. File đặc tả event vẫn nhập ở phần đặc tả hiện có.
+
+Một file có thể chứa nhiều luồng, ví dụ mỗi luồng có tiêu đề **Luồng 1**, **Luồng 2**, các bước, dữ liệu và kết quả/event mong đợi. AI tách tối đa 10 luồng mỗi lần. Dùng danh sách **Luồng trong file** để xem lại từng luồng rồi bấm **Lưu N luồng**, sau đó **Chạy N luồng vừa lưu**. Nếu nội dung quá dài, chia thành từng nhóm; ứng dụng không cắt bớt nội dung file một cách im lặng. JSON có sẵn có thể chứa một kịch bản, mảng kịch bản hoặc `{"workflows":[...]}`.
 
 Một hướng dẫn rõ nên có:
 
@@ -26,7 +28,9 @@ Một hướng dẫn rõ nên có:
 - Event mong đợi, nền tảng GA4/Insider và các trường cần kiểm.
 - Giá trị thay đổi theo ngày hoặc theo lần chạy.
 
-Bấm **Quan sát trang** để ứng dụng mở website và nhận diện các thành phần hiện có. Sau đó bấm **AI tạo kịch bản**. Xem lại danh sách bước được tạo, chỉnh nếu cần trong **Xem / chỉnh kịch bản JSON**, rồi lưu. Kịch bản mới luôn để lịch tự chạy tắt, kể cả file nhập hoặc câu trả lời AI có yêu cầu bật lịch.
+Bấm **AI đọc và lập các bước**. Trong phần **Xem lại các bước AI đề xuất**, có thể mở **Sửa bước này** để sửa tên bước, tên ô/nút và giá trị cần điền; không phải viết JSON. Các tuỳ chọn JSON, biến, lịch chạy và xuất báo cáo nằm trong phần mở rộng. Kế hoạch mới luôn để lịch tự chạy tắt.
+
+Sửa hướng dẫn, URL hoặc trình duyệt sẽ yêu cầu lập kế hoạch lại, không cho lưu/chạy nhầm kế hoạch cũ. Sửa trực tiếp các bước thì chỉ cần lưu lại. Nội dung hướng dẫn được giữ cùng luồng để có thể sửa và lập lại ở lần sau. Một file nhiều luồng được kiểm tra và lưu cùng một lần; lỗi ở một luồng không làm lưu dở các luồng khác.
 
 Khi website có nhiều trang nối tiếp, nên chạy thử và kiểm tra các bước sau trang đầu. Giao diện động, phần chọn ngày, popup hoặc thay đổi cách đăng nhập có thể cần chỉnh kịch bản. Có thể đăng nhập trước trong cửa sổ test dùng profile riêng của EventQA. Nếu luồng gặp OTP/CAPTCHA, dừng và hoàn tất yêu cầu đăng nhập trước khi chạy lại.
 
@@ -40,7 +44,9 @@ Phần **Giá trị dùng cho lượt chạy này** nhận một đối tượng
 {"destination":"Nha Trang","adults":2,"nights":3}
 ```
 
-Trong tiến độ, xem bước đang thực hiện và lỗi cụ thể. Bấm **Dừng lượt chạy** để ngừng thao tác; bằng chứng đã thu thập được giữ lại. Lịch sử lưu thời điểm bắt đầu, kết thúc và kết quả từng lượt. Phần **Event trực tiếp**, **Đối chiếu đặc tả**, **API** và báo cáo vẫn dùng dữ liệu từ phiên thực thi.
+Trong tiến độ, xem tên thao tác hiện tại. Nếu lỗi, thông báo chỉ rõ ô/nút chưa tìm thấy, nhiều thành phần trùng tên, trang không mở được hoặc cửa sổ test đã đóng. Phần tử ẩn trùng tên không còn bị chọn để thao tác. Thời gian cho một bước được tính theo số thao tác (mặc định tối đa 120 giây), thay vì dùng chung 30 giây cho cả mở trang, nhập liệu và chờ event. Thời gian chờ event mặc định tối đa 30 giây trong ngân sách bước.
+
+**Đã thao tác xong, đang chờ event** nghĩa là Playwright đã làm xong thao tác nhưng chưa thấy event mong đợi; khác với lỗi không thực hiện được bước. Bấm **Dừng lượt chạy** để ngừng thao tác; bằng chứng được giữ lại. Lịch sử lưu kết quả từng lượt; các tab Event/API và báo cáo vẫn dùng dữ liệu thực thi.
 
 ## Lịch tự chạy
 
@@ -92,3 +98,7 @@ Các thao tác hỗ trợ:
 Mặc định cấu hình và lịch sử nằm trong `runs/.automation/workflows.json` và `runs/.automation/history.json`. Bằng chứng, log API và báo cáo của từng lượt vẫn nằm trong thư mục phiên `runs/<session-id>/`. Giữ thư mục cấu hình nếu muốn dùng lại các luồng sau khi mở lại ứng dụng.
 
 Tính năng hiện tạo và xuất các file bằng chứng/báo cáo của EventQA. Thao tác tải một file bất kỳ từ một hệ thống báo cáo khác chưa có trong danh sách action hỗ trợ.
+
+## Kiểm tra bản cập nhật
+
+`npm run smoke:automation-guide` kiểm tra nhập tay, đọc trang thật, kế hoạch nhiều luồng, chặn kế hoạch cũ, sửa bước trên giao diện, lưu, chạy hai luồng bằng Playwright và thu event, cùng nhập Word. AI planner trong kiểm tra này là mô phỏng; trình duyệt, Playwright, website demo và collector chạy thật. `npm run smoke:automation` kiểm tra các thao tác và phần tử ẩn trùng tên; `npm run smoke:automation-app` kiểm tra nạp JSON có sẵn và báo cáo. Các ca này không chứng minh mọi luồng trên website bên ngoài chạy được; tên ô/nút, đăng nhập và trạng thái trang thực tế vẫn cần phù hợp với hướng dẫn.

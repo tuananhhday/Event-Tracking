@@ -208,7 +208,7 @@ CLI dùng `expected.json` của phiên; có thể cung cấp `--spec` khi muốn
 
 ## Bản AI (OpenRouter)
 
-Tab **Luồng tự động** nhận hướng dẫn TXT/Markdown hoặc kịch bản JSON, tạo kịch bản bằng AI một lần, rồi dùng Playwright thao tác Chrome/Edge và collector hiện có để kiểm event. Chọn một hoặc nhiều luồng chạy lần lượt; app xuất báo cáo vào phần **Kết thúc & báo cáo**. Có tiến độ, dừng luồng, lịch chạy theo giờ Việt Nam và lịch sử lưu trên máy. Các lần chạy đã lưu không gọi AI; xem [hướng dẫn và mẫu chạy thử](docs/AUTOMATION.md).
+Tab **Luồng tự động** nhận file Word/Excel/TXT/Markdown hoặc hướng dẫn nhập tay. Bấm **AI đọc và lập các bước** để tự đọc website và đề xuất một hoặc nhiều luồng; xem/sửa trực tiếp các bước, **Lưu**, rồi **Chạy** để Playwright thao tác Chrome/Edge và thu event/API. Không cần viết JSON. Có tiến độ, lỗi cụ thể, dừng luồng và lịch sử; chạy luồng đã lưu không gọi AI. Xem [hướng dẫn và mẫu](docs/AUTOMATION.md).
 
 - Bật AI: chạy `CHAY_EVENT_QA_AI.cmd`, mở tab **✦ Trợ lý AI**, dán key OpenRouter, bấm **Bật AI** (key lưu vào `.env`, không cần khởi động lại). Hướng dẫn đầy đủ bằng lời thường: [docs/AI.md](docs/AI.md).
 - **✦ AI kiểm tra cả phiên** (tab **✦ Trợ lý AI**): ghi yêu cầu kiểm tra (không bắt buộc), bấm **✦ AI kiểm tra phiên này**. AI đọc yêu cầu, các dòng đặc tả của luồng đang test, kết quả công cụ tự kiểm và các event đã gửi lên Google/Insider, rồi trả về **Đúng / Sai / Thiếu / Đang có vấn đề / Nên làm tiếp**. Ba danh sách Đúng / Sai / Thiếu luôn theo kết quả công cụ; AI chỉ viết lời giải thích.

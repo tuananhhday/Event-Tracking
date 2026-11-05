@@ -27,6 +27,7 @@ const server = http.createServer(async (request, response) => {
     response.end(demo.replace('window.dataLayer = []; window.InsiderQueue = [];', 'window.dataLayer = []; window.InsiderQueue = []; window.dataLayer.push({event:"automation_page_ready"});'));
   } else if (route === '/controls') {
     response.end(`<!doctype html><title>Local controls</title>
+      <label style="display:none">Loại báo cáo<select><option value="daily">Hằng ngày</option></select></label>
       <label for="report-type">Loại báo cáo</label><select id="report-type"><option value="daily">Hằng ngày</option><option value="weekly">Hằng tuần</option></select>
       <label>Ghi nhớ<input type="checkbox" id="remember"></label>
       <label>Mã<input id="code" placeholder="Nhập mã" data-testid="local-code"></label>

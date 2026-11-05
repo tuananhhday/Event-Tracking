@@ -22,6 +22,7 @@ export const WORKFLOW_SCHEMA = {
   properties: {
     schema_version: { const: '1.0' }, id: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$' },
     name: { type: 'string', minLength: 1, maxLength: 200 }, url,
+    instructions: { type: 'string', maxLength: 30000 },
     browser: { enum: ['chrome', 'edge'] }, variables: { type: 'object' },
     export_report: { type: 'boolean' },
     steps: {
