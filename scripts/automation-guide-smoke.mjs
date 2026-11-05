@@ -12,7 +12,7 @@ const { createApp } = await import('../src/server.mjs');
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-guide-smoke-'));
 const socket = net.createServer(); await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
 const debugPort = socket.address().port; await new Promise(resolve => socket.close(resolve));
-let app, browser, aiCalls = 0;
+let app, browser, aiCalls = 0, capturedEvents = 0;
 try {
   const template = JSON.parse(await fs.readFile(new URL('../examples/automation-demo.json', import.meta.url), 'utf8'));
   app = await createApp({ mode: 'cdp-ai', port: 0, runsDir: path.join(directory, 'runs'), automationOptions: { debugPort, profileDir: path.join(directory, 'profile') },
@@ -54,6 +54,7 @@ try {
   assert.equal(app.automation.run.status, 'COMPLETED', JSON.stringify(app.automation.run));
   assert.equal(app.automation.run.results.length, 2);
   assert.ok(app.manager.snapshot().events.some(event => event.event_name === 'search_submit'));
+  capturedEvents = app.manager.snapshot().events.length;
   assert.equal(aiCalls, 2, 'Running saved workflows must not call AI');
   // Word import populates the same description editor without executing anything.
   await page.waitForFunction(() => !document.getElementById('automation-new').disabled);
@@ -62,9 +63,22 @@ try {
   await page.locator('#automation-file').setInputFiles({ name: 'flows.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: await word.generateAsync({ type: 'nodebuffer' }) });
   await page.waitForFunction(() => document.getElementById('automation-instructions').value.includes('Nhập Phú Quốc'));
   assert.equal(await page.locator('#automation-save').isDisabled(), true); assert.equal(aiCalls, 2);
+  // A genuinely absent field fails honestly and shows the controls the actual
+  // browser saw, rather than requiring a user to open developer tools.
+  await page.waitForFunction(() => !document.getElementById('automation-file').disabled);
+  const invalidTarget = { name: 'Missing target diagnostic', url: `${base}/demo`, export_report: false, steps: [{ name: 'Missing field', actions: [{ type: 'fill', locator: { by: 'label', value: 'NONEXISTENT_FIELD' }, value: 'PRIVATE_TEST_VALUE', timeout_ms: 500 }] }] };
+  await page.locator('#automation-file').setInputFiles({ name: 'missing-target.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(invalidTarget)) });
+  await page.locator('#automation-save').click();
+  await page.waitForFunction(() => !document.getElementById('automation-run-current').disabled);
+  const failed = page.waitForResponse(response => response.url().endsWith('/api/automation/run') && response.request().method() === 'POST');
+  await page.locator('#automation-run-current').click(); await failed; await app.automation.wait();
+  assert.equal(app.automation.run.status, 'FAILED');
+  await page.locator('#automation-observed-controls').waitFor({ state: 'visible' });
+  assert.ok((await page.locator('#automation-observed-controls').textContent()).includes('Điểm đến'));
+  assert.equal(JSON.stringify(app.automation.run).includes('PRIVATE_TEST_VALUE'), false);
   assert.deepEqual(errors, []);
   await fs.mkdir('.tmp', { recursive: true }); await page.screenshot({ path: '.tmp/automation-guide-smoke.png', fullPage: true });
-  console.log(JSON.stringify({ result: 'PASS', typedInstructions: true, realPageInspection: true, planner: 'MOCK', savedFlows: 2, playwrightRuns: 2, stalePlanBlocked: true, noJsonNeeded: true, wordImport: true, capturedEvents: app.manager.snapshot().events.length }, null, 2));
+  console.log(JSON.stringify({ result: 'PASS', typedInstructions: true, realPageInspection: true, planner: 'MOCK', savedFlows: 2, playwrightRuns: 2, stalePlanBlocked: true, noJsonNeeded: true, wordImport: true, missingTargetReported: true, capturedEvents }, null, 2));
 } finally {
   await browser?.close(); await app?.close();
   assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(directory).startsWith('eventqa-guide-smoke-'));

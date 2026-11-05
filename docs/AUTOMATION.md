@@ -32,6 +32,8 @@ Bấm **AI đọc và lập các bước**. Trong phần **Xem lại các bướ
 
 Sửa hướng dẫn, URL hoặc trình duyệt sẽ yêu cầu lập kế hoạch lại, không cho lưu/chạy nhầm kế hoạch cũ. Sửa trực tiếp các bước thì chỉ cần lưu lại. Nội dung hướng dẫn được giữ cùng luồng để có thể sửa và lập lại ở lần sau. Một file nhiều luồng được kiểm tra và lưu cùng một lần; lỗi ở một luồng không làm lưu dở các luồng khác.
 
+Các thao tác nhập liệu trên trang ban đầu phải ghép được với thành phần thực sự đã đọc. Tên biến như `location` không tự được coi là label. Nếu đó là `id` hoặc `name` thật của một ô duy nhất, ứng dụng ghép sang locator thực tế; nếu không có bằng chứng hoặc có nhiều ô trùng, kế hoạch không được chấp nhận để tránh lưu một luồng chắc chắn bị kẹt. Ô `readonly` để mở bảng chọn phải có thao tác bấm mở trước, rồi mới nhập vào ô tìm kiếm bên trong. Đây là kiểm tra cấu trúc trang, không phải cam kết mọi website có cùng cấu trúc hoặc cùng tên trường.
+
 Khi website có nhiều trang nối tiếp, nên chạy thử và kiểm tra các bước sau trang đầu. Giao diện động, phần chọn ngày, popup hoặc thay đổi cách đăng nhập có thể cần chỉnh kịch bản. Có thể đăng nhập trước trong cửa sổ test dùng profile riêng của EventQA. Nếu luồng gặp OTP/CAPTCHA, dừng và hoàn tất yêu cầu đăng nhập trước khi chạy lại.
 
 ## Chạy một hoặc nhiều luồng
@@ -47,6 +49,8 @@ Phần **Giá trị dùng cho lượt chạy này** nhận một đối tượng
 Trong tiến độ, xem tên thao tác hiện tại. Nếu lỗi, thông báo chỉ rõ ô/nút chưa tìm thấy, nhiều thành phần trùng tên, trang không mở được hoặc cửa sổ test đã đóng. Phần tử ẩn trùng tên không còn bị chọn để thao tác. Thời gian cho một bước được tính theo số thao tác (mặc định tối đa 120 giây), thay vì dùng chung 30 giây cho cả mở trang, nhập liệu và chờ event. Thời gian chờ event mặc định tối đa 30 giây trong ngân sách bước.
 
 **Đã thao tác xong, đang chờ event** nghĩa là Playwright đã làm xong thao tác nhưng chưa thấy event mong đợi; khác với lỗi không thực hiện được bước. Bấm **Dừng lượt chạy** để ngừng thao tác; bằng chứng được giữ lại. Lịch sử lưu kết quả từng lượt; các tab Event/API và báo cáo vẫn dùng dữ liệu thực thi.
+
+Nếu bộ chạy không thấy locator đã lưu, nó đọc lại các ô/nút hiện có và chỉ tự ghép khi `id`, `name`, label hoặc placeholder trùng khớp rõ ràng với đúng một thành phần phù hợp. Danh sách **Ô/nút thực tế đã đọc khi lỗi** và `target_observation` trong `workflow-results.json` giúp kiểm tra trang đang hiển thị gì mà không mở F12; dữ liệu không đọc giá trị các ô nhập. Bước thất bại hiện **Không thực hiện được bước**, không hiện **Hoàn tất**.
 
 ## Lịch tự chạy
 

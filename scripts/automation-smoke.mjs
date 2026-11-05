@@ -37,6 +37,10 @@ const server = http.createServer(async (request, response) => {
       <script>document.getElementById('code').onkeydown=e=>{if(e.key==='Enter')document.getElementById('done').textContent=document.getElementById('report-type').value+':'+document.getElementById('remember').checked+':'+e.target.value}</script>`);
   } else if (route === '/cancel') {
     response.end(`<!doctype html><title>Cancel fixture</title><p>Local cancellation</p><script>setTimeout(()=>{const b=document.createElement('button');b.id='later';b.textContent='Later';b.onclick=()=>fetch('/unexpected');document.body.appendChild(b)},250)</script>`);
+  } else if (route === '/location') {
+    response.end(`<!doctype html><title>Location name regression</title><label>Destination<input name="location" placeholder="City or hotel"></label><button onclick="document.querySelector('output').textContent=document.querySelector('input').value">Search</button><output></output>`);
+  } else if (route === '/picker') {
+    response.end(`<!doctype html><title>Readonly picker regression</title><label>Destination<input name="location" readonly value="Choose destination" onclick="document.getElementById('picker').hidden=false"></label><div id="picker" hidden><input aria-label="Search destinations"><button onclick="document.getElementById('result').textContent=document.querySelector('#picker input').value">Select destination</button></div><p id="result"></p>`);
   } else { response.writeHead(404); response.end('Local fixture not found'); }
 });
 
@@ -114,6 +118,20 @@ try {
   const screenshot = path.join(directory, 'controls.png'); await driver.screenshot(screenshot);
   assert.ok((await fs.stat(screenshot)).size > 1000);
   assert.equal((await listTargets(port)).find(target => target.id === decoyId)?.url, 'about:blank', 'driver must not act on the first unrelated tab');
+
+  const locationResult = await runWorkflow({ id: 'NAME-REGRESSION', url: `${origin}/location`, steps: [{ name: 'Search hotel', actions: [
+    { type: 'fill', locator: { by: 'label', value: 'location' }, value: 'Nha Trang' },
+    { type: 'click', locator: { by: 'role', role: 'button', value: 'Search', exact: true } },
+    { type: 'assert_text', locator: { by: 'css', value: 'output' }, text: 'Nha Trang' },
+  ] }] }, { driver });
+  assert.equal(locationResult.status, 'COMPLETED', JSON.stringify(locationResult));
+  assert.equal(locationResult.steps[0].actions[1].resolved_locator.value, 'Destination');
+  await driver.execute({ type: 'goto', url: `${origin}/picker` });
+  await assert.rejects(driver.execute({ type: 'fill', locator: { by: 'label', value: 'location' }, value: 'Nha Trang' }), { code: 'AUTOMATION_NOT_EDITABLE' });
+  await driver.execute({ type: 'click', locator: { by: 'label', value: 'location' } });
+  await driver.execute({ type: 'fill', locator: { by: 'label', value: 'Search destinations' }, value: 'Nha Trang' });
+  await driver.execute({ type: 'click', locator: { by: 'role', role: 'button', value: 'Select destination', exact: true } });
+  await driver.execute({ type: 'assert_text', locator: { by: 'css', value: '#result' }, text: 'Nha Trang' });
 
   await driver.execute({ type: 'goto', url: `${origin}/cancel` });
   const controller = new AbortController();

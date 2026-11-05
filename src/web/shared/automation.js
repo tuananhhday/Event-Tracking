@@ -178,6 +178,8 @@
     if (item.message) return item.message;
     const workflow = state.workflows.find(value => value.id === item.workflow_id)?.name || 'Luồng';
     const step = state.workflows.find(value => value.id === item.workflow_id)?.steps?.find(value => value.id === item.step_id)?.name || item.step_id || '';
+    if (item.type === 'step-complete' && item.status === 'FAILED') return `Không thực hiện được bước: ${step}`;
+    if (item.type === 'step-complete' && item.status === 'CANCELLED') return `Đã dừng tại bước: ${step}`;
     const names = { 'workflow-start': `Bắt đầu ${workflow}`, 'step-start': `Đang thực hiện: ${step}`, 'action-start': `Thực hiện thao tác ${(item.action_index ?? 0) + 1}`, 'action-complete': `Xong thao tác ${(item.action_index ?? 0) + 1}`, 'step-complete': `Hoàn tất: ${step}`, 'workflow-complete': `Kết thúc ${workflow}` };
     return names[item.type] || step || workflow;
   }
@@ -192,13 +194,24 @@
       ${(run.results || []).map(result => `<details class="automation-result"${result.status === 'FAILED' ? ' open' : ''}><summary>${pill(result.status)}<strong>${esc(result.name || state.workflows.find(workflow => workflow.id === result.workflow_id)?.name || result.workflow_id)}</strong></summary>${result.error ? `<p class="field-error">${esc(result.error)}</p>` : ''}<ul>${(result.steps || []).map(step => `<li>${esc(step.name || step.id)} · ${esc(statusNames[step.status] || step.status)}${step.error ? `<br><span class="field-error">${esc(step.error)}</span>` : ''}</li>`).join('')}</ul></details>`).join('')}
       ${run.status !== 'RUNNING' ? `<div class="automation-actions"><button type="button" class="btn small" data-setup-stage="report">Mở phần báo cáo</button><button type="button" class="btn small ghost" data-workspace-tab="events">Xem event thu thập</button></div><p class="hint">${run.reports ? 'File đã xuất nằm trong phần Kết thúc &amp; báo cáo.' : 'Bằng chứng đã lưu. Mở phần báo cáo để chọn nội dung cần xuất.'}</p>` : ''}`;
   }
+  let observationSignature = '';
+  function renderObservations() {
+    const snapshots = (state.run?.results || []).flatMap(result => (result.steps || []).filter(step => step.status === 'FAILED').flatMap(step => (step.actions || []).filter(action => action.target_observation).map(action => ({ step: step.name, page: action.target_observation })))).slice(-1);
+    const signature = JSON.stringify([state.run?.id, snapshots]); if (signature === observationSignature && (!snapshots.length || $('observed-controls'))) return;
+    observationSignature = signature; $('observed-controls')?.remove();
+    if (!snapshots.length) return;
+    const { step, page } = snapshots[0], box = document.createElement('details'); box.id = 'automation-observed-controls'; box.className = 'automation-result';
+    const controls = page.controls.filter(control => !control.sensitive && (control.editable || control.readonly || control.role === 'combobox' || control.tag === 'button')).slice(0, 30);
+    box.innerHTML = `<summary>Ô/nút thực tế đã đọc khi lỗi ở bước ${esc(step)}</summary><p class="hint">Trang: ${esc(page.url)} · ${esc(clock(page.observed_at))}. Không đọc giá trị trong các ô nhập.</p><ul>${controls.map(control => `<li><b>${esc(control.label || control.placeholder || control.text || control.name || control.id || control.tag)}</b> · ${esc(control.tag)}${control.name ? ` · name=${esc(control.name)}` : ''}${control.id ? ` · id=${esc(control.id)}` : ''}${control.readonly ? ' · Chỉ đọc, cần bấm mở bảng chọn' : control.editable ? ' · Cho phép nhập' : ''}</li>`).join('')}</ul>`;
+    $('run').append(box);
+  }
   function renderHistory() {
     const history = state.history || [], signature = JSON.stringify(history);
     if (signature === historySignature) return;
     historySignature = signature;
     $('history').innerHTML = history.length ? `<div class="table-scroll"><table class="automation-history-table"><thead><tr><th>Luồng</th><th>Kết quả</th><th>Bắt đầu</th><th>Kết thúc</th></tr></thead><tbody>${history.slice(0, 30).map(run => `<tr><td><strong>${esc(run.workflow_names?.join(', ') || run.name || run.workflow_id || 'Lượt chạy tự động')}</strong>${run.error ? `<br><span class="field-error">${esc(run.error)}</span>` : ''}</td><td>${pill(run.status)}</td><td>${esc(date(run.started_at))}</td><td>${esc(date(run.completed_at))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Sau mỗi lượt chạy, kết quả và thời điểm thực hiện xuất hiện ở đây.</p>';
   }
-  function render() { renderLibrary(); renderRun(); renderHistory(); updateControls(); }
+  function render() { renderLibrary(); renderRun(); renderObservations(); renderHistory(); updateControls(); }
   async function runWorkflows(ids) {
     if (!ids.length) throw new Error('Chọn ít nhất một luồng để chạy.');
     const browsers = new Set(ids.map(id => state.workflows.find(workflow => workflow.id === id)?.browser || 'chrome'));
@@ -256,6 +269,7 @@
     if (!instructions) throw new Error('Viết hoặc chọn file hướng dẫn trước khi tạo kịch bản.');
     message('Đang mở và đọc website, sau đó AI sẽ lập các bước từ hướng dẫn. Chưa thực hiện luồng.');
     const result = await request('draft', { name, url, browser, instructions, autoInspect: true, multiple: true });
+    if (result.reason === 'INVALID_AI_GROUNDED_LOCATOR') throw new Error('AI đang chọn ô/nút chưa được xác nhận trên trang đã đọc. Kế hoạch này chưa được lưu. Kiểm tra website trong cửa sổ test rồi lập lại các bước; ô chọn cần bấm mở trước khi nhập.');
     if (!result.available || !result.workflow) throw new Error(result.message || ({ AI_DISABLED: 'Bật AI trong tab Trợ lý AI trước khi lập các bước.', API_KEY_MISSING: 'Thêm key và bật AI trong tab Trợ lý AI.', AI_CANCELLED: 'Đã dừng lập kế hoạch.', INVALID_AI_OUTPUT_LIMIT: 'Kế hoạch dài hơn giới hạn đầu ra của AI. Chia hướng dẫn thành nhóm luồng nhỏ hơn rồi thử lại.', INVALID_AI_WORKFLOW: 'AI chưa tạo được các bước hợp lệ. Làm rõ tên ô/nút và dữ liệu trong hướng dẫn rồi thử lại.', AI_INPUT_TOO_LARGE: 'Hướng dẫn và trang quá dài. Chia thành từng nhóm luồng nhỏ hơn.', OPENROUTER_HTTP_402: 'Key AI chưa đủ số dư. Kiểm tra key trong tab Trợ lý AI.' }[result.reason]) || `Chưa lập được các bước (${result.reason || 'AI không phản hồi'}). Nội dung hướng dẫn vẫn được giữ lại để thử lại.`);
     applyPlans(result.workflows || [result.workflow]); message(`AI đã lập ${draftBatch.length} luồng. Xem hoặc sửa các bước rồi bấm Lưu; chưa có thao tác nào của luồng được chạy.`);
   }));

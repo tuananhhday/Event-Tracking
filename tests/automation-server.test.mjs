@@ -29,7 +29,7 @@ async function fixture(t, options = {}) {
           if (action.type === 'click') app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'search_submit',
             page: { target_id: 'TEST-TAB', url: 'https://example.test/hotel' }, payload: { event: 'search_submit', search_term: value },
             network: { phase: 'request', method: 'POST', url: 'https://tracking.example.test/collect' } });
-        }, async inspect() { return { url: 'https://example.test/hotel', title: 'Search', controls: [{ tag: 'button', text: 'Search', locator: { by: 'role', role: 'button', value: 'Search' } }] }; }, async disconnect() {},
+        }, async inspect() { return { url: 'https://example.test/hotel', title: 'Search', controls: [{ tag: 'input', label: 'Keyword', editable: true, locator: { by: 'label', value: 'Keyword' } }, { tag: 'button', text: 'Search', locator: { by: 'role', role: 'button', value: 'Search' } }] }; }, async disconnect() {},
       }; },
     } });
   const base = await app.listen();

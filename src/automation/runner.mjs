@@ -67,7 +67,8 @@ export async function runWorkflow(workflow, { driver, signal, onStepStart, onSte
           const actionSignal = AbortSignal.any([stepSignal, actionController.signal]);
           try {
             const boundedAction = { ...action, timeout_ms: actionTimeoutMs };
-            await interruptible(() => driver.execute(boundedAction, { signal: actionSignal }), actionSignal);
+            const executed = await interruptible(() => driver.execute(boundedAction, { signal: actionSignal, onObservation: observation => { actionResult.target_observation = observation; } }), actionSignal);
+            if (executed?.resolved_locator) actionResult.resolved_locator = executed.resolved_locator;
             actionResult.status = 'COMPLETED';
           } catch (error) {
             const failure = signal?.aborted ? error : actionFailure(error, action);
