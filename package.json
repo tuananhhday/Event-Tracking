@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/cli.mjs serve",
     "cdp": "node src/cli.mjs serve --mode cdp",
-    "ai": "node --env-file-if-exists=.env src/cli.mjs serve --mode cdp-ai",
+    "ai": "node scripts/start-ai.mjs",
     "demo": "node src/cli.mjs demo",
     "smoke:local": "node scripts/local-smoke.mjs",
     "smoke:checkout": "node scripts/checkout-smoke.mjs",
@@ -19,6 +19,8 @@
     "smoke:automation-app": "node scripts/automation-app-smoke.mjs",
     "smoke:automation-guide": "node scripts/automation-guide-smoke.mjs",
     "smoke:inspection": "node scripts/inspection-smoke.mjs",
+    "smoke:network": "node scripts/network-smoke.mjs",
+    "smoke:network-ui": "node scripts/ai-network-ui-smoke.mjs",
     "test": "node --test",
     "check": "node scripts/check.mjs"
   },

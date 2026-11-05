@@ -1,5 +1,36 @@
 # Bản AI — dùng thế nào
 
+## Khi dùng mạng công ty
+
+Mở lại bằng `CHAY_EVENT_QA_AI.cmd` (hoặc `npm run ai`). Trình khởi động đọc `.env` trước khi mở tiến trình Node, bật dùng chứng chỉ tin cậy của hệ thống và proxy từ môi trường. Runtime Windows đi kèm đã hỗ trợ các tuỳ chọn này; chạy bản AI từ mã nguồn cần Node.js 24.5+. Nếu gọi thẳng `node src/cli.mjs`, các tuỳ chọn của trình khởi động không tự được áp dụng.
+
+Trong tab **Trợ lý AI**, bấm **Kiểm tra kết nối AI**. Phần cấu hình hiển thị dùng CA hệ thống/proxy đã bật chưa, có khai báo proxy/CA bổ sung không, và mã lỗi mạng gần nhất. Chỉ hiển thị trạng thái, không hiển thị địa chỉ proxy, mật khẩu, đường dẫn CA hay API key.
+
+| Lỗi | Hướng kiểm tra |
+| --- | --- |
+| Chứng chỉ HTTPS / `OPENROUTER_TLS_ERROR` | Kiểm tra CA của công ty đã được IT cài vào kho tin cậy của Windows; nếu IT cung cấp file CA thì khai báo `NODE_EXTRA_CA_CERTS` rồi khởi động lại. |
+| Proxy 407 | Proxy yêu cầu xác thực. Cần cấu hình được IT hỗ trợ; đổi API key không giải quyết lỗi xác thực proxy. |
+| Proxy 403 | Proxy từ chối tunnel tới `openrouter.ai`; nhờ IT kiểm tra quyền truy cập. |
+| HTTP 403 thông thường | Phản hồi có thể từ OpenRouter hoặc cổng mạng; mã này riêng lẻ chưa xác định được bên từ chối. |
+| DNS / mất kết nối / timeout | Kiểm tra DNS, địa chỉ proxy, đường truyền và quyền truy cập HTTPS cổng 443. |
+| HTTP 401 / 402 | Kiểm tra API key / số dư OpenRouter. |
+
+Khi IT yêu cầu dùng proxy hoặc cung cấp file CA, có thể thêm vào `.env` rồi **dừng và mở lại ứng dụng**. Dùng chính giá trị IT cung cấp, ví dụ định dạng:
+
+```dotenv
+HTTPS_PROXY=http://proxy.company.example:8080
+HTTP_PROXY=http://proxy.company.example:8080
+NODE_EXTRA_CA_CERTS="C:/CompanyCA/root-ca.pem"
+```
+
+Các dòng trên là ví dụ, không phải một proxy đang hoạt động. Không cần khai báo proxy/CA bổ sung nếu mạng không yêu cầu. Ứng dụng giữ các địa chỉ localhost, 127.0.0.1 và ::1 ngoài proxy để dashboard và CDP/Playwright vẫn kết nối trực tiếp. Các mục `NO_PROXY` hiện có được giữ lại.
+
+Node không tự đọc cấu hình PAC hoặc tự dùng phiên xác thực proxy trong Chrome/Edge. Nếu công ty dùng PAC hoặc NTLM/Kerberos, cần IT cung cấp cấu hình kết nối phù hợp cho ứng dụng Node. Tính năng này dùng cấu hình mạng và kho tin cậy được cấp, giữ xác minh TLS; việc công ty chặn hẳn dịch vụ AI vẫn cần xử lý qua IT.
+
+Các lỗi mạng có mã nguyên nhân riêng và không làm ứng dụng thử hết model/key trên cùng một kết nối đang lỗi. Mã lỗi an toàn được giữ lại; nội dung thô của lỗi transport/proxy có thể chứa thông tin nội bộ và không được đưa lên giao diện.
+
+`npm run smoke:network` kiểm chứng qua proxy/TLS giả lập trên localhost: CA chưa tin bị từ chối, CA đã cấp được chấp nhận, lỗi 403/407 được nhận diện và CDP không đi qua proxy. `npm run smoke:network-ui` kiểm tra hai nút kiểm tra kết nối/kiểm tra phiên trên Chromium với lỗi transport giả lập. Các ca này không xác nhận kết nối trên mạng công ty thực tế.
+
 Bản AI bắt event giống hệt **bản thường** (đọc `dataLayer`, `InsiderQueue` và request GA4/Insider). Khác biệt duy nhất: có thêm trợ lý AI kiểm tra cả phiên và giải thích bằng tiếng Việt. Mở bằng [CHAY_EVENT_QA_AI.cmd](../CHAY_EVENT_QA_AI.cmd) (hoặc [solutions/02-cdp-ai/start.cmd](../solutions/02-cdp-ai/start.cmd)), giao diện tại http://127.0.0.1:4174.
 
 ## AI giúp được gì

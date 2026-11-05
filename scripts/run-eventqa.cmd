@@ -29,7 +29,7 @@ if /i "%EVENTQA_MODE%"=="cdp-ai" goto ai
 goto result
 
 :ai
-"%EVENTQA_NODE%" --env-file-if-exists=.env src\cli.mjs serve --mode cdp-ai --open
+"%EVENTQA_NODE%" scripts\start-ai.mjs --open
 goto result
 
 :stop

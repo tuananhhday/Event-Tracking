@@ -335,7 +335,18 @@ const $ = id => document.getElementById(id);
 const { esc, short } = EventQA;
 const AI_REASON = {
   AI_DISABLED: 'AI chưa bật: mở tab ✦ Trợ lý AI, dán key OpenRouter rồi bấm Bật AI.', API_KEY_MISSING: 'Chưa có OpenRouter key: mở tab ✦ Trợ lý AI, dán key rồi bấm Bật AI.',
-  OPENROUTER_TIMEOUT: 'AI trả lời quá lâu. Thử lại sau ít phút.', OPENROUTER_UNAVAILABLE: 'Không kết nối được OpenRouter. Kiểm tra mạng rồi thử lại.',
+  OPENROUTER_TIMEOUT: 'Kết nối OpenRouter hoặc phản hồi AI quá thời gian chờ. Kiểm tra mạng/proxy rồi thử lại.', OPENROUTER_UNAVAILABLE: 'Chưa xác định được lỗi kết nối OpenRouter. Xem thông tin mạng trong tab Trợ lý AI.',
+  OPENROUTER_TLS_ERROR: 'Không xác minh được chứng chỉ HTTPS. Trên mạng công ty, kiểm tra CA do IT cung cấp và mở lại ứng dụng bằng CHAY_EVENT_QA_AI.cmd.',
+  OPENROUTER_DNS_ERROR: 'Không phân giải được tên miền OpenRouter hoặc máy chủ proxy. Kiểm tra DNS và địa chỉ proxy với IT.',
+  OPENROUTER_NETWORK_UNREACHABLE: 'Không kết nối được máy chủ OpenRouter/proxy. Kiểm tra địa chỉ proxy và quyền truy cập HTTPS cổng 443.',
+  OPENROUTER_CONNECTION_RESET: 'Kết nối tới OpenRouter bị ngắt. Có thể do đường truyền hoặc thiết bị mạng/proxy đóng kết nối; kiểm tra với IT.',
+  OPENROUTER_PROXY_AUTH_REQUIRED: 'Proxy yêu cầu đăng nhập (407). Cần cấu hình proxy được IT cho phép; đổi API key không xử lý lỗi này.',
+  OPENROUTER_PROXY_CONFIG_ERROR: 'Cấu hình proxy HTTP/HTTPS chưa hợp lệ. Kiểm tra HTTPS_PROXY/HTTP_PROXY theo địa chỉ do IT cung cấp.',
+  OPENROUTER_PROXY_BLOCKED: 'Proxy từ chối kết nối tới OpenRouter (403). Nhờ IT kiểm tra quyền truy cập openrouter.ai.',
+  OPENROUTER_PROXY_ERROR: 'Proxy không tạo được kết nối tới OpenRouter. Kiểm tra dịch vụ proxy và quyền truy cập với IT.',
+  OPENROUTER_HTTP_403: 'Nhận HTTP 403: OpenRouter hoặc cổng mạng từ chối truy cập. Cần kiểm tra nguồn trả lỗi; chưa thể kết luận là lỗi API key.',
+  OPENROUTER_HTTP_407: 'Mạng yêu cầu xác thực proxy (407). Kiểm tra cấu hình proxy với IT.',
+  OPENROUTER_RESPONSE_ERROR: 'Phản hồi nhận được không đúng dữ liệu API OpenRouter. Có thể là lỗi dịch vụ hoặc trang chặn/đăng nhập của proxy; kiểm tra với IT.',
   OPENROUTER_HTTP_401: 'OpenRouter key không đúng. Ở tab ✦ Trợ lý AI, mở “Đổi key OpenRouter” và dán lại key.', OPENROUTER_HTTP_402: 'Key hết credit cho model trả phí.', OPENROUTER_HTTP_429: 'AI đang quá tải. Thử lại sau ít phút.',
   INVALID_AI_EXPLANATION: 'AI trả lời sai định dạng. Bấm thử lại.', INVALID_AI_REVIEW: 'AI trả lời sai định dạng. Bấm thử lại.',
   AI_CANCELLED: 'Lệnh AI đã bị huỷ do dừng phiên.', NO_SUITABLE_MODELS: 'Không có model phù hợp giới hạn giá/ngân sách hiện tại.', MODEL_NOT_FOUND: 'Model cấu hình không tồn tại trên OpenRouter.',
@@ -344,6 +355,7 @@ const AI_REASON = {
   AI_INPUT_TOO_LARGE: 'Đầu vào quá lớn; rút gọn sample.', INVALID_AI_INPUT: 'Đầu vào cần là JSON object.', INVALID_AI_JSON: 'Model trả JSON không hợp lệ.',
 };
 const reasonText = reason => AI_REASON[reason] || reason || 'Không rõ lý do';
+EventQA.aiReason = reasonText;
 const usd = value => typeof value !== 'number' ? '—' : value === 0 ? 'miễn phí' : `$${value < 0.01 ? value.toPrecision(2) : value.toFixed(2)}`;
 // AI text names fields as `field`; show those as code after escaping.
 const aiText = text => esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -392,12 +404,13 @@ document.addEventListener('click', event => {
 function renderAi(ai) {
   const sig = JSON.stringify(ai); if (!ai || sig === aiSig) return; aiSig = sig;
   const ready = ai.enabled && ai.configured_key_count > 0 && !ai.closed;
-  const chip = $('ai-chip'); chip.className = `pill ${ready ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? 'AI sẵn sàng' : 'AI chưa bật';
+  const networkError = ai.network?.last_error;
+  const chip = $('ai-chip'); chip.className = `pill ${ready && !networkError ? 'PASS' : 'REVIEW'}`; chip.textContent = ready ? networkError ? 'Lỗi kết nối AI' : 'AI đã cấu hình' : 'AI chưa bật';
   const off = $('ai-off-banner'); off.classList.toggle('hidden', ready);
   off.querySelector('p').textContent = !ai.enabled ? reasonText('AI_DISABLED') + ' Thu thập và đối chiếu vẫn chạy bình thường.' : !ai.configured_key_count ? reasonText('API_KEY_MISSING') : '';
-  const status = $('ai-status'); status.classList.toggle('ready', ready);
+  const status = $('ai-status'); status.classList.toggle('ready', ready && !networkError);
   status.innerHTML = ready
-    ? `<span class="ai-status-icon">✦</span><div><h3>AI đã sẵn sàng</h3><p>Bắt event như bản thường. Khi cần, bấm <b>✦ AI giải thích</b> trên một event để đọc giải thích bằng tiếng Việt.${ai.allow_paid ? ` AI thử model miễn phí trước; mỗi lần hỏi tốn tối đa khoảng ${usd(ai.request_budget_usd)}.` : ' Chỉ dùng model miễn phí.'}</p>
+    ? `<span class="ai-status-icon">✦</span><div><h3>${networkError ? 'AI chưa kết nối được' : 'AI đã cấu hình'}</h3><p>${networkError ? esc(reasonText(networkError.reason)) : 'Bắt event như bản thường. Khi cần, bấm <b>✦ AI giải thích</b> trên một event để đọc giải thích bằng tiếng Việt.'}${ai.allow_paid ? ` AI thử model miễn phí trước; mỗi lần hỏi tốn tối đa khoảng ${usd(ai.request_budget_usd)}.` : ' Chỉ dùng model miễn phí.'}</p>
       <details class="more"><summary>Đổi key OpenRouter</summary><div class="row" style="margin-top:8px"><input id="ai-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" aria-label="OpenRouter API key mới"><button type="button" class="btn shrink" data-action="ai-save-key">Lưu key mới</button></div></details></div>`
     : `<span class="ai-status-icon">⚠</span><div><h3>AI chưa bật</h3><p>Công cụ vẫn bắt và đối chiếu event bình thường, chỉ thiếu phần giải thích của AI. Dán key OpenRouter (tạo miễn phí tại openrouter.ai → Keys) rồi bấm <b>Bật AI</b>:</p>
       <div class="row" style="margin-top:8px"><input id="ai-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" aria-label="OpenRouter API key"><button type="button" class="btn primary shrink" data-action="ai-save-key">Bật AI</button></div>
@@ -407,13 +420,18 @@ function renderAi(ai) {
     ['Model đặc tả / giải thích', `${ai.model_spec} / ${ai.model_explain}`], ['Cho phép trả phí', ai.allow_paid ? 'Có' : 'Không (chỉ free)'],
     ['Giá tối đa in / out', `${ai.max_prompt_usd_per_million} / ${ai.max_completion_usd_per_million} USD/1M`], ['Ngân sách / tác vụ', usd(ai.request_budget_usd)],
     ['Số model thử tối đa', `${ai.max_model_attempts} (free: ${ai.max_free_attempts})`],
+    ['Chứng chỉ hệ thống', ai.network?.system_ca_enabled ? 'Đã bật' : 'Chưa bật'],
+    ['Dùng proxy môi trường', ai.network?.env_proxy_enabled ? 'Đã bật' : 'Chưa bật'],
+    ['Proxy đã khai báo', ai.network?.proxy_configured ? 'Có' : 'Không'],
+    ['CA bổ sung', ai.network?.extra_ca_configured ? 'Có' : 'Không'],
+    ...(networkError ? [['Mã lỗi mạng gần nhất', networkError.code]] : []),
   ];
   $('ai-config').innerHTML = items.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
   $('ai-keys').innerHTML = (ai.keys || []).map(k => `<span class="pill ${k.available ? (k.paid_available ? 'PASS' : 'REVIEW') : 'FAIL'}">${esc(k.label)} · ${k.available ? (k.paid_available ? 'sẵn sàng' : 'chỉ free') : esc(k.reason || 'tạm khoá')}</span>`).join('');
   const trace = ai.last_trace || [];
   $('ai-trace').innerHTML = trace.length ? `<div class="table-scroll"><table class="checks"><thead><tr><th>Model</th><th>Key</th><th>Kết quả</th></tr></thead><tbody>${trace.map(t => `<tr><td><code>${esc(t.model)}</code></td><td>${esc(t.key_label)}</td><td>${t.status === 'SUCCESS' ? '<span class="pill PASS">Thành công</span>' : `<span class="pill FAIL">${esc(t.status || 'Lỗi')}</span> ${esc(reasonText(t.reason || t.error))}`}</td></tr>`).join('')}</tbody></table></div>`
     + (ai.last_result ? `<p class="hint">Lần gần nhất: ${ai.last_result.available ? `model <code>${esc(ai.last_result.model)}</code>, chi phí ${usd(ai.last_result.actual_cost_usd ?? ai.last_result.estimated_cost_usd)}` : esc(reasonText(ai.last_result.reason))}</p>` : '')
-    : '<p class="hint">Chưa có lượt gọi nào trong phiên ứng dụng này.</p>';
+    : networkError ? `<p class="field-error">${esc(reasonText(networkError.reason))} (${esc(networkError.code)})</p>` : '<p class="hint">Chưa có lượt gọi nào trong phiên ứng dụng này.</p>';
 }
 function renderDraft(result) {
   if (!result.available) { $('ai-output').innerHTML = `<div class="banner warn"><p>${esc(reasonText(result.reason))}</p></div>`; return; }

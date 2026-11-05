@@ -8,6 +8,8 @@ Tải [EventQA-Windows-x64.zip](portable/EventQA-Windows-x64.zip), chọn **Down
 
 Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không cần cài Node hay gõ lệnh npm. Máy cần có Chrome hoặc Edge. Bản AI cần OpenRouter key riêng, nhập ngay trong giao diện (xem `docs/AI.md`).
 
+Bản AI được mở bằng `CHAY_EVENT_QA_AI.cmd` sẽ dùng kho chứng chỉ tin cậy của Windows và proxy `HTTPS_PROXY`/`HTTP_PROXY` nếu đã khai báo trong môi trường hoặc `.env`. Có thể khai báo file CA do IT cung cấp qua `NODE_EXTRA_CA_CERTS`. Dừng và mở lại ứng dụng sau khi đổi cấu hình mạng. Tab **Trợ lý AI → Kiểm tra kết nối AI** phân biệt lỗi chứng chỉ, DNS, kết nối và proxy 403/407; xem [hướng dẫn mạng công ty](docs/AI.md#khi-dùng-mạng-công-ty).
+
 Thư viện JavaScript trong bản tải được gộp thành vài bundle, giảm hàng nghìn file nhỏ khi giải nén trên Windows. License các thư viện được giữ trong `node_modules/THIRD_PARTY_LICENSES.txt`.
 
 Bản hiện tại có tab **TP2 ↔ API**, giải mã `ue_px` và lưu cấu hình ghép trường để đối chiếu. **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo event, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
@@ -18,7 +20,7 @@ Giao diện workspace của bản portable trước được khôi phục. Bấm
 
 Gói có thể kèm danh mục tham khảo khi build với đối số `CATALOGUE_DIR`, nạp sẵn dưới dạng draft; JSON và Excel nằm trong `event-catalogue/`. Mẫu App SDK cần xác nhận mapping sang Web trước khi dùng để kết luận website đúng/sai. Bản portable lưu trong Git không kèm dữ liệu workbook của người dùng; nhập JSON/XLSX riêng ở bước Đặc tả tracking khi cần.
 
-Đã kiểm checksum runtime chính thức, tính toàn vẹn ZIP, và chạy thử gói trên Windows 11: cả bản thường và bản AI khởi động bằng `runtime/node.exe`, nhập được file Martech_WebOTA và Martech_AppOTA_Insider. Không đóng kèm khóa API hoặc profile đăng nhập.
+Gói được kiểm tra checksum runtime chính thức và tính toàn vẹn ZIP. Bản cập nhật được kiểm thử mã, trình duyệt và ca mô phỏng proxy/TLS trong môi trường build; chưa xác nhận trên Windows hoặc mạng công ty thực tế của bạn. Không đóng kèm khóa API hoặc profile đăng nhập.
 
 Tạo lại gói trên máy build đã cài dependencies theo lockfile:
 

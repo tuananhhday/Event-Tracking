@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import Ajv from 'ajv';
 import { redact } from '../core/privacy.mjs';
 import { normalizeModel, routingCandidates } from './routing.mjs';
+import { networkFailure, networkRuntime, isNetworkReason, permanentNetworkReason } from './network.mjs';
 
 const OPERATORS = ['eq', 'exists', 'not_exists', 'type', 'regex', 'one_of', 'range', 'ref', 'subset', 'ignore'];
 export const DRAFT_CASE_SCHEMA = {
@@ -149,6 +150,7 @@ export class OpenRouterClient {
     this.modelCooldowns = new Map();
     this.lastTrace = [];
     this.lastResult = null;
+    this.lastNetworkError = null;
   }
 
   unavailable() {
@@ -167,6 +169,7 @@ export class OpenRouterClient {
       max_output_tokens: this.maxOutputTokens,
       keys: this.keyStates.map(key => ({ label: key.label, available: key.disabledUntil <= Date.now(), paid_available: key.disabledUntil <= Date.now() && key.paidDisabledUntil <= Date.now(), reason: key.reason })),
       last_trace: structuredClone(this.lastTrace), last_result: this.lastResult,
+      network: { ...networkRuntime(), last_error: this.lastNetworkError ? { ...this.lastNetworkError } : null },
     };
   }
 
@@ -224,6 +227,7 @@ export class OpenRouterClient {
           signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.lifecycleController.signal]),
         }));
         this.throwIfClosed();
+        this.lastNetworkError = null;
         if (!response.ok) {
           if ((response.status === 429 || response.status >= 500) && attempt < retries) {
             const retryAfter = Number(response.headers?.get?.('retry-after'));
@@ -233,7 +237,9 @@ export class OpenRouterClient {
           // Provider error bodies can echo prompts, credentials or payloads. Never expose them.
           throw new Error(`OPENROUTER_HTTP_${response.status}`);
         }
-        const result = await this.withCancellation(response.json());
+        let result;
+        try { result = await this.withCancellation(response.json()); }
+        catch (error) { if (error instanceof SyntaxError) throw new Error('OPENROUTER_RESPONSE_ERROR'); throw error; }
         this.throwIfClosed();
         if (result?.error) {
           const code = Number(result.error.code);
@@ -243,7 +249,8 @@ export class OpenRouterClient {
       } catch (error) {
         if (this.closed || error.message === 'AI_CANCELLED') throw new Error('AI_CANCELLED');
         if (/^OPENROUTER_(HTTP_\d+|RESPONSE_ERROR)$/.test(error.message)) throw error;
-        if (attempt === retries) throw new Error(error.name === 'TimeoutError' || error.name === 'AbortError' ? 'OPENROUTER_TIMEOUT' : 'OPENROUTER_UNAVAILABLE');
+        const failure = networkFailure(error); this.lastNetworkError = failure;
+        if (attempt === retries || permanentNetworkReason(failure.reason)) throw new Error(failure.reason);
         await this.pause(200 * 2 ** attempt);
       }
     }
@@ -363,10 +370,10 @@ export class OpenRouterClient {
           this.cache.set(key, output); if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value);
           return structuredClone(output);
         } catch (error) {
-          lastReason = this.closed ? 'AI_CANCELLED' : /^(?:OPENROUTER_(?:HTTP_\d+|TIMEOUT|UNAVAILABLE|RESPONSE_ERROR)|INVALID_AI_[A-Z_]+|AI_MAX_COMPLETION_REQUESTS|AI_CANCELLED)$/.test(error.message) ? error.message : 'OPENROUTER_UNAVAILABLE';
+          lastReason = this.closed ? 'AI_CANCELLED' : isNetworkReason(error.message) || /^(?:OPENROUTER_(?:HTTP_\d+|RESPONSE_ERROR)|INVALID_AI_[A-Z_]+|AI_MAX_COMPLETION_REQUESTS|AI_CANCELLED)$/.test(error.message) ? error.message : 'OPENROUTER_UNAVAILABLE';
           trace.status = 'FAILED'; trace.reason = lastReason;
           if (['OPENROUTER_HTTP_401', 'OPENROUTER_HTTP_402'].includes(lastReason)) { this.disableKey(keyIndex, lastReason); continue; }
-          if (['OPENROUTER_HTTP_403', 'AI_MAX_COMPLETION_REQUESTS', 'AI_CANCELLED'].includes(lastReason)) { stopOperation = true; break; }
+          if (isNetworkReason(lastReason) || ['OPENROUTER_HTTP_403', 'OPENROUTER_HTTP_407', 'AI_MAX_COMPLETION_REQUESTS', 'AI_CANCELLED'].includes(lastReason)) { stopOperation = true; break; }
           this.modelCooldowns.set(candidate.id, Date.now() + this.cooldownMs);
           if (model === 'auto') {
             try { await this.pause(Math.min(1000, 150 * attempts)); }

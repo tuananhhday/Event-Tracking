@@ -26,7 +26,7 @@ npm.cmd run cdp -- --open
 
 Sau khi clone Git, cấu hình riêng cho AI bằng cách copy `.env.example` thành `.env` rồi điền key của bạn. `.env`, profile và bằng chứng trong `runs/` không nằm trong repository.
 
-Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `npm.ps1`. Yêu cầu Node.js **24 trở lên**. Mỗi bản chỉ chạy một tiến trình: mở lần hai khi bản đầu còn chạy sẽ báo trùng cổng; dùng `STOP_EVENT_QA.cmd` để tắt bản cũ.
+Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `npm.ps1`. Bản thường yêu cầu Node.js **24 trở lên**; bản AI từ mã nguồn dùng `npm run ai` cần **24.5+** để hỗ trợ proxy/chứng chỉ hệ thống. Gói Windows FULL có sẵn runtime phù hợp. Mỗi bản chỉ chạy một tiến trình: mở lần hai khi bản đầu còn chạy sẽ báo trùng cổng; dùng `STOP_EVENT_QA.cmd` để tắt bản cũ.
 
 ## Test trên website thật
 
