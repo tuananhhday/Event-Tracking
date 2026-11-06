@@ -1,0 +1,12 @@
+{
+  "version": "24.19.0",
+  "platform": "win-x64",
+  "sha256": "57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73",
+  "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
+  "source_commit": "088aafec462f2241ecfc5596ec866478d49e1370",
+  "dependencies": {
+    "format": "bundled-js",
+    "lockfile_sha256": "a30b74bbdd077db946e6a20c904c8fa9823f2af6a75105d3f5a98c92e207b487",
+    "esbuild": "0.25.12"
+  }
+}

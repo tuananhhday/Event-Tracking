@@ -1,0 +1,55 @@
+<dialog id="comparison-flow-dialog" class="inspection-dialog" aria-labelledby="comparison-flow-title">
+  <div class="inspection-head"><h2 id="comparison-flow-title">Chọn luồng cần kiểm tra</h2><button type="button" class="btn" data-action="close-flow-picker">Đóng</button></div>
+  <p class="hint">Chọn một luồng, rồi thao tác trên website. Chỉ event mới của lượt này được dùng để so sánh.</p>
+  <label for="comparison-flow-search">Tìm luồng trong đặc tả</label><input id="comparison-flow-search" type="search" placeholder="Ví dụ: khách sạn, đồ lưu niệm…">
+  <div id="comparison-flow-list" class="flow-choice-list"></div>
+</dialog>
+<dialog id="comparison-event-dialog" class="inspection-dialog wide" aria-labelledby="comparison-event-title">
+  <div class="inspection-head"><h2 id="comparison-event-title">Đổi event so sánh</h2><button type="button" class="btn" data-action="close-event-picker">Đóng</button></div>
+  <p id="comparison-event-hint" class="hint"></p>
+  <label for="comparison-event-search">Tìm event trong lượt hiện tại</label><input id="comparison-event-search" type="search" placeholder="Tên event, trang hoặc mã bằng chứng…">
+  <div id="comparison-event-list" class="flow-choice-list"></div>
+</dialog>
+<dialog id="export-dialog" class="inspection-dialog" aria-labelledby="export-title">
+  <div class="inspection-head"><h2 id="export-title">Xuất báo cáo</h2><button type="button" class="btn" id="export-close">Đóng</button></div>
+  <p class="hint">Chọn nội dung và định dạng. Chỉ chọn API để nhận file riêng chứa các lời gọi trong phiên này.</p>
+  <fieldset class="inspection-options"><legend>Nội dung xuất</legend>
+    <label class="check"><input type="checkbox" id="export-events" checked> Báo cáo đối chiếu đặc tả</label>
+    <label class="check"><input type="checkbox" id="export-tracking"> Danh sách event tracking đã xuất hiện (file riêng)</label>
+    <label class="check"><input type="checkbox" id="export-tp2"> TP2 ↔ API</label>
+    <label class="check"><input type="checkbox" id="export-api"> Chi tiết API của phiên (file riêng)</label>
+  </fieldset>
+  <label for="export-format">Định dạng</label><select id="export-format"><option value="html">HTML · Mở như bảng báo cáo</option><option value="xlsx">Excel</option><option value="json">JSON · Dữ liệu cấu trúc</option><option value="all">Tất cả định dạng</option></select>
+  <details class="more"><summary>Định dạng HTML</summary><div class="inspection-grid">
+    <label>Cỡ chữ <select id="export-font"><option>12</option><option selected>14</option><option>16</option></select></label>
+    <label>Số dòng mỗi trang <select id="export-page-size"><option>25</option><option selected>50</option><option>100</option></select></label>
+    <label class="check"><input type="checkbox" id="export-wrap" checked> Ngắt dòng nội dung dài</label><label class="check"><input type="checkbox" id="export-issues"> Chỉ hiện dòng có vấn đề</label>
+  </div><div id="export-columns" class="inspection-options"></div></details>
+  <p class="hint">Định dạng được nhớ cho lần sau. Có thể chỉnh cột, cỡ chữ và bộ lọc ngay trong file HTML sau khi mở.</p>
+  <div id="export-error" class="field-error"></div><button type="button" class="btn primary big" id="export-confirm">Xuất báo cáo</button>
+</dialog>
+<dialog id="tp2-detail" class="inspection-dialog wide" aria-labelledby="tp2-title"><div class="inspection-head"><h2 id="tp2-title">TP2 ↔ API</h2><button type="button" class="btn" id="tp2-close">Đóng</button></div>
+  <p class="hint">Tự tìm API của cùng đơn hàng, sản phẩm hoặc affiliate để so sánh với TP2. Kết quả ở bên dưới.</p>
+  <details><summary>Đổi API đối chiếu (tuỳ chọn)</summary><label>API đối chiếu<select id="tp2-api-choice"></select></label></details>
+  <div id="tp2-detail-error" class="field-error" role="alert"></div>
+  <section aria-labelledby="tp2-result-title" aria-live="polite"><h3 id="tp2-result-title">Kết quả so sánh</h3><div id="tp2-comparison"></div></section>
+  <details><summary>Dữ liệu ue_px đã giải mã</summary><pre id="tp2-decoded" class="code inspection-json"></pre></details>
+  <details><summary>Schema và thông tin request</summary><pre id="tp2-metadata" class="code inspection-json"></pre></details>
+  <details><summary>API đã chọn · Request / Response</summary><pre id="tp2-api-data" class="code inspection-json"></pre></details>
+  <details id="tp2-mapping-editor"><summary>Sửa cách ghép (nếu cần)</summary>
+    <p class="hint">Các trường được ghép tự động theo tên và mã sản phẩm. Trường chưa rõ cần chọn lại. Chỉ bỏ tick khi bạn chủ động không muốn kiểm tra trường đó. Lưu để áp dụng cho các event cùng tên; kết quả hiện ngay phía trên.</p>
+    <button type="button" class="btn small" id="tp2-suggest">Tự ghép lại</button>
+    <div id="tp2-field-rows" class="tp2-table-wrap"></div>
+    <details id="tp2-advanced"><summary>Tuỳ chỉnh nâng cao</summary>
+    <label>Cách ghép đã lưu<select id="tp2-mapping-choice"></select></label>
+    <div class="inspection-grid"><label>Tên cấu hình<input id="tp2-map-name" type="text"></label><label>Tên event<input id="tp2-map-event" type="text"></label>
+      <label>Đường dẫn / regex API<input id="tp2-map-pattern" type="text" placeholder="/orders hoặc /bookable"></label><label>Lấy dữ liệu từ<select id="tp2-map-side"><option value="response">Response</option><option value="request">Request</option></select></label>
+      <label>Đường dẫn mảng API (nếu có)<input id="tp2-map-record" type="text" placeholder="data.items"></label><label>Mã định danh trong TP2<input id="tp2-map-event-id" type="text" placeholder="product_id"></label>
+      <label>Mã định danh trong API<input id="tp2-map-api-id" type="text" placeholder="id"></label><label>Khoảng thời gian (phút)<input id="tp2-map-window" type="number" value="30" min="1" max="1440"></label>
+    </div>
+    <div class="inspection-pair"><input id="tp2-field-event" list="tp2-event-paths" placeholder="Trường TP2"><datalist id="tp2-event-paths"></datalist><input id="tp2-field-api" list="tp2-api-paths" placeholder="Trường API"><datalist id="tp2-api-paths"></datalist>
+      <select id="tp2-field-type"><option value="json">So cả kiểu và giá trị</option><option value="number">So giá trị số</option><option value="string">So nội dung chữ</option><option value="date">So ngày</option></select><button type="button" class="btn" id="tp2-add-field">Thêm cặp</button>
+    </div></details>
+    <div class="row"><button type="button" class="btn primary" id="tp2-save-mapping">Lưu cách ghép và so sánh</button><button type="button" class="btn ghost" id="tp2-delete-mapping">Xóa cấu hình</button></div>
+  </details>
+</dialog>

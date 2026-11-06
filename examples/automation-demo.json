@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "name": "Demo · Tìm khách sạn Phú Quốc",
+  "url": "http://127.0.0.1:4174/demo",
+  "browser": "chrome",
+  "variables": {
+    "destination": "Phú Quốc",
+    "adults": 2,
+    "nights": 1
+  },
+  "steps": [
+    {
+      "id": "fill-search",
+      "name": "Điền thông tin tìm khách sạn",
+      "actions": [
+        { "type": "wait_for", "locator": { "by": "label", "value": "Điểm đến", "exact": true } },
+        { "type": "fill", "locator": { "by": "label", "value": "Điểm đến", "exact": true }, "value": "{{destination}}" },
+        { "type": "fill", "locator": { "by": "label", "value": "Người lớn", "exact": true }, "value": "{{adults}}" },
+        { "type": "fill", "locator": { "by": "label", "value": "Số đêm", "exact": true }, "value": "{{nights}}" },
+        { "type": "check", "locator": { "by": "label", "value": "Bỏ destination_id để tạo lỗi", "exact": true }, "checked": false }
+      ]
+    },
+    {
+      "id": "submit-search",
+      "name": "Tìm khách sạn và kiểm event",
+      "context": {
+        "search": {
+          "destination_name": "{{destination}}",
+          "adults": "{{adults}}",
+          "nights": "{{nights}}"
+        }
+      },
+      "actions": [
+        { "type": "click", "locator": { "by": "role", "role": "button", "value": "Tìm khách sạn", "exact": true } },
+        { "type": "assert_text", "locator": { "by": "css", "value": "#output" }, "text": "search_submit" },
+        { "type": "assert_text", "locator": { "by": "css", "value": "#output" }, "text": "{{destination}}" }
+      ],
+      "expected_events": [
+        { "event_name": "search_submit", "source": "GA4", "layer": "JS_QUEUE" },
+        { "event_name": "search_submit", "source": "GA4", "layer": "TRACKING_REQUEST" }
+      ]
+    }
+  ],
+  "schedule": {
+    "enabled": false,
+    "time": "07:00",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "days": [0, 1, 2, 3, 4, 5, 6]
+  }
+}

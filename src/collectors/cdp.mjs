@@ -1,0 +1,481 @@
+import { eventKind, INSIDER_TYPE_EVENTS, INSIDER_OBJECT_PAGES } from '../core/event-kind.mjs';
+import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
+import { redactUrl } from '../core/privacy.mjs';
+import { apiPrices } from '../core/api-prices.mjs';
+import { apiCallRecord, matchesApiLog, DEFAULT_API_LOG_PATTERNS, API_LOG_LIMITS } from '../core/api-log.mjs';
+import { isTp2Endpoint } from '../core/tp2.mjs';
+
+// A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
+// between the events of one request.
+const hitPage = (event, page) => { const url = event.source === 'TP2' ? event.tp2?.parameters?.url : event.payload?.page_location ?? event.payload?.dl ?? event.payload?.current_url; return typeof url === 'string' && url ? { ...page, url: redactUrl(url) } : page; };
+
+// How long a call with a response may stay unfinished before it is logged anyway.
+const API_LOG_SETTLE_MS = 10000;
+const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
+
+// The website's own API (same site as the page, e.g. api.vinpearlota.com for vinpearlota.com): its JSON
+// responses are read for the prices they return. Login, account and profile APIs describe the person and
+// are never read.
+const API_MAX_BYTES = 3 * 1024 * 1024;
+const PERSONAL_API = /(?:^|[/._-])(?:auth|login|logout|oauth|token|iam|otp|password|profiles?|accounts?|users?|sessions?)(?:$|[/._-])/i;
+const siteOf = host => {
+  if (/^[\d.]+$|^\[|^localhost$/i.test(host)) return host;
+  const labels = host.split('.');
+  return labels.slice(labels.length > 2 && /^(?:com|net|org|gov|edu|co|ac)$/i.test(labels.at(-2)) && labels.at(-1).length === 2 ? -3 : -2).join('.');
+};
+function websiteApi(url, pageUrl) {
+  try {
+    const target = new URL(url), page = new URL(pageUrl);
+    return /^https?:$/.test(target.protocol) && siteOf(target.hostname) === siteOf(page.hostname) && !PERSONAL_API.test(target.pathname);
+  } catch { return false; }
+}
+
+function localWebSocket(url) {
+  const parsed = new URL(url);
+  if (!['ws:', 'wss:'].includes(parsed.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)) {
+    throw new Error('CDP connections are restricted to localhost.');
+  }
+  return url;
+}
+
+export async function listTargets(port = 9222, { signal } = {}) {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid CDP port.');
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const targets = await response.json();
+    if (!Array.isArray(targets)) throw new Error('Invalid target list');
+    return targets.filter(target => target.type === 'page' && target.webSocketDebuggerUrl).map(target => ({ ...target, webSocketDebuggerUrl: localWebSocket(target.webSocketDebuggerUrl) }));
+  } catch (error) {
+    throw new Error(`Cannot read browser targets on localhost:${port}. Start a dedicated debug browser first. ${error.message}`);
+  }
+}
+
+/** Multiplex commands without awaiting handlers in the WebSocket receive loop. */
+export class CDPConnection extends EventEmitter {
+  constructor(url, { timeoutMs = 8000 } = {}) {
+    super();
+    this.url = localWebSocket(url);
+    this.timeoutMs = timeoutMs;
+    this.sequence = 0;
+    this.pending = new Map();
+    this.closed = false;
+  }
+  async connect() {
+    if (this.closed) throw new Error('CDP connection is closed.');
+    if (this.connectPromise) return this.connectPromise;
+    this.socket = new WebSocket(this.url);
+    this.socket.addEventListener('message', ({ data }) => {
+      if (this.closed) return;
+      let message;
+      try { message = JSON.parse(data); } catch { return; }
+      if (message.id !== undefined) {
+        const pending = this.pending.get(message.id);
+        if (!pending) return;
+        this.pending.delete(message.id);
+        clearTimeout(pending.timer);
+        if (message.error) pending.reject(new Error(`${pending.method}: ${message.error.message}`));
+        else pending.resolve(message.result || {});
+      } else if (message.method) this.emit('event', message);
+    });
+    this.socket.addEventListener('close', () => this.#closed());
+    this.socket.addEventListener('error', () => { /* close or per-command timeout reports failures. */ });
+    this.connectPromise = new Promise((resolve, reject) => {
+      this.connectReject = reject;
+      this.connectTimer = setTimeout(() => {
+        this.connectReject?.(new Error('CDP WebSocket connection timed out.'));
+        this.connectReject = null; this.close();
+      }, this.timeoutMs);
+      this.socket.addEventListener('open', () => {
+        if (this.closed) return;
+        clearTimeout(this.connectTimer); this.connectReject = null; resolve();
+      }, { once: true });
+      this.socket.addEventListener('error', () => {
+        this.connectReject?.(new Error('CDP WebSocket connection failed.'));
+        this.connectReject = null; this.close();
+      }, { once: true });
+    });
+    return this.connectPromise;
+  }
+  send(method, params = {}, sessionId) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.closed) return Promise.reject(new Error('CDP connection is closed.'));
+    const id = ++this.sequence;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method}: CDP command timed out.`)); }, this.timeoutMs);
+      this.pending.set(id, { resolve, reject, timer, method });
+      try { this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
+    });
+  }
+  #closed() {
+    if (this.closed) return;
+    this.closed = true;
+    clearTimeout(this.connectTimer);
+    this.connectReject?.(new Error('CDP connection closed before it was ready.'));
+    this.connectReject = null;
+    for (const { reject, timer, method } of this.pending.values()) { clearTimeout(timer); reject(new Error(`CDP connection closed during ${method}.`)); }
+    this.pending.clear();
+    this.emit('closed');
+  }
+  close() { this.#closed(); try { this.socket?.close(); } catch { /* A connecting/already-closed socket may reject close. */ } }
+}
+
+/** One queue push becomes one event, except an Insider custom_event push, which can carry several. */
+export function queueEvents(record) {
+  const base = { schema_version: '1.0', source: record.queue === 'dataLayer' ? 'GA4' : 'INSIDER', layer: 'JS_QUEUE', queue_name: record.queue,
+    historical: Boolean(record.historical), captured_at: new Date(Number(record.ts) || Date.now()).toISOString(), page: { url: record.href || '', title: record.title || '' },
+    // Position in the page's array, as F12 lists dataLayer[i] / InsiderQueue[i].
+    ...(Number.isInteger(record.index) ? { queue_index: record.index } : {}) };
+  let payload = record.item;
+  let eventName;
+  const classified = events => events.map(event => ({ ...event, event_kind: eventKind(event) }));
+  if (record.queue === 'InsiderDispatch') {
+    const data = payload?.data && typeof payload.data === 'object' ? payload.data : { value: payload?.data ?? null };
+    return classified([{ ...base, event_name: typeof data.event_name === 'string' && data.event_name.trim() ? data.event_name : String(payload?.name || 'insider_dispatch'),
+      queue_type: 'dispatch', dispatch_name: payload?.name, queue_payload: payload, payload: data }]);
+  }
+  if (record.queue === 'insider_object') {
+    const pageType = String(payload?.page?.type ?? '').toLowerCase();
+    const name = payload?.transaction ? 'confirmation_page_view' : INSIDER_OBJECT_PAGES[pageType] || (pageType ? 'other_page_view' : 'insider_object');
+    return classified([{ ...base, event_name: name, queue_type: 'insider_object', payload }]);
+  }
+  if (record.queue === 'InsiderQueue' && payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.type === 'string') {
+    if (payload.type === 'custom_event' && Array.isArray(payload.value) && payload.value.length) {
+      return classified(payload.value.map((item, index) => ({ ...base, event_name: String(item?.event_name || 'custom_event'), queue_type: 'custom_event',
+        queue_batch_index: index, queue_batch_size: payload.value.length, queue_payload: payload, payload: { ...payload, value: [item] } })));
+    }
+    // init/user/currency/... configure the SDK; they are kept as evidence under a distinct name.
+    return classified([{ ...base, event_name: INSIDER_TYPE_EVENTS[payload.type] || `insider_${payload.type}`, queue_type: payload.type, payload }]);
+  }
+  if (Array.isArray(payload)) {
+    if (payload[0] === 'event' || payload[0] === 'track') { eventName = payload[1]; payload = { ...(payload[2] || {}), event: eventName }; }
+    else { eventName = payload.find(item => typeof item === 'string') || 'QUEUE_ITEM'; payload = { items: payload }; }
+  } else if (payload && typeof payload === 'object') {
+    // GTM clears the previous ecommerce object with {ecommerce: null} before each ecommerce event.
+    eventName = payload.event || payload.event_name || payload.name || payload.type || (Object.keys(payload).length === 1 && payload.ecommerce === null ? 'ecommerce_reset' : 'QUEUE_ITEM');
+  } else { eventName = 'QUEUE_ITEM'; payload = { value: payload }; }
+  return classified([{ ...base, event_name: String(eventName), payload }]);
+}
+
+export class CDPCollector {
+  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onApiCall, apiLogPatterns = DEFAULT_API_LOG_PATTERNS, apiLogSettleMs = API_LOG_SETTLE_MS, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
+    if (typeof onEvent !== 'function') throw new Error('CDPCollector requires onEvent.');
+    this.port = Number(port); this.targetId = targetId; this.urlFilter = urlFilter;
+    this.onEvent = onEvent; this.onApi = typeof onApi === 'function' ? onApi : null; this.onStatus = onStatus;
+    // Full request/response of the website's backend API (api-log.mjs), for the hosts in apiLogPatterns.
+    this.onApiCall = typeof onApiCall === 'function' ? onApiCall : null; this.apiLogPatterns = [...apiLogPatterns]; this.apiLogSettleMs = apiLogSettleMs;
+    this.captureQueues = captureQueues;
+    this.patterns = endpointPatterns; this.discovered = new Map();
+    this.connections = new Map(); this.attaching = new Map(); this.activeConnections = new Set(); this.jobs = new Set(); this.running = false; this.generation = 0;
+  }
+  #status(message) { try { this.onStatus(message); } catch { /* UI callbacks do not break capture. */ } }
+  // Endpoint suggestions keep host + path and a count only; payloads stay out of evidence.
+  #suggest(request, resourceType) {
+    if (!looksLikeTracking({ url: request.url, method: request.method, resourceType })) return;
+    let key;
+    try { const u = new URL(request.url); key = (u.hostname + u.pathname).slice(0, 160); } catch { return; }
+    const entry = this.discovered.get(key);
+    if (entry) { entry.count++; entry.last_at = new Date().toISOString(); return; }
+    if (this.discovered.size >= 60) return;
+    this.discovered.set(key, { endpoint: key, method: request.method, resource_type: resourceType || null, count: 1, last_at: new Date().toISOString() });
+  }
+  /** Replaces the allowlist for requests sent from now on. */
+  setPatterns(patterns) {
+    for (const pattern of patterns) new RegExp(pattern, 'i');
+    this.patterns = [...patterns];
+    for (const key of this.discovered.keys()) if (matchesEndpoint(`https://${key}`, this.patterns)) this.discovered.delete(key);
+  }
+  #job(promise) { const generation = this.generation; this.jobs.add(promise); promise.catch(error => { if (this.running && generation === this.generation) this.#status(`CDP: ${error.message}`); }).finally(() => this.jobs.delete(promise)); }
+  async #emit(event, generation) { if (this.running && generation === this.generation) await this.onEvent(event); }
+  #matches(target) {
+    return (!this.targetId || this.targetId === target.id) && (!this.urlFilter || String(target.url).includes(this.urlFilter));
+  }
+  async start(session) {
+    if (this.running) throw new Error('CDP collector is already running.');
+    if (this.stopPromise) throw new Error('CDP collector is still stopping.');
+    const generation = ++this.generation;
+    this.runController = new AbortController();
+    this.session = session; this.running = true;
+    try {
+      const targets = (await listTargets(this.port, { signal: this.runController.signal })).filter(target => this.#matches(target));
+      if (!this.running || generation !== this.generation) throw new Error('CDP collector stopped during startup.');
+      if (!targets.length) throw new Error('No page target matches the selected tab or URL. Open the test website first.');
+      const results = await Promise.allSettled(targets.map(target => this.#attach(target, generation)));
+      if (!this.running || generation !== this.generation) throw new Error('CDP collector stopped during startup.');
+      if (!results.some(result => result.status === 'fulfilled')) throw new Error(results[0].reason.message);
+      this.timer = setInterval(() => this.#job(this.#discover(generation)), 750);
+      this.#status(`CDP connected: ${this.connections.size} tab(s) on localhost:${this.port}.`);
+    } catch (error) { if (generation === this.generation) await this.stop(); throw error; }
+  }
+  async #discover(generation) {
+    if (!this.running || generation !== this.generation || this.discovering) return;
+    this.discovering = true;
+    try {
+      const targets = await listTargets(this.port, { signal: this.runController.signal });
+      if (!this.running || generation !== this.generation) return;
+      for (const target of targets) if (this.#matches(target) && !this.connections.has(target.id) && !this.attaching.has(target.id)) this.#job(this.#attach(target, generation));
+    } finally { if (generation === this.generation) this.discovering = false; }
+  }
+  async #attach(target, generation) {
+    if (this.attaching.has(target.id) || this.connections.has(target.id) || !this.running || generation !== this.generation) return;
+    this.attaching.set(target.id, generation);
+    const connection = new CDPConnection(target.webSocketDebuggerUrl);
+    this.activeConnections.add(connection);
+    connection.on('closed', () => this.activeConnections.delete(connection));
+    const state = { connection, target, requests: new Map(), api: new Map(), apiLog: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
+    try {
+      await connection.connect();
+      if (!this.running || generation !== this.generation) { connection.close(); return; }
+      this.connections.set(target.id, state);
+      connection.on('event', message => this.#job(this.#event(state, message, generation)));
+      connection.on('closed', () => { if (this.connections.get(target.id) === state) this.connections.delete(target.id); });
+      await this.#instrument(state, undefined, generation);
+      if (!this.running || generation !== this.generation) return;
+      this.#status(`Capturing tab: ${target.title || target.id}`);
+    } catch (error) { connection.close(); if (this.connections.get(target.id) === state) this.connections.delete(target.id); throw error; }
+    finally { if (this.attaching.get(target.id) === generation) this.attaching.delete(target.id); }
+  }
+  async #instrument(state, sessionId, generation) {
+    const send = (method, params) => this.running && generation === this.generation ? state.connection.send(method, params, sessionId) : Promise.reject(new Error('CDP collector stopped.'));
+    if (!this.captureQueues) {
+      await send('Network.enable', { maxPostDataSize: 1048576 });
+      await send('Page.enable');
+      await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+      return;
+    }
+    await send('Runtime.addBinding', { name: '__eventqa_emit' });
+    await send('Runtime.enable');
+    await send('Network.enable', { maxPostDataSize: 1048576 });
+    await send('Page.enable');
+    let script;
+    try { script = await send('Page.addScriptToEvaluateOnNewDocument', { source: INJECT_JS, runImmediately: true }); }
+    catch { script = await send('Page.addScriptToEvaluateOnNewDocument', { source: INJECT_JS }); }
+    state.scripts.set(sessionId || '', script.identifier);
+    // This is also needed when attaching after the document has already loaded.
+    await send('Runtime.evaluate', { expression: INJECT_JS });
+    // Child frames/workers are never paused: a paused frame can stall the page under test while
+    // instrumentation commands wait on it. Pushes made before the hook lands are still captured
+    // from the existing queue as historical evidence.
+    await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(error => this.#status(`Child targets: ${error.message}`));
+  }
+  async #event(state, { method, params = {}, sessionId }, generation) {
+    // A target that is somehow waiting must be released even after this run stopped.
+    if (method === 'Target.attachedToTarget' && params.waitingForDebugger && (!this.running || generation !== this.generation)) {
+      await state.connection.send('Runtime.runIfWaitingForDebugger', {}, params.sessionId).catch(() => {});
+      return;
+    }
+    if (!this.running || generation !== this.generation) return;
+    const send = (name, values) => state.connection.send(name, values, sessionId);
+    if (method === 'Target.attachedToTarget') {
+      const childId = params.sessionId;
+      // Release first, then instrument: the frame never waits on EventQA.
+      if (params.waitingForDebugger) await state.connection.send('Runtime.runIfWaitingForDebugger', {}, childId).catch(() => {});
+      if (params.targetInfo?.type === 'iframe') {
+        state.childSessions.add(childId);
+        await this.#instrument(state, childId, generation);
+      }
+    } else if (method === 'Runtime.executionContextCreated') {
+      const context = params.context;
+      if (this.captureQueues && context?.auxData?.isDefault) {
+        state.contexts.set(`${sessionId || ''}:${context.id}`, { id: context.id, sessionId, frameId: context.auxData.frameId });
+        await send('Runtime.evaluate', { expression: INJECT_JS, contextId: context.id }).catch(() => {});
+      }
+    } else if (method === 'Runtime.executionContextDestroyed') {
+      state.contexts.delete(`${sessionId || ''}:${params.executionContextId}`);
+    } else if (method === 'Runtime.executionContextsCleared') {
+      for (const [key, context] of state.contexts) if (context.sessionId === sessionId) state.contexts.delete(key);
+    } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_emit') {
+      if (!this.captureQueues) return;
+      let record;
+      try { record = JSON.parse(params.payload); } catch { return; }
+      if (!['dataLayer', 'InsiderQueue', 'InsiderDispatch', 'insider_object'].includes(record.queue)) return;
+      const frameId = state.contexts.get(`${sessionId || ''}:${params.executionContextId}`)?.frameId;
+      for (const event of queueEvents(record)) {
+        event.page = { ...event.page, frame_id: frameId, target_id: state.target.id };
+        await this.#emit(event, generation);
+      }
+    } else if (method === 'Page.frameNavigated' && !params.frame?.parentId && !sessionId) {
+      state.target.url = params.frame.url;
+    } else if (method === 'Network.requestWillBeSent') {
+      const request = params.request || {};
+      // CORS preflight asks permission to send an event; it is not the event itself.
+      if (request.method?.toUpperCase() === 'OPTIONS') return;
+      if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); this.#apiRequest(state, sessionId, params); this.#apiLogRequest(state, sessionId, params); return; }
+      const key = `${sessionId || ''}:${params.requestId}`;
+      const capturedAt = new Date((params.wallTime || Date.now() / 1000) * 1000).toISOString();
+      const pending = { requestId: params.requestId, capturedAt, url: request.url, method: request.method,
+        page: { url: params.documentURL || state.target.url, frame_id: params.frameId, target_id: state.target.id }, events: [], ready: null };
+      state.requests.set(key, pending);
+      pending.ready = (async () => {
+        let body = request.postData || '';
+        if (!body && request.hasPostData) {
+          try { body = (await send('Network.getRequestPostData', { requestId: params.requestId })).postData || ''; }
+          catch { this.#status('A tracking request body was unavailable; evidence is retained with the URL.'); }
+        }
+        const contentType = Object.entries(request.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '';
+        pending.events = decodeRequest({ url: request.url, body, contentType, method: request.method, requestId: params.requestId }).map(event => ({ ...event, page: hitPage(event, pending.page) }));
+        for (const event of pending.events) await this.#emit({ ...event, captured_at: capturedAt,
+          network: { ...event.network, request_id: params.requestId, url: request.url, method: request.method, phase: 'request' } }, generation);
+      })();
+      await pending.ready;
+    } else if (['Network.responseReceived', 'Network.loadingFailed', 'Network.loadingFinished'].includes(method)) {
+      const key = `${sessionId || ''}:${params.requestId}`;
+      if (state.apiLog.has(key)) await this.#apiLogEvent(state, key, method, params, send, generation);
+      const api = state.api.get(key);
+      if (api) {
+        if (method === 'Network.responseReceived') {
+          const response = params.response || {};
+          // When the response reached the page (wall time of the request + monotonic delay): the data the website had from then on.
+          api.at = Number.isFinite(params.timestamp) && Number.isFinite(api.monotonic) ? api.wall + (params.timestamp - api.monotonic) * 1000 : Date.now();
+          if (response.status >= 200 && response.status < 300 && /json/i.test(response.mimeType || '')) api.ok = true; else state.api.delete(key);
+        } else {
+          state.api.delete(key);
+          if (method === 'Network.loadingFinished' && api.ok && !(params.encodedDataLength > API_MAX_BYTES)) await this.#apiPrices(api, send, params.requestId, generation);
+        }
+        return;
+      }
+      const pending = state.requests.get(key);
+      if (!pending) return;
+      await pending.ready;
+      // Chrome 156+ cancels the loader of a body-less response (GA4 204) after
+      // delivering it: the request reached the server, so it is not a failure.
+      const canceledAfterResponse = method === 'Network.loadingFailed' && pending.responded && params.canceled === true;
+      if (method === 'Network.responseReceived') pending.responded = true;
+      if (method !== 'Network.loadingFinished' && !canceledAfterResponse) {
+        const failed = method === 'Network.loadingFailed';
+        for (const event of pending.events) await this.#emit({ ...event, captured_at: pending.capturedAt,
+          network: { ...event.network, request_id: pending.requestId, url: pending.url, method: pending.method,
+            phase: failed ? 'failed' : 'response', ...(failed ? { error: params.errorText || 'Network request failed' } : { status: params.response?.status }) } }, generation);
+      }
+      if (method !== 'Network.responseReceived') state.requests.delete(key);
+    }
+  }
+  // XHR/fetch calls of the website's own API, remembered until their JSON response has loaded.
+  #apiRequest(state, sessionId, params) {
+    const request = params.request || {}, pageUrl = params.documentURL || state.target.url;
+    if (!this.onApi || !['XHR', 'Fetch'].includes(params.type) || isTp2Endpoint(request.url) || !websiteApi(request.url, pageUrl)) return;
+    state.api.set(`${sessionId || ''}:${params.requestId}`, { url: request.url, method: request.method, page: { url: redactUrl(pageUrl), frame_id: params.frameId, target_id: state.target.id },
+      wall: (params.wallTime || Date.now() / 1000) * 1000, monotonic: params.timestamp });
+    if (state.api.size > 200) state.api.delete(state.api.keys().next().value);
+  }
+  async #apiPrices(api, send, requestId, generation) {
+    let text;
+    try { const { body, base64Encoded } = await send('Network.getResponseBody', { requestId }); text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body; }
+    catch { return; }
+    if (!text || text.length > API_MAX_BYTES) return;
+    let json;
+    try { json = JSON.parse(text); } catch { return; }
+    const prices = apiPrices(json);
+    if (prices.length && this.running && generation === this.generation) await this.onApi({ captured_at: new Date(api.at ?? Date.now()).toISOString(), url: redactUrl(api.url), method: api.method, page: api.page, prices });
+  }
+  // A call to a logged API host (api.uat.vinpearlota.com / api.vinpearlota.com): kept until it finishes or fails.
+  #apiLogRequest(state, sessionId, params) {
+    const request = params.request || {};
+    if (!this.onApiCall || !['XHR', 'Fetch'].includes(params.type) || !matchesApiLog(request.url || '', this.apiLogPatterns)) return;
+    state.apiLog.set(`${sessionId || ''}:${params.requestId}`, { request, type: params.type, wall: (params.wallTime || Date.now() / 1000) * 1000, monotonic: params.timestamp,
+      page: { url: params.documentURL || state.target.url, frame_id: params.frameId, target_id: state.target.id } });
+    if (state.apiLog.size > 300) state.apiLog.delete(state.apiLog.keys().next().value);
+  }
+  async #apiLogEvent(state, key, method, params, send, generation) {
+    const call = state.apiLog.get(key);
+    if (method === 'Network.responseReceived') {
+      call.response = params.response || {}; call.responseAt = params.timestamp;
+      // A page that never reads the body (or a streamed response) never finishes loading: the call is
+      // still logged, with what Chrome has of its body, after API_LOG_SETTLE_MS.
+      clearTimeout(call.timer);
+      call.timer = setTimeout(() => this.#job(this.#apiLogFinish(state, key, { requestId: params.requestId, timestamp: call.responseAt, incomplete: 'response_not_finished' }, send, generation)), this.apiLogSettleMs);
+      call.timer.unref?.();
+      return;
+    }
+    // Chrome cancels the loader of a body-less response after delivering it: that call did complete.
+    const failed = method === 'Network.loadingFailed' && !(call.response && params.canceled === true);
+    await this.#apiLogFinish(state, key, { requestId: params.requestId, timestamp: params.timestamp, encodedDataLength: params.encodedDataLength, error: failed ? params.errorText || 'Network request failed' : undefined }, send, generation);
+  }
+  async #apiLogFinish(state, key, { requestId, timestamp, encodedDataLength, error, incomplete }, send, generation) {
+    const call = state.apiLog.get(key);
+    if (!call) return;
+    state.apiLog.delete(key); clearTimeout(call.timer);
+    let requestBody = call.request.postData;
+    if (!requestBody && call.request.hasPostData) {
+      try { requestBody = (await send('Network.getRequestPostData', { requestId })).postData; } catch { /* listed without its body */ }
+    }
+    let responseBody;
+    if (!error && call.response && call.response.status !== 204 && !(encodedDataLength > API_LOG_LIMITS.bodyChars * 4)) {
+      try {
+        const { body, base64Encoded } = await send('Network.getResponseBody', { requestId });
+        responseBody = base64Encoded && /json|text|xml|javascript/i.test(call.response.mimeType || '') ? Buffer.from(body, 'base64').toString('utf8') : base64Encoded ? '' : body;
+      } catch { /* evicted, still streaming or not available: listed without its body */ }
+    }
+    if (!this.running || generation !== this.generation) return;
+    await this.onApiCall(this.#apiLogRecord(call, { error, incomplete, timestamp, requestBody, responseBody }));
+  }
+  #apiLogRecord(call, { error, incomplete, timestamp, requestBody, responseBody }) {
+    const finished = Number.isFinite(timestamp) && Number.isFinite(call.monotonic) ? call.wall + (timestamp - call.monotonic) * 1000 : Date.now();
+    return apiCallRecord({ request: call.request, response: call.response, error, incomplete, page: call.page, resourceType: call.type,
+      startedAt: new Date(call.wall).toISOString(), finishedAt: new Date(finished).toISOString(), requestBody, responseBody });
+  }
+  // Calls still open when capture stops are logged as they are (no body read: the connection is closing).
+  // The server calls it before it stops accepting records of this capture.
+  flushApiLog() { if (this.running) this.#apiLogFlush(); }
+  #apiLogFlush() {
+    if (!this.onApiCall) return;
+    for (const state of this.connections.values()) {
+      for (const call of state.apiLog.values()) {
+        clearTimeout(call.timer);
+        try { this.onApiCall(this.#apiLogRecord(call, { incomplete: call.response ? 'response_not_finished' : 'no_response_before_stop', timestamp: call.responseAt, requestBody: call.request.postData })); } catch { /* capture is stopping */ }
+      }
+      state.apiLog.clear();
+    }
+  }
+  #deactivate() {
+    this.running = false;
+    this.generation++;
+    this.runController?.abort();
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+  #disconnect() {
+    this.#deactivate();
+    for (const connection of this.activeConnections) connection.close();
+    for (const state of this.connections.values()) state.connection.close();
+    this.activeConnections.clear(); this.connections.clear(); this.attaching.clear(); this.jobs.clear(); this.discovering = false;
+  }
+  forceStop() {
+    if (this.running) this.#apiLogFlush();
+    this.stopWasForced = true;
+    this.#disconnect();
+  }
+  stop({ timeoutMs = 3000 } = {}) {
+    if (this.stopPromise) return this.stopPromise;
+    if (this.running) this.#apiLogFlush();
+    this.#deactivate();
+    this.stopWasForced = false;
+    const states = [...this.connections.values()];
+    this.stopPromise = (async () => {
+      let deadline;
+      const budget = Number.isFinite(timeoutMs) ? Math.max(0, Math.min(timeoutMs, 3000)) : 3000;
+      // All context/session cleanup runs concurrently. Stale frames must not multiply
+      // the shutdown delay by their count or by the per-command timeout.
+      const cleanup = [];
+      for (const state of states) {
+      for (const context of state.contexts.values()) {
+          cleanup.push(state.connection.send('Runtime.evaluate', { expression: "window[Symbol.for('eventqa.collector.v1')]?.stop?.()", contextId: context.id }, context.sessionId));
+      }
+        for (const sessionId of state.childSessions) cleanup.push(state.connection.send('Runtime.runIfWaitingForDebugger', {}, sessionId));
+        for (const sessionId of new Set(['', ...state.scripts.keys(), ...state.childSessions])) {
+          const identifier = state.scripts.get(sessionId);
+          if (identifier) cleanup.push(state.connection.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, sessionId || undefined));
+          if (this.captureQueues) cleanup.push(state.connection.send('Runtime.removeBinding', { name: '__eventqa_emit' }, sessionId || undefined));
+          cleanup.push(state.connection.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }, sessionId || undefined));
+        }
+      }
+      try {
+        const completed = await Promise.race([Promise.allSettled(cleanup).then(() => true), new Promise(resolve => { deadline = setTimeout(() => resolve(false), budget); })]);
+        return { forced: !completed || this.stopWasForced };
+      } finally { clearTimeout(deadline); this.#disconnect(); }
+    })().finally(() => { this.stopPromise = null; });
+    return this.stopPromise;
+  }
+}
