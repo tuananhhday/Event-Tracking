@@ -6,6 +6,8 @@
 
 Với **gói Windows đầy đủ**, giải nén toàn bộ rồi bấm [CHAY_EVENT_QA.cmd](CHAY_EVENT_QA.cmd) (bản thường) hoặc [CHAY_EVENT_QA_AI.cmd](CHAY_EVENT_QA_AI.cmd) (bản AI). Ứng dụng tự mở giao diện trong trình duyệt; không cần cài Node hay chạy lệnh npm. Gói này có sẵn `runtime/node.exe` và `node_modules`. Website test cần Chrome hoặc Edge trên máy. Giữ cửa sổ lệnh đang chạy; dùng [STOP_EVENT_QA.cmd](STOP_EVENT_QA.cmd) để dừng.
 
+[Gói Windows đã gọn file](https://codeload.github.com/tuananhhday/Event-Tracking/zip/refs/heads/win-20261106) gộp thư viện và bỏ file dành cho phát triển để tránh hàng nghìn file khi giải nén. Chọn thư mục ngắn như `C:\EventQA`; xem [hướng dẫn Windows](PORTABLE_WINDOWS.md).
+
 Muốn chọn bản, mở [scripts/choose-mode.cmd](scripts/choose-mode.cmd) (hoặc mở cả hai, mỗi bản một cửa sổ), hoặc mở trực tiếp `start.cmd` của từng bản. Giao diện tự mở trong trình duyệt mặc định.
 
 | Bản | File chạy | Giao diện | Dùng khi |
