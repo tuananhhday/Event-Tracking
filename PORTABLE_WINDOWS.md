@@ -10,6 +10,8 @@ Gói đã có Node.js 24.19.0 Windows x64 và thư viện theo lockfile. Không 
 
 Thư viện JavaScript trong bản tải được gộp thành vài bundle, giảm hàng nghìn file nhỏ khi giải nén trên Windows. License các thư viện được giữ trong `node_modules/THIRD_PARTY_LICENSES.txt`.
 
+Tab **Luồng tự động** (bản AI): đưa kịch bản vào, bấm **AI chạy thử & tạo kịch bản**; AI tự thao tác trên Edge/Chrome thật, dừng chờ bạn khi gặp trang đăng nhập/CAPTCHA/OTP, ghi lại các bước đã kiểm chứng. Lưu luồng rồi chạy lại bằng Playwright (không cần AI) hoặc bật lịch chạy hằng ngày; event GA4/Insider được gom theo từng bước. Mẫu kịch bản: `examples/automation-hotel-cash.txt`. Hướng dẫn: [docs/AUTOMATION.md](docs/AUTOMATION.md).
+
 Bản hiện tại có tab **TP2 ↔ API**, giải mã `ue_px` và lưu cấu hình ghép trường để đối chiếu. **Kết thúc** chỉ lưu bằng chứng; **Kết thúc & xuất…** cho chọn riêng báo cáo event, TP2 hoặc chi tiết API trong HTML/Excel/JSON. Hướng dẫn: [docs/TP2_AND_EXPORT.md](docs/TP2_AND_EXPORT.md).
 
 Để tạo bản ít file, cài esbuild 0.25.12 riêng cho máy build, chạy `scripts/bundle-portable-deps.mjs` với đường dẫn module esbuild và thư mục output; đặt `EVENTQA_PACKAGED_DEPS` trỏ đến output đó khi chạy `scripts/build-portable.py`. Đây chỉ là bước build; người dùng gói tải không cần cài thêm gì.
