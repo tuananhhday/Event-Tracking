@@ -17,6 +17,7 @@
     "smoke:ai": "node --env-file=.env scripts/ai-smoke.mjs",
     "smoke:automation": "node scripts/automation-smoke.mjs",
     "smoke:automation-app": "node scripts/automation-app-smoke.mjs",
+    "smoke:explore": "node scripts/explore-smoke.mjs",
     "smoke:inspection": "node scripts/inspection-smoke.mjs",
     "test": "node --test",
     "check": "node scripts/check.mjs"

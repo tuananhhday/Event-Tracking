@@ -393,7 +393,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     try { await bounded(closeOwnedBrowser(current), 2000); }
     catch { status('Đã ngừng thu thập; có thể đóng cửa sổ trình duyệt test còn lại.'); }
   }
-  async function stopSession({ exportReport = true } = {}) {
+  // keepBrowser: the test window stays open (AI exploration ends where the user can
+  // see the page and keep the login); the next session reuses that window.
+  async function stopSession({ exportReport = true, keepBrowser = false } = {}) {
     if (reportNotesController) {
       reportNotesController.abort(); ai.close?.();
       if (!closing && !aiClient) ai = new OpenRouterClient();
@@ -415,8 +417,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         try { await writeReports({ ...snapshot, api_calls: manager.apiCallRecords() }); }
         catch (error) { status(`Bằng chứng đã lưu; xuất báo cáo gặp lỗi: ${error.message}`); }
       }
-      await releaseBrowser();
-      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : exportReport ? 'Đã kết thúc và lưu báo cáo.' : 'Đã kết thúc phiên; bằng chứng đã lưu.');
+      if (!keepBrowser) await releaseBrowser();
+      status(interrupted ? 'Đã dừng phiên; bước đang làm được giữ REVIEW.' : exportReport ? 'Đã kết thúc và lưu báo cáo.' : `Đã kết thúc phiên; bằng chứng đã lưu.${keepBrowser ? ' Cửa sổ trình duyệt test vẫn mở.' : ''}`);
       return { snapshot, files: exported, interrupted };
     })();
     stoppingSession = pending;
@@ -458,9 +460,10 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const opened = await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: automationOptions.profileDir ?? path.join(rootDir, 'profiles', `${mode}-${browser}`) });
       return { port: debugPort, targetId: opened.targetId };
     },
-    finish: () => stopSession({ exportReport: false }),
+    finish: options => stopSession({ exportReport: false, keepBrowser: options?.keepBrowser === true }),
     exportReport: async options => { await exportWithNotes(manager.snapshot(), options); return Object.fromEntries(Object.entries(exported ?? {}).map(([key, file]) => [key, `/download/${path.basename(file)}`])); },
     ...(automationOptions.connectDriver ? { connectDriver: automationOptions.connectDriver } : {}),
+    ...(automationOptions.listTargets ? { listTargets: automationOptions.listTargets } : {}),
     ...(automationOptions.now ? { now: automationOptions.now } : {}), ...(automationOptions.intervalMs ? { intervalMs: automationOptions.intervalMs } : {}) }) : null;
   await automation?.load();
   const server = http.createServer(async (req, res) => {
@@ -571,6 +574,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         automation.cancel(); reportNotesController?.abort();
         return send(res, 200, automation.state());
       }
+      // The user finished logging in (or solving a CAPTCHA) while AI exploration waits.
+      if (url.pathname === '/api/automation/resume') {
+        req.resume();
+        if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
+        return send(res, 200, automation.resume());
+      }
       const finishData = url.pathname === '/api/finish' ? await body(req) : null;
       if (finishData?.exportReport === false) {
         reportExportEpoch++;
@@ -595,8 +604,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
         } else if (url.pathname.startsWith('/api/automation/')) {
           if (!automation) return send(res, 404, { error: 'Luồng tự động có trong bản AI.' });
           const action = url.pathname.slice('/api/automation/'.length);
-          if (action === 'inspect') return send(res, 200, await automation.inspect(data));
-          if (action === 'draft') return send(res, 200, await automation.draft(data));
+          if (action === 'open-browser') return send(res, 200, await automation.openBrowser(data));
+          if (action === 'explore') return send(res, 202, await automation.explore({ name: data.name, url: data.url, browser: data.browser, instructions: data.instructions,
+            variables: data.variables ?? {}, allowIrreversible: data.allowIrreversible === true, waitForLogin: data.waitForLogin === true }));
           if (action === 'save') return send(res, 200, await automation.save(data.workflow));
           if (action === 'delete') return send(res, 200, await automation.delete(data.id));
           if (action === 'run') return send(res, 202, await automation.enqueue(data.ids, { variables: data.variables ?? {}, aiNotes: data.aiNotes === true }));

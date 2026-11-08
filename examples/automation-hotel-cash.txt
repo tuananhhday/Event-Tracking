@@ -1,0 +1,224 @@
+LUỒNG: HÒN TẰM RESORT - GÓI VGRBIZ - 1 NGƯỜI - TIỀN MẶT
+
+1. MỤC TIÊU VÀ NHÁNH CHẠY
+
+Thực hiện một lượt đặt Hòn Tằm Resort trên website đã chọn:
+Home -> tìm kiếm tại shortcut -> listing theo địa điểm -> chi tiết khách sạn
+-> chọn phòng và rate plan -> checkout -> promotion/addon nếu cấu hình
+-> chọn Tiền mặt -> xác nhận đặt phòng -> kiểm tra trang kết quả.
+
+Luồng này dùng nhánh tìm kiếm theo ĐỊA ĐIỂM ở shortcut trên Home.
+Hai nhánh search trên navigation bar vào thẳng detail và bấm suggestion trên Home
+là các luồng khác, không thực hiện nối tiếp trong lượt đặt phòng này.
+
+2. DỮ LIỆU ĐẦU VÀO
+
+Các dữ liệu dưới đây đã điền theo khách sạn và gói giá người dùng chọn trong ảnh.
+Thông tin người liên hệ là dữ liệu giả lập để thử luồng.
+
+website_url = https://vinpearlota.com/vi
+destination = Nha Trang
+hotel_name = Hòn Tằm Resort
+hotel_address_reference = Đảo Hòn Tằm, Phường Vĩnh Nguyên, Thành Phố Nha Trang, Tỉnh Khánh Hòa, Việt Nam
+room_selection = Card phòng chứa đúng gói VGRBIZ được mô tả bên dưới
+rate_plan_name = [VGRBIZ] Ưu đãi CBNV Vingroup công tác
+rate_plan_badge = VGRBIZ
+rate_plan_breakfast = Bữa sáng buffet
+rate_plan_cancellation = Miễn phí hủy
+price_reference_vnd_per_room_night = 1599000
+original_price_reference_vnd = 2460000
+checkin = {{date:+14}}
+checkout = {{date:+15}}
+rooms = 1
+adults = 1
+children = 0
+guest_title = Ông
+guest_full_name = Nguyễn Văn Test
+guest_last_name = Nguyễn
+guest_first_name = Văn Test
+guest_phone = 0900000000
+guest_email = eventqa@example.com
+promotion_code =
+addon_name =
+addon_quantity = 1
+payment_method = Tiền mặt
+browser = edge
+export_report = true
+schedule_enabled = false
+
+Ngày nhận phòng mặc định là sau 14 ngày tính từ ngày chạy tại Việt Nam.
+Ngày trả phòng mặc định là sau 15 ngày, tức lưu trú 1 đêm.
+Giữ đúng 1 phòng, 1 người lớn, 0 trẻ em theo yêu cầu người dùng.
+Ảnh có ký hiệu x2 nhưng không tự đổi số khách thành 2 người.
+Giá 1.599.000 đồng và giá gốc 2.460.000 đồng là thông tin tham chiếu từ ảnh.
+Lấy giá và điều kiện hủy thực tế theo ngày, số khách và API lúc chạy;
+không khóa ngày hủy hoặc tự báo lỗi chỉ vì giá khác ảnh.
+Tên hạng phòng không xuất hiện trong ảnh. Nhận diện theo đúng card gói VGRBIZ;
+nếu nhiều hạng phòng cùng khớp mà chưa phân biệt được, dừng và ghi rõ để chọn lại.
+Nếu gói không có tồn hoặc không hỗ trợ 1 người, dừng tại bước chọn gói và báo rõ.
+Nếu website yêu cầu đăng nhập, đăng nhập trước trong trình duyệt test của EventQA.
+
+Promotion và addon mặc định để trống nên mẫu cơ bản bỏ qua hai bước này.
+Muốn kiểm tra chúng, điền dữ liệu trước khi tạo kịch bản. Với cấu hình đã điền,
+nếu không tìm thấy hoặc không áp dụng được thì báo lỗi, không tự bỏ qua.
+
+3. CÁC BƯỚC THAO TÁC VÀ KẾT QUẢ MONG MUỐN
+
+BƯỚC 01 - MỞ HOME
+Thao tác:
+- Mở website_url bằng trình duyệt test.
+- Chờ Home tải xong và phần shortcut tìm khách sạn xuất hiện.
+- Đóng popup giới thiệu nếu nó che ô tìm kiếm.
+Mong muốn:
+- Hiển thị Home và ô tìm kiếm khách sạn ở shortcut, có thể thao tác.
+
+BƯỚC 02 - TÌM ĐỊA ĐIỂM TỪ SHORTCUT
+Thao tác:
+- Bấm ô tìm khách sạn trong shortcut, không dùng ô search trên navigation bar.
+- Nhập destination.
+- Chờ suggestion và chọn đúng kết quả thuộc loại địa điểm có tên destination.
+- Bấm nút tìm kiếm nếu giao diện yêu cầu để mở kết quả.
+Mong muốn:
+- Mở trang listing khách sạn theo địa điểm đã chọn.
+- Địa điểm đang chọn khớp destination.
+- Nhánh này không chọn suggestion loại khách sạn để đi thẳng vào detail.
+
+BƯỚC 03 - CHỌN NGÀY, SỐ NGƯỜI VÀ SỐ PHÒNG
+Thao tác:
+- Trên listing, mở phần chỉnh điều kiện tìm kiếm.
+- Chọn ngày nhận phòng checkin và trả phòng checkout trên lịch của website.
+- Chọn rooms phòng, adults người lớn và children trẻ em.
+- Bấm áp dụng/tìm kiếm để cập nhật kết quả.
+Mong muốn:
+- Điều kiện trên listing hiển thị đúng địa điểm, ngày, số khách và số phòng.
+- Khoảng lưu trú là 1 đêm, 1 người lớn và 1 phòng với dữ liệu mặc định.
+- Danh sách khách sạn được tải cho điều kiện vừa áp dụng.
+
+BƯỚC 04 - CHỌN KHÁCH SẠN
+Thao tác:
+- Tìm card có tên chính xác hotel_name trên listing.
+- Bấm xem chi tiết/chọn khách sạn của đúng card đó.
+Mong muốn:
+- Mở trang detail của hotel_name.
+- Giữ nguyên ngày nhận/trả phòng, số khách và số phòng đã chọn.
+- Nếu khách sạn không có trong kết quả thì dừng tại bước này và báo rõ.
+
+BƯỚC 05 - CHỌN PHÒNG VÀ RATE PLAN
+Thao tác:
+- Trên detail của Hòn Tằm Resort, tìm card có tên đầy đủ rate_plan_name.
+- Card theo ảnh có badge VGRBIZ, Bữa sáng buffet, Miễn phí hủy, nút Đặt ngay;
+  ảnh hiển thị 1.599.000 đồng/phòng/đêm cho 1 phòng x 1 đêm.
+- Xác định hạng phòng chứa card đó và kiểm tra mô tả trước khi chọn.
+- Kiểm tra điều kiện gói giá, sức chứa và số phòng có thể đặt.
+- Bấm đúng nút Đặt ngay nằm trong card gói vừa xác định để chuyển sang checkout.
+Mong muốn:
+- Hạng phòng giữ đúng card đã chọn, rate plan là [VGRBIZ] Ưu đãi CBNV Vingroup công tác.
+- Checkout hiển thị Hòn Tằm Resort và cùng hạng phòng/gói giá của nút vừa bấm.
+- Ngày, số đêm, số khách và số phòng vẫn đúng dữ liệu đầu vào.
+- Không tự đổi sang khách sạn, phòng hoặc rate plan khác khi hết tồn.
+- Nếu gói yêu cầu thông tin CBNV chưa được cung cấp, báo thiếu dữ liệu đó.
+
+BƯỚC 06 - ĐIỀN THÔNG TIN CHECKOUT
+Thao tác:
+- Điền thông tin người liên hệ bằng guest_full_name, guest_phone, guest_email.
+- Nếu biểu mẫu tách họ và tên, điền guest_last_name và guest_first_name.
+- Nếu có danh xưng, chọn guest_title.
+- Điền thông tin khách lưu trú giống người liên hệ nếu có lựa chọn tương ứng.
+- Kiểm tra các trường bắt buộc và phần tóm tắt đặt phòng.
+Mong muốn:
+- Các trường đã nhập đúng, không có lỗi validation.
+- Tóm tắt giữ đúng Hòn Tằm Resort, card phòng/gói VGRBIZ, 1 khách và 1 phòng.
+- Có hiển thị tiền phòng, phí/thuế nếu áp dụng, tổng tiền và loại tiền.
+
+BƯỚC 07 - ÁP DỤNG PROMOTION NẾU ĐÃ ĐIỀN
+Áp dụng khi promotion_code có giá trị trước lúc tạo kịch bản.
+Thao tác:
+- Nhập đúng promotion_code, bấm áp dụng và chờ kết quả cập nhật.
+Mong muốn:
+- Có xác nhận mã hợp lệ và dòng giảm giá tương ứng.
+- Tổng tiền sau giảm khớp dữ liệu API và quy tắc của mã.
+- Nếu mã bị từ chối, ghi nhận thông báo và dừng; không tiếp tục như đã giảm giá.
+Nếu promotion_code để trống: không nhập hoặc áp dụng mã bất kỳ.
+
+BƯỚC 08 - THÊM ADDON NẾU ĐÃ ĐIỀN
+Áp dụng khi addon_name có giá trị trước lúc tạo kịch bản.
+Thao tác:
+- Chọn đúng dịch vụ addon_name và số lượng addon_quantity.
+- Bấm thêm/xác nhận nếu website yêu cầu, chờ tổng tiền cập nhật.
+Mong muốn:
+- Có dòng dịch vụ, số lượng, đơn giá và thành tiền tương ứng trong đơn.
+- Dịch vụ đúng khách sạn/ngày lưu trú, không phát sinh addon ngoài lựa chọn.
+- Tổng tiền sau addon khớp dữ liệu API và điều kiện giảm giá đang áp dụng.
+Nếu addon_name để trống: không chọn thêm dịch vụ.
+
+BƯỚC 09 - CHỌN PHƯƠNG THỨC TIỀN MẶT
+Thao tác:
+- Mở phần phương thức thanh toán nếu đang thu gọn.
+- Chọn phương thức có tên payment_method.
+- Kiểm tra lại phương thức và số tiền phải thanh toán.
+Mong muốn:
+- Tiền mặt được đánh dấu là phương thức đang chọn.
+- Tổng tiền cuối cùng giữ đúng phòng, promotion và addon đã chọn.
+- Nếu không có phương thức này, dừng và báo rõ; không chọn phương thức khác.
+
+BƯỚC 10 - XÁC NHẬN ĐẶT PHÒNG
+Thao tác:
+- Rà soát tóm tắt và thông tin khách lần cuối.
+- Tích đồng ý điều khoản bắt buộc của đơn nếu chưa được chọn.
+- Bấm đúng một lần nút xác nhận đặt phòng/thanh toán cuối cùng của website.
+- Chờ phản hồi tạo đơn và trang kết quả.
+Mong muốn:
+- Chỉ có một lần gửi yêu cầu xác nhận đặt phòng do kịch bản thực hiện.
+- Không tự bấm lại nút xác nhận nếu phản hồi chậm hoặc chưa rõ trạng thái đơn.
+
+BƯỚC 11 - KIỂM TRA KẾT QUẢ THÀNH CÔNG
+Thao tác:
+- Kiểm tra thông báo đặt phòng/thanh toán thành công mà website hiển thị.
+- Ghi nhận mã đặt phòng và thông tin đơn trong bằng chứng API của phiên.
+Mong muốn:
+- Có trang kết quả thành công, mã đặt phòng không rỗng và API tạo đơn thành công.
+- Khách sạn, phòng, gói giá, ngày, khách, số phòng và dịch vụ đúng lựa chọn.
+- Mã đặt phòng và tổng tiền trên giao diện khớp API của cùng đơn.
+- Phương thức thanh toán là Tiền mặt.
+- Trạng thái thanh toán đối chiếu theo API và nghiệp vụ tiền mặt của website.
+  Nếu tiền mặt là trả sau, đặt phòng thành công không đồng nghĩa đã thu tiền;
+  không tự kết luận PAID chỉ dựa vào thông báo thành công trên giao diện.
+
+4. THU THẬP EVENT, API VÀ TP2
+
+- Bật lưu API Request/Response cho đúng host API của website trước khi chạy.
+- Giữ thu thập event/API xuyên suốt từ Home đến trang kết quả.
+- Dùng tên event và test case trong file đặc tả đã nhập vào EventQA.
+- Chưa có tên event chính thức thì để phần event mong đợi trống, không tự đặt tên.
+- Nếu website gửi TP2, đọc ue_px tại tab TP2 và dùng cấu hình ghép trường đã lưu
+  để so với API của đúng sản phẩm/đơn đặt phòng: mã, ngày, số lượng, giá, giảm giá,
+  addon và phương thức thanh toán tùy theo các trường thực tế có trong payload.
+- Không thấy TP2 ở bước tìm kiếm chưa phải lỗi nếu đặc tả chỉ yêu cầu khi đặt phòng.
+- Không so giá của khách sạn/đơn khác hoặc lấy API sau event làm dữ liệu trước event.
+
+5. KẾT THÚC VÀ BÁO CÁO
+
+- Lưu các bước đã chạy, kết quả, event, API và lỗi tại bước nếu có.
+- Xuất báo cáo event sau lượt chạy; có thể xuất riêng TP2/API ở phần báo cáo.
+- Kết quả thành công cần đáp ứng dấu hiệu ở bước 11, không chỉ là đã bấm hết nút.
+- Nếu lỗi xảy ra, dừng tại bước lỗi, giữ bằng chứng và không bắt đầu một đơn mới.
+- Giữ lịch tự chạy tắt trong mẫu này.
+
+6. YÊU CẦU KHI AI TẠO KỊCH BẢN TỪ FILE
+
+- Phải đưa đầy đủ dữ liệu phần 2 vào object variables của JSON kịch bản.
+- Với biến dùng cho action select, khai báo giá trị chọn dưới dạng chuỗi, ví dụ
+  rooms = "1", adults = "1", children = "0", để đúng kiểu dữ liệu của ô chọn.
+- Mỗi tham chiếu dạng {{ten_bien}} phải có giá trị tương ứng trong variables;
+  chỉ các biến ngày tích hợp dạng {{date:+14}} được để công cụ tính khi chạy.
+- Dùng hon-tam-variables.json cùng thư mục làm dữ liệu tham chiếu. Khi chỉ tải
+  file hướng dẫn này, vẫn khai báo đầy đủ biến từ các dòng dữ liệu ở phần 2.
+- Dùng dữ liệu đã điền ở phần 2 và các thao tác được EventQA hỗ trợ.
+- Quan sát giao diện để chọn đúng ô nhập, lịch, card khách sạn, phòng và nút bấm.
+- Chưa quan sát được thành phần thì nêu phần cần bổ sung; không bịa selector/URL.
+- Với cấu hình promotion/addon rỗng, bỏ các thao tác tương ứng khi tạo kịch bản.
+- Chờ điều kiện cụ thể sau mỗi bước: thành phần xuất hiện, nội dung hoặc trang đổi.
+- Chỉ gắn kiểm tra tự động khi có cách kiểm bằng thao tác và dữ liệu ứng dụng hỗ trợ;
+  các phép đối chiếu API/TP2 thực hiện bằng phần kiểm tra tương ứng của EventQA.
+- File này là hướng dẫn đầu vào. Kịch bản JSON cần được tạo và xem lại theo giao diện
+  thực tế trước khi chạy; không xem các tên nút mô tả ở đây là selector đã kiểm chứng.

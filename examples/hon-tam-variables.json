@@ -1,0 +1,21 @@
+{
+  "website_url": "https://vinpearlota.com/vi",
+  "destination": "Nha Trang",
+  "hotel_name": "Hòn Tằm Resort",
+  "rate_plan_name": "[VGRBIZ] Ưu đãi CBNV Vingroup công tác",
+  "checkin": "{{date:+14}}",
+  "checkout": "{{date:+15}}",
+  "rooms": "1",
+  "adults": "1",
+  "children": "0",
+  "guest_title": "Ông",
+  "guest_full_name": "Nguyễn Văn Test",
+  "guest_last_name": "Nguyễn",
+  "guest_first_name": "Văn Test",
+  "guest_phone": "0900000000",
+  "guest_email": "eventqa@example.com",
+  "promotion_code": "",
+  "addon_name": "",
+  "addon_quantity": "1",
+  "payment_method": "Tiền mặt"
+}

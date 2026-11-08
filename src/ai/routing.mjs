@@ -30,9 +30,17 @@ export function normalizeModel(item, now = Date.now()) {
   };
 }
 
-export function reasoningControl(model, outputTokens) {
+/** `wanted` ('low' | 'medium'), when given, asks optional-reasoning models to think
+ * briefly before answering: slower, but far better at multi-step page decisions. */
+export function reasoningControl(model, outputTokens, wanted) {
   if (!model.reasoning && !model.supported_parameters.includes('reasoning')) return { suitable: true, extra_tokens: 0 };
-  if (!model.reasoning?.mandatory) return { suitable: true, request: { enabled: false, exclude: true }, extra_tokens: 0 };
+  if (!model.reasoning?.mandatory) {
+    if (!wanted) return { suitable: true, request: { enabled: false, exclude: true }, extra_tokens: 0 };
+    const supported = model.reasoning?.supported_efforts;
+    const budget = wanted === 'medium' ? 2500 : 1200;
+    if (supported === null || supported === undefined || supported.includes(wanted)) return { suitable: true, request: { effort: wanted, exclude: true }, extra_tokens: budget };
+    return { suitable: true, request: { max_tokens: budget, exclude: true }, extra_tokens: budget };
+  }
   const efforts = model.reasoning.supported_efforts;
   const effort = efforts === null ? 'minimal' : ['minimal', 'low'].find(value => efforts.includes(value));
   if (effort) return { suitable: true, request: { effort, exclude: true }, extra_tokens: Math.ceil(outputTokens * (effort === 'low' ? 0.2 : 0.1)) };
@@ -48,9 +56,21 @@ export function estimateModelCost(model, inputTokens, outputTokens) {
   return inputTokens * model.prompt_usd_per_million / 1000000 + outputTokens * model.completion_usd_per_million / 1000000 + model.request_usd;
 }
 
-export function routingCandidates(models, { inputTokens, outputTokens, allowPaid, maxPromptUsdPerMillion, maxCompletionUsdPerMillion, requestBudgetUsd, model = 'auto' }) {
-  const candidates = models.map(item => ({ ...item, reasoning_control: reasoningControl(item, outputTokens) }))
-    .filter(item => (model === 'auto' || item.id === model)
+/** `model` is 'auto', one model ID, or a comma-separated preference list such as
+ * "vendor/a,vendor/b,auto": listed models are tried in that order, and a trailing
+ * "auto" lets every other suitable model follow in the usual order. */
+export function modelPreference(model = 'auto') {
+  const list = String(model || 'auto').split(',').map(item => item.trim()).filter(Boolean);
+  if (list.length <= 1) return { single: list[0] ?? 'auto', list: null, auto: (list[0] ?? 'auto') === 'auto' };
+  return { single: null, list: list.filter(item => item !== 'auto'), auto: list.includes('auto') };
+}
+
+export function routingCandidates(models, { inputTokens, outputTokens, allowPaid, maxPromptUsdPerMillion, maxCompletionUsdPerMillion, requestBudgetUsd, model = 'auto', reasoning }) {
+  const preference = modelPreference(model);
+  const rank = id => { const index = preference.list?.indexOf(id) ?? -1; return index < 0 ? Infinity : index; };
+  const wanted = id => preference.list ? preference.auto || preference.list.includes(id) : preference.auto || id === preference.single;
+  const candidates = models.map(item => ({ ...item, reasoning_control: reasoningControl(item, outputTokens, reasoning) }))
+    .filter(item => wanted(item.id)
     && item.reasoning_control.suitable
     && (allowPaid || item.free)
     && item.prompt_usd_per_million <= maxPromptUsdPerMillion
@@ -59,5 +79,6 @@ export function routingCandidates(models, { inputTokens, outputTokens, allowPaid
     && (item.max_completion_tokens == null || item.max_completion_tokens >= outputTokens))
     .map(item => ({ ...item, estimated_cost_usd: estimateModelCost(item, inputTokens, outputTokens + item.reasoning_control.extra_tokens) }))
     .filter(item => item.estimated_cost_usd <= requestBudgetUsd);
-  return candidates.sort((a, b) => Number(b.free) - Number(a.free) || a.estimated_cost_usd - b.estimated_cost_usd || a.id.localeCompare(b.id));
+  return candidates.sort((a, b) => (rank(a.id) === rank(b.id) ? 0 : rank(a.id) < rank(b.id) ? -1 : 1)
+    || Number(b.free) - Number(a.free) || a.estimated_cost_usd - b.estimated_cost_usd || a.id.localeCompare(b.id));
 }

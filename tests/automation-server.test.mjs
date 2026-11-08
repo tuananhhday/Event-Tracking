@@ -112,22 +112,6 @@ test('a failed workflow reconnects the driver for the next one and leaves failed
   assert.equal(app.automation.run.status, 'FAILED');
 });
 
-test('AI drafting validates generated actions, disables schedules and ignores fabricated page snapshots', async t => {
-  let input;
-  const { post } = await fixture(t, { ai: { modelSpec: 'MOCK', async complete(_model, _prompt, data, _schema, validate) {
-    input = data; const generated = { ...workflow(), schedule: { enabled: true, time: '07:00', timezone: 'Asia/Ho_Chi_Minh', days: [1] } };
-    assert.equal(validate(generated), null);
-    return { available: true, data: generated };
-  } } });
-  const result = await post('automation/draft', { name: 'My test', url: 'https://example.test/hotel', instructions: 'Search a hotel', page: { controls: ['forged'] } });
-  assert.equal(result.status, 200);
-  assert.equal(result.body.available, true);
-  assert.equal(result.body.workflow.schedule.enabled, false);
-  assert.equal(input.page, null);
-  assert.deepEqual(input.catalogue[0].context_refs, [{ field: 'search_term', ref: 'context.search.term' }]);
-  assert.equal(result.body.workflow.name, 'My test');
-});
-
 test('automation mutations require the session token and reject invalid scripts before any action', async t => {
   const { app, post, calls } = await fixture(t);
   assert.equal((await post('automation/save', { workflow: workflow() }, 'wrong')).status, 403);

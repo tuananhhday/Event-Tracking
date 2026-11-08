@@ -1,7 +1,23 @@
 import { createHash } from 'node:crypto';
 import Ajv from 'ajv';
 import { redact } from '../core/privacy.mjs';
-import { normalizeModel, routingCandidates } from './routing.mjs';
+import { normalizeModel, routingCandidates, modelPreference } from './routing.mjs';
+
+// Browser automation needs models that follow a long JSON contract reliably; the
+// cheapest catalogue entries (tiny or preview models) usually cannot. These
+// well-known low-cost models are tried first, then any other suitable model.
+export const DEFAULT_AUTOMATION_MODELS = 'deepseek/deepseek-v4-flash,qwen/qwen3.5-flash-02-23,openai/gpt-4o-mini,mistralai/mistral-small-3.2-24b-instruct,openai/gpt-4.1-nano,auto';
+
+/** Models sometimes wrap JSON in a Markdown fence or add a sentence around it. */
+export function parseJsonContent(content) {
+  const text = String(content).trim();
+  try { return JSON.parse(text); } catch { /* try the tolerant forms below */ }
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) { try { return JSON.parse(fenced.trim()); } catch { /* fall through */ } }
+  const start = text.indexOf('{'), end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1));
+  throw new Error('INVALID_AI_JSON');
+}
 
 const OPERATORS = ['eq', 'exists', 'not_exists', 'type', 'regex', 'one_of', 'range', 'ref', 'subset', 'ignore'];
 export const DRAFT_CASE_SCHEMA = {
@@ -127,6 +143,7 @@ export class OpenRouterClient {
     this.activeKey = 0;
     this.modelSpec = options.modelSpec ?? process.env.OPENROUTER_MODEL_SPEC ?? 'auto';
     this.modelExplain = options.modelExplain ?? process.env.OPENROUTER_MODEL_EXPLAIN ?? 'auto';
+    this.modelAutomation = options.modelAutomation ?? (process.env.OPENROUTER_MODEL_AUTOMATION || DEFAULT_AUTOMATION_MODELS);
     this.allowPaid = flag(options.allowPaid ?? process.env.OPENROUTER_ALLOW_PAID ?? true);
     this.routing = options.routing ?? process.env.OPENROUTER_ROUTING ?? 'free-first';
     this.maxPromptUsdPerMillion = numberOption(options.maxPromptUsdPerMillion ?? process.env.OPENROUTER_MAX_PROMPT_USD_PER_MILLION, 0.25, 0, 100);
@@ -161,7 +178,7 @@ export class OpenRouterClient {
   diagnostics() {
     return {
       enabled: this.enabled, closed: this.closed, configured_key_count: this.keys.length, routing: this.routing,
-      model_spec: this.modelSpec, model_explain: this.modelExplain, allow_paid: this.allowPaid,
+      model_spec: this.modelSpec, model_explain: this.modelExplain, model_automation: this.modelAutomation, allow_paid: this.allowPaid,
       max_prompt_usd_per_million: this.maxPromptUsdPerMillion, max_completion_usd_per_million: this.maxCompletionUsdPerMillion,
       request_budget_usd: this.requestBudgetUsd, max_model_attempts: this.maxModelAttempts, max_completion_requests: this.maxCompletionRequests, max_free_attempts: this.maxFreeAttempts,
       max_output_tokens: this.maxOutputTokens,
@@ -213,15 +230,16 @@ export class OpenRouterClient {
       .sort((a, b) => Number(b === this.activeKey) - Number(a === this.activeKey));
   }
 
-  async request(path, init = {}, { keyIndex = this.activeKey, retries = this.maxRetries, onAttempt } = {}) {
+  async request(path, init = {}, { keyIndex = this.activeKey, retries = this.maxRetries, onAttempt, timeoutMs = this.timeoutMs, signal } = {}) {
     for (let attempt = 0; attempt <= retries; attempt++) {
       this.throwIfClosed();
+      if (signal?.aborted) throw new Error('AI_CANCELLED');
       if (onAttempt) onAttempt();
       try {
         const response = await this.withCancellation(this.fetch(`https://openrouter.ai/api/v1${path}`, {
           ...init,
           headers: { Authorization: `Bearer ${this.keys[keyIndex]}`, 'Content-Type': 'application/json', ...init.headers },
-          signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.lifecycleController.signal]),
+          signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), this.lifecycleController.signal, ...(signal ? [signal] : [])]),
         }));
         this.throwIfClosed();
         if (!response.ok) {
@@ -241,7 +259,7 @@ export class OpenRouterClient {
         }
         return result;
       } catch (error) {
-        if (this.closed || error.message === 'AI_CANCELLED') throw new Error('AI_CANCELLED');
+        if (this.closed || signal?.aborted || error.message === 'AI_CANCELLED') throw new Error('AI_CANCELLED');
         if (/^OPENROUTER_(HTTP_\d+|RESPONSE_ERROR)$/.test(error.message)) throw error;
         if (attempt === retries) throw new Error(error.name === 'TimeoutError' || error.name === 'AbortError' ? 'OPENROUTER_TIMEOUT' : 'OPENROUTER_UNAVAILABLE');
         await this.pause(200 * 2 ** attempt);
@@ -277,7 +295,7 @@ export class OpenRouterClient {
     this.keyStates[index].reason = reason;
   }
 
-  async listRoutingCandidates({ task = 'spec', inputTokens = 1000, outputTokens = this.maxOutputTokens, model } = {}) {
+  async listRoutingCandidates({ task = 'spec', inputTokens = 1000, outputTokens = this.maxOutputTokens, model, requestBudgetUsd = this.requestBudgetUsd, reasoning } = {}) {
     const discovered = await this.listModels();
     if (this.closed) return { available: false, candidates: [], reason: 'AI_CANCELLED' };
     if (!discovered.available) return { available: false, candidates: [], reason: discovered.reason };
@@ -286,11 +304,11 @@ export class OpenRouterClient {
     const candidates = routingCandidates(discovered.models, {
       inputTokens: Math.max(1, Math.ceil(inputTokens)), outputTokens: Math.max(1, Math.ceil(outputTokens)),
       allowPaid: this.allowPaid, maxPromptUsdPerMillion: this.maxPromptUsdPerMillion,
-      maxCompletionUsdPerMillion: this.maxCompletionUsdPerMillion, requestBudgetUsd: this.requestBudgetUsd, model: target,
+      maxCompletionUsdPerMillion: this.maxCompletionUsdPerMillion, requestBudgetUsd, model: target, reasoning,
     }).filter(item => (this.modelCooldowns.get(item.id) ?? 0) <= Date.now());
     if (!candidates.length) {
       let reason = 'NO_SUITABLE_MODELS';
-      if (target !== 'auto') {
+      if (modelPreference(target).single && target !== 'auto') {
         const raw = this.rawModels?.find(item => item.id === target);
         reason = !raw ? 'MODEL_NOT_FOUND' : !raw.supported_parameters?.some(p => ['response_format', 'structured_outputs'].includes(p)) ? 'MODEL_STRUCTURED_OUTPUT_UNSUPPORTED' : 'MODEL_UNSUITABLE_OR_OVER_BUDGET';
       }
@@ -299,35 +317,44 @@ export class OpenRouterClient {
     return { available: true, candidates };
   }
 
-  async complete(model, system, input, schema, validateOutput) {
+  /** options (per task): maxOutputTokens, timeoutMs, requestBudgetUsd and an
+   * AbortSignal. Long structured outputs such as workflows need more than the
+   * defaults sized for short explanations. */
+  async complete(model, system, input, schema, validateOutput, options = {}) {
     const reason = this.unavailable();
     if (reason) return { available: false, reason };
+    if (options.signal?.aborted) return { available: false, reason: 'AI_CANCELLED' };
+    const maxOutputTokens = Math.floor(numberOption(options.maxOutputTokens, this.maxOutputTokens, 100, 16000));
+    const timeoutMs = Math.floor(numberOption(options.timeoutMs, this.timeoutMs, 100, 180000));
+    const requestBudgetUsd = numberOption(options.requestBudgetUsd, this.requestBudgetUsd, 0, 10);
+    const signal = options.signal;
     const sanitized = redact(structuredClone(input));
     if (JSON.stringify(sanitized).length > 150000) return { available: false, reason: 'AI_INPUT_TOO_LARGE' };
     const key = fingerprint({ model, system, sanitized, schema });
     if (this.cache.has(key)) return structuredClone(this.cache.get(key));
     // UTF-8 bytes + protocol allowance is a conservative token upper bound.
     const inputTokens = Buffer.byteLength(JSON.stringify({ system, sanitized, schema }), 'utf8') + Buffer.byteLength(JSON.stringify(schema), 'utf8') + 1024;
-    const selection = await this.listRoutingCandidates({ model, inputTokens, outputTokens: this.maxOutputTokens });
+    const selection = await this.listRoutingCandidates({ model, inputTokens, outputTokens: maxOutputTokens, requestBudgetUsd, reasoning: options.reasoning });
     if (!selection.available) return { available: false, reason: selection.reason };
     this.lastTrace = []; this.lastResult = null;
+    const preference = modelPreference(model), routedAutomatically = preference.auto || Boolean(preference.list);
     const freeLimit = this.maxModelAttempts > 1 && selection.candidates.some(item => !item.free)
       ? Math.min(this.maxFreeAttempts, this.maxModelAttempts - 1) : this.maxFreeAttempts;
     let attempts = 0, freeAttempts = 0, reserved = 0, completionRequests = 0, lastReason = 'NO_SUITABLE_MODELS';
     let stopOperation = false;
     for (const candidate of selection.candidates) {
-      if (this.closed) { lastReason = 'AI_CANCELLED'; break; }
+      if (this.closed || signal?.aborted) { lastReason = 'AI_CANCELLED'; break; }
       if (attempts >= this.maxModelAttempts) break;
-      if (model === 'auto' && candidate.free && freeAttempts >= freeLimit) continue;
+      if (routedAutomatically && candidate.free && freeAttempts >= freeLimit) continue;
       const keys = this.availableKeys({ paid: !candidate.free });
       if (!keys.length) { lastReason = this.availableKeys().length ? 'CREDIT_EXHAUSTED' : 'API_KEYS_UNAVAILABLE'; continue; }
       attempts++; if (candidate.free) freeAttempts++;
       for (const keyIndex of keys) {
-        if (this.closed) { lastReason = 'AI_CANCELLED'; stopOperation = true; break; }
-        const explicitRetries = model !== 'auto' ? this.maxRetries : 0;
+        if (this.closed || signal?.aborted) { lastReason = 'AI_CANCELLED'; stopOperation = true; break; }
+        const explicitRetries = routedAutomatically ? 0 : this.maxRetries;
         // Reserve a worst-case amount even when timeout/schema failure may still be billable.
         const reserve = candidate.estimated_cost_usd * (1 + explicitRetries);
-        if (reserved + reserve > this.requestBudgetUsd + Number.EPSILON) { lastReason = 'AI_REQUEST_BUDGET_EXCEEDED'; break; }
+        if (reserved + reserve > requestBudgetUsd + Number.EPSILON) { lastReason = 'AI_REQUEST_BUDGET_EXCEEDED'; break; }
         reserved += reserve;
         const trace = { model: candidate.id, key_label: this.keyStates[keyIndex].label, estimated_cost_usd: reserve, json_mode: candidate.json_mode };
         this.lastTrace.push(trace);
@@ -335,20 +362,21 @@ export class OpenRouterClient {
           const jsonMode = candidate.json_mode;
           const response = await this.request('/chat/completions', {
             method: 'POST', body: JSON.stringify({
-              model: candidate.id, temperature: 0.1, max_tokens: this.maxOutputTokens,
+              model: candidate.id, temperature: 0.1, max_tokens: maxOutputTokens + (options.reasoning ? candidate.reasoning_control.extra_tokens : 0),
               messages: [{ role: 'system', content: `${system}\nOutput JSON must satisfy this schema: ${JSON.stringify(schema)}` }, { role: 'user', content: JSON.stringify(sanitized) }],
               response_format: jsonMode === 'json_schema' ? { type: 'json_schema', json_schema: { name: 'eventqa_output', strict: false, schema } } : { type: 'json_object' },
               ...(candidate.reasoning_control.request ? { reasoning: candidate.reasoning_control.request } : {}),
               provider: { sort: 'price', require_parameters: true, data_collection: 'deny', allow_fallbacks: true,
                 max_price: { prompt: candidate.prompt_usd_per_million, completion: candidate.completion_usd_per_million, request: candidate.request_usd } },
             }),
-          }, { keyIndex, retries: explicitRetries, onAttempt: () => { if (completionRequests >= this.maxCompletionRequests) throw new Error('AI_MAX_COMPLETION_REQUESTS'); completionRequests++; } });
+          }, { keyIndex, retries: explicitRetries, timeoutMs, signal, onAttempt: () => { if (completionRequests >= this.maxCompletionRequests) throw new Error('AI_MAX_COMPLETION_REQUESTS'); completionRequests++; } });
           trace.response = safeResponseSummary(response);
           const messageContent = response.choices?.[0]?.message?.content;
           const content = Array.isArray(messageContent) ? messageContent.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('') : messageContent;
           if (typeof content !== 'string') throw new Error('INVALID_AI_RESPONSE');
           let data;
-          try { data = JSON.parse(content); } catch { throw new Error('INVALID_AI_JSON'); }
+          // A reply cut at max_tokens is reported as such instead of as bad JSON.
+          try { data = parseJsonContent(content); } catch { throw new Error(response.choices?.[0]?.finish_reason === 'length' ? 'INVALID_AI_TRUNCATED' : 'INVALID_AI_JSON'); }
           data = schema === DRAFT_CASE_SCHEMA ? sanitizeDraft(data) : redact(data);
           const validationError = validateOutput(data);
           if (validationError) throw new Error(validationError);
@@ -362,12 +390,12 @@ export class OpenRouterClient {
           this.cache.set(key, output); if (this.cache.size > 200) this.cache.delete(this.cache.keys().next().value);
           return structuredClone(output);
         } catch (error) {
-          lastReason = this.closed ? 'AI_CANCELLED' : /^(?:OPENROUTER_(?:HTTP_\d+|TIMEOUT|UNAVAILABLE|RESPONSE_ERROR)|INVALID_AI_[A-Z_]+|AI_MAX_COMPLETION_REQUESTS|AI_CANCELLED)$/.test(error.message) ? error.message : 'OPENROUTER_UNAVAILABLE';
+          lastReason = this.closed || signal?.aborted ? 'AI_CANCELLED' : /^(?:OPENROUTER_(?:HTTP_\d+|TIMEOUT|UNAVAILABLE|RESPONSE_ERROR)|INVALID_AI_[A-Z_]+|AI_MAX_COMPLETION_REQUESTS|AI_CANCELLED)$/.test(error.message) ? error.message : 'OPENROUTER_UNAVAILABLE';
           trace.status = 'FAILED'; trace.reason = lastReason;
           if (['OPENROUTER_HTTP_401', 'OPENROUTER_HTTP_402'].includes(lastReason)) { this.disableKey(keyIndex, lastReason); continue; }
           if (['OPENROUTER_HTTP_403', 'AI_MAX_COMPLETION_REQUESTS', 'AI_CANCELLED'].includes(lastReason)) { stopOperation = true; break; }
           this.modelCooldowns.set(candidate.id, Date.now() + this.cooldownMs);
-          if (model === 'auto') {
+          if (routedAutomatically) {
             try { await this.pause(Math.min(1000, 150 * attempts)); }
             catch { lastReason = 'AI_CANCELLED'; stopOperation = true; }
           }

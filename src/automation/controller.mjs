@@ -7,14 +7,17 @@ import { DailyScheduler } from './scheduler.mjs';
 import { validateWorkflow, resolveWorkflow } from './schema.mjs';
 import { connectAutomationBrowser } from './playwright.mjs';
 import { runWorkflow } from './runner.mjs';
-import { draftWorkflow } from '../ai/workflow.mjs';
+import { WorkflowExplorer, summarizeEvents, splitScenario, aiReasonText, looksLikeLogin } from './explorer.mjs';
+import { listTargets } from '../collectors/cdp.mjs';
 import { redact } from '../core/privacy.mjs';
+
+const abortReason = signal => signal?.reason instanceof Error ? signal.reason : Object.assign(new Error('Đã dừng.'), { name: 'AbortError' });
 
 export class AutomationController {
   constructor({ directory, manager, getAi, capture, openInspection, finish, exportReport, onStatus = () => {},
-    isAvailable = () => true, connectDriver = connectAutomationBrowser, now = () => new Date(), intervalMs = 30000 } = {}) {
-    Object.assign(this, { manager, getAi, capture, openInspection, finish, exportReport, onStatus, isAvailable, connectDriver, now });
-    this.store = new WorkflowStore(directory); this.run = null; this.task = null; this.closed = false; this.inspection = null;
+    isAvailable = () => true, connectDriver = connectAutomationBrowser, now = () => new Date(), intervalMs = 30000, listTargets: targets = listTargets } = {}) {
+    Object.assign(this, { manager, getAi, capture, openInspection, finish, exportReport, onStatus, isAvailable, connectDriver, now, listTargets: targets });
+    this.store = new WorkflowStore(directory); this.run = null; this.task = null; this.closed = false; this.exploration = null;
     this.scheduler = new DailyScheduler({ getWorkflows: () => this.store.list(), now, intervalMs,
       enqueue: (ids, meta) => this.busy || this.manager.session?.status === 'RUNNING' || !this.isAvailable() ? { accepted: false } : this.enqueue(ids, meta),
       getLastScheduledDate: id => this.store.getLastScheduledDate(id), recordScheduledDate: (id, date) => this.store.recordScheduledDate(id, date),
@@ -24,29 +27,158 @@ export class AutomationController {
   async load() { await this.store.load(); }
   startScheduler() { if (!this.closed) this.scheduler.start(); }
   state() {
-    return { workflows: this.store.list(), run: this.run ? redact(this.run) : null, history: this.store.history(30), busy: this.busy,
+    // The recorded workflow is the user's own data (their test contact details), so
+    // only the exploration log is redacted, not the draft they will save.
+    const exploration = this.exploration ? { ...redact({ ...this.exploration, workflow: undefined }), workflow: this.exploration.workflow ?? null } : null;
+    return { workflows: this.store.list(), run: this.run ? redact(this.run) : null, exploration, ai_ready: this.aiReady(), history: this.store.history(30), busy: this.busy,
       session_running: this.manager.session?.status === 'RUNNING', cases: this.manager.cases.map(testCase => ({ id: testCase.id, name: testCase.name, flow: testCase.flow,
         source: testCase.source, event_names: testCase.rules.map(rule => rule.event_name) })) };
   }
   async save(input) { await this.store.save(validateWorkflow(input)); return this.state(); }
   async delete(id) { await this.store.delete(String(id)); return this.state(); }
-  async inspect({ url, browser = 'chrome' } = {}) {
-    if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên đang chạy trước khi quan sát trang tạo luồng.');
-    const target = new URL(url);
-    if (!['http:', 'https:'].includes(target.protocol)) throw new Error('Website phải dùng HTTP hoặc HTTPS.');
-    const connection = await this.openInspection({ url: target.toString(), browser });
-    const driver = await this.connectDriver(connection);
-    try {
-      await driver.execute({ type: 'goto', url: target.toString(), timeout_ms: 30000 });
-      const page = await driver.inspect();
-      this.inspection = { url: target.toString(), page };
-      return { page };
-    } finally { await driver.disconnect(); }
+  aiReady() {
+    const ai = this.getAi?.();
+    return typeof ai?.complete === 'function' && !(typeof ai.unavailable === 'function' && ai.unavailable());
   }
-  async draft(input) {
-    const page = (this.inspection?.url === String(input.url) || this.inspection?.url === (() => { try { return new URL(input.url).toString(); } catch { return ''; } })())
-      ? this.inspection.page : null;
-    return draftWorkflow(this.getAi(), { ...input, page, cases: this.manager.cases });
+  /** Network-confirmed tracking hits (GA4, Insider, TP2…) of the test tab since a time. */
+  observedEvents(since, targetId) {
+    return (this.manager.store?.events() ?? []).filter(event => !event.historical && Date.parse(event.captured_at) >= since
+      && (!targetId || !event.page?.target_id || event.page.target_id === targetId)
+      && event.layer === 'TRACKING_REQUEST' && (!event.network?.phase || event.network.phase === 'request'));
+  }
+  explorationProgress(event) {
+    const exploration = this.exploration;
+    if (!exploration) return;
+    exploration.progress.push(redact({ ...event, at: this.now().toISOString() }));
+    if (exploration.progress.length > 300) exploration.progress.shift();
+    if (event.step_index !== undefined) { exploration.current_step = event.step_index; if (event.step_name) exploration.current_step_name = event.step_name; }
+    if (event.steps) exploration.steps = event.steps;
+  }
+  /** AI runs the scenario once in the test browser (with event capture on) and
+   * records a workflow from what actually worked. Runs in the background. */
+  /** Opens the test browser (same profile as the runs) on the website and leaves it
+   * open, so the user can log in once before AI exploration or scheduled runs. */
+  async openBrowser({ url, browser = 'chrome' } = {}) {
+    if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên đang chạy trước khi mở trình duyệt đăng nhập.');
+    let target;
+    try { target = new URL(String(url || '')); } catch { throw new Error('Nhập địa chỉ website (https://…) trước khi mở trình duyệt.'); }
+    if (!['http:', 'https:'].includes(target.protocol)) throw new Error('Website phải dùng HTTP hoặc HTTPS.');
+    const connection = await this.openInspection({ url: target.toString(), browser: browser === 'edge' ? 'edge' : 'chrome' });
+    const driver = await this.connectDriver(connection);
+    try { await driver.execute({ type: 'goto', url: target.toString(), timeout_ms: 30000 }); }
+    finally { await driver.disconnect(); }
+    return { opened: true, ...this.state() };
+  }
+  /** Releases an exploration that waits for the user (login, CAPTCHA, OTP). */
+  resume() {
+    if (this.exploration?.status === 'WAITING_USER' && this.resumeWaiting) this.resumeWaiting();
+    return this.state();
+  }
+  async explore({ name, url, browser, instructions, variables = {}, allowIrreversible = false, waitForLogin = false } = {}) {
+    if (this.closed) throw new Error('Ứng dụng đang dừng.');
+    if (this.busy || this.manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên đang chạy trước khi cho AI chạy thử.');
+    if (typeof instructions !== 'string' || !instructions.trim() || instructions.length > 30000) throw new Error('Nhập hoặc chọn file kịch bản (1 đến 30.000 ký tự).');
+    if (!variables || typeof variables !== 'object' || Array.isArray(variables)) throw new Error('Giá trị dùng lại phải là một đối tượng JSON.');
+    const scenario = splitScenario(instructions);
+    const start = String(url || scenario.variables.website_url || scenario.variables.url || instructions.match(/https?:\/\/[^\s"'<>]+/)?.[0] || '').trim();
+    let target;
+    try { target = new URL(start); } catch { throw new Error('Nhập địa chỉ website bắt đầu (https://…) hoặc khai báo website_url trong kịch bản.'); }
+    if (!['http:', 'https:'].includes(target.protocol)) throw new Error('Website phải dùng HTTP hoặc HTTPS.');
+    const chosenBrowser = browser === 'edge' || browser !== 'chrome' && scenario.variables.browser === 'edge' ? 'edge' : 'chrome';
+    const ai = this.getAi?.();
+    if (typeof ai?.complete !== 'function') throw new Error(aiReasonText('AI_UNAVAILABLE'));
+    const unavailable = typeof ai.unavailable === 'function' ? ai.unavailable() : null;
+    if (unavailable) throw new Error(aiReasonText(unavailable));
+    this.abortController = new AbortController();
+    this.exploration = { id: `EXPLORE-${randomUUID()}`, status: 'RUNNING', name: String(name || scenario.title || 'Luồng chạy thử').slice(0, 200), url: target.toString(),
+      browser: chosenBrowser, allow_irreversible: allowIrreversible === true, started_at: this.now().toISOString(), progress: [], workflow: null };
+    const task = this.executeExploration({ name: this.exploration.name, url: target.toString(), browser: chosenBrowser, instructions, variables,
+      allowIrreversible: allowIrreversible === true, waitForLogin: waitForLogin === true }, this.abortController.signal);
+    this.task = task;
+    task.catch(error => this.onStatus(`AI chạy thử: ${error.message}`)).finally(() => { if (this.task === task) this.task = null; });
+    return { accepted: true, ...this.state() };
+  }
+  async executeExploration(input, signal) {
+    const exploration = this.exploration;
+    let driver, captureStarted = false;
+    try {
+      this.explorationProgress({ type: 'start', message: `Mở ${input.browser === 'edge' ? 'Edge' : 'Chrome'} và bật thu thập event…` });
+      const connection = await this.capture({ url: input.url, browser: input.browser }); captureStarted = true;
+      exploration.session_id = this.manager.session?.id;
+      if (this.manager.session) this.manager.session.automation_run_id = exploration.id;
+      driver = await this.connectDriver({ ...connection, signal });
+      // Login, CAPTCHA or OTP: Playwright lets go of the tab (so login popups behave
+      // normally), the user acts in the test window and presses “Tiếp tục”.
+      const startHost = new URL(input.url).hostname.replace(/^www\./, '');
+      const onSite = url => { try { const host = new URL(url).hostname.replace(/^www\./, ''); return host === startHost || host.endsWith(`.${startHost}`); } catch { return false; } };
+      const waitForUser = async ({ message, url: pausedAt }) => {
+        await driver?.disconnect().catch(() => {}); driver = null;
+        exploration.status = 'WAITING_USER';
+        exploration.waiting = { message: String(message || '').slice(0, 500), since: this.now().toISOString() };
+        this.explorationProgress({ type: 'waiting-user', message: `Chờ bạn: ${exploration.waiting.message}` });
+        this.onStatus(`AI chạy thử đang chờ bạn: ${exploration.waiting.message}`);
+        let how = 'button';
+        try {
+          await new Promise((resolve, reject) => {
+            let poll, polling = false, sawLogin = looksLikeLogin(pausedAt), settled = 0;
+            const finish = () => { clearTimeout(timer); clearInterval(poll); signal.removeEventListener('abort', stop); };
+            const timer = setTimeout(() => { finish(); reject(new Error('Đã chờ 30 phút mà chưa xong; dừng AI chạy thử.')); }, 30 * 60000);
+            const stop = () => { finish(); reject(abortReason(signal)); };
+            signal.addEventListener('abort', stop, { once: true });
+            this.resumeWaiting = () => { finish(); resolve(); };
+            // Logged in = the tab went through the login/SSO pages and has been back on the
+            // website for a few seconds: continue without waiting for the button.
+            poll = setInterval(async () => {
+              if (polling) return; polling = true;
+              try {
+                const url = (await this.listTargets(connection.port)).find(target => target.id === connection.targetId)?.url ?? '';
+                if (looksLikeLogin(url) || /\/auth\/callback\b|[?&#]code=/i.test(url) || !onSite(url)) { if (looksLikeLogin(url) || !onSite(url)) sawLogin = true; settled = 0; }
+                else if (sawLogin && ++settled >= 2) { how = 'auto'; finish(); resolve(); }
+              } catch { /* the window may be busy; try again */ } finally { polling = false; }
+            }, 1500);
+          });
+        } finally { this.resumeWaiting = null; delete exploration.waiting; }
+        exploration.status = 'RUNNING';
+        this.explorationProgress({ type: 'resumed', message: how === 'auto' ? 'Đã thấy bạn đăng nhập xong; AI tự chạy tiếp.' : 'Bạn đã bấm Tiếp tục; AI chạy tiếp từ trang hiện tại.' });
+        driver = await this.connectDriver({ ...connection, signal });
+        return driver;
+      };
+      const explorer = new WorkflowExplorer({ getAi: this.getAi, driver, signal, now: this.now, onProgress: event => this.explorationProgress(event), waitForUser,
+        observeEvents: since => this.observedEvents(since, connection.targetId) });
+      const outcome = await explorer.explore(input);
+      Object.assign(exploration, { status: outcome.status, workflow: outcome.workflow, usage: outcome.usage, ...(outcome.error ? { error: outcome.error } : {}) });
+    } catch (error) {
+      exploration.status = signal.aborted ? 'CANCELLED' : 'FAILED';
+      exploration.error = redact(String(error.message || error));
+    } finally {
+      await driver?.disconnect().catch(() => {});
+      exploration.completed_at = this.now().toISOString();
+      if (captureStarted) {
+        // The test window stays open: the user sees where AI stopped and keeps the login.
+        try { await this.finish({ keepBrowser: true }); exploration.run_dir = this.manager.runDir; }
+        catch (error) { exploration.error = [exploration.error, `Lưu bằng chứng gặp lỗi: ${error.message}`].filter(Boolean).join(' '); }
+      }
+      const label = { COMPLETED: 'đã ghi xong kịch bản', PARTIAL: 'dừng giữa chừng; đã ghi các bước làm được', STOPPED: 'dừng trước thao tác đặt/thanh toán', CANCELLED: 'đã dừng', FAILED: 'gặp lỗi' }[exploration.status] ?? exploration.status;
+      this.explorationProgress({ type: 'done', status: exploration.status, message: `AI chạy thử ${label}.` });
+      // The AI's own log stays with the session evidence, also after the app is closed.
+      if (exploration.run_dir) await fs.writeFile(path.join(exploration.run_dir, 'exploration.json'), JSON.stringify({ ...redact({ ...exploration, workflow: undefined }), workflow: exploration.workflow ?? null }, null, 2), 'utf8').catch(() => {});
+      this.onStatus(`AI chạy thử ${label}. Xem lại các bước trong tab Luồng tự động rồi lưu.`);
+    }
+    return exploration;
+  }
+  /** At run time: AI finishes a step that failed or was never recorded. */
+  async assistStep(driver, workflow, step, details) {
+    const explorer = new WorkflowExplorer({ getAi: this.getAi, driver, signal: details.signal, now: this.now, maxTurnsPerStep: 8, maxTotalTurns: 12,
+      onProgress: event => this.progress({ workflow_id: workflow.id, step_id: step.id, type: `assist-${event.type}`, ...(event.message ? { message: `AI: ${event.message}` } : {}) }) });
+    const notes = workflow.instructions ? splitScenario(workflow.instructions).notes : undefined;
+    const outcome = await explorer.assistStep({ step, index: details.index, total: workflow.steps.length, values: workflow.variables ?? {}, notes,
+      reason: details.reason, error: details.error, done: details.done ?? [], allowIrreversible: details.allowIrreversible, upcoming: workflow.steps.slice((details.index ?? 0) + 1) });
+    if (this.run) {
+      this.run.ai_usage ??= { calls: 0, cost_usd: 0 };
+      this.run.ai_usage.calls += outcome.usage?.calls ?? 0;
+      this.run.ai_usage.cost_usd = Math.round((this.run.ai_usage.cost_usd + (outcome.usage?.cost_usd ?? 0)) * 1e6) / 1e6;
+    }
+    return outcome;
   }
   async enqueue(ids, { variables = {}, aiNotes = false, trigger = 'manual', scheduled_date, exportReport } = {}) {
     if (this.closed) throw new Error('Ứng dụng đang dừng.');
@@ -101,16 +233,22 @@ export class AutomationController {
         this.progress({ type: 'workflow-start', workflow_id: workflow.id, message: `Đang chạy ${workflow.name}` });
         try {
           driver = await this.connectDriver({ ...connection, signal });
+          const activeDriver = driver;
+          // Every GA4/Insider/TP2 hit sent during a step is listed with that step.
+          const recordEvents = result => { const events = summarizeEvents(this.observedEvents(stepStartedAt, connection.targetId)); if (events.length) result.observed_events = events; };
           const result = await runWorkflow(workflow, { driver, signal, screenshotDir: path.join(this.manager.runDir, 'automation-screenshots'),
           onProgress: event => this.progress(event),
+          ...(workflow.ai_heal !== false && this.aiReady() ? { assist: (step, details) => this.assistStep(activeDriver, workflow, step, details) } : {}),
           onStepStart: step => {
             stepStartedAt = Date.now();
             if (step.case_id) this.manager.startStep(step.case_id, step.context ?? {});
           },
           onStepComplete: (_step, result) => {
+            recordEvents(result);
             if (this.manager.currentStep) result.qa_verdict = this.manager.completeStep().verdict;
           },
           onStepError: (step, error, { result } = {}) => {
+            if (result) recordEvents(result);
             if (this.manager.currentStep) {
               const actionsCompleted = result?.actions?.length && result.actions.every(action => action.status === 'COMPLETED');
               if (!signal.aborted && (error.code === 'AUTOMATION_EVENT_TIMEOUT' || actionsCompleted && step.expected_events?.length)) this.manager.completeStep();
@@ -127,7 +265,8 @@ export class AutomationController {
                 && event.event_name === item.event_name && (!item.source || event.source === item.source)
                 && event.layer === (item.layer ?? 'TRACKING_REQUEST') && (!event.network?.phase || event.network.phase === 'request')));
               if (!missing.length) return;
-              if (Date.now() >= deadline) throw Object.assign(new Error(`Chưa thấy event mong muốn: ${missing.map(item => item.event_name).join(', ')}.`), { code: 'AUTOMATION_EVENT_TIMEOUT' });
+              if (Date.now() >= deadline) throw Object.assign(new Error(`Chưa thấy event mong muốn: ${missing.map(item => item.event_name).join(', ')}.`), { code: 'AUTOMATION_EVENT_TIMEOUT',
+                missing: missing.map(item => ({ event_name: item.event_name, ...(item.source ? { source: item.source } : {}) })) });
               await delay(100, undefined, { signal: stepSignal ?? signal });
             }
           } });
@@ -160,7 +299,15 @@ export class AutomationController {
     }
     return run;
   }
-  cancel({ exportReport } = {}) { if (this.busy) { if (exportReport === false) this.run.export_report = false; this.run.cancel_requested = true; this.abortController.abort(new Error('Người dùng đã dừng luồng.')); } return this.state(); }
+  cancel({ exportReport } = {}) {
+    if (this.busy) {
+      const current = ['RUNNING', 'WAITING_USER'].includes(this.exploration?.status) ? this.exploration : this.run;
+      if (exportReport === false && current === this.run && this.run) this.run.export_report = false;
+      if (current) current.cancel_requested = true;
+      this.abortController?.abort(new Error('Người dùng đã dừng luồng.'));
+    }
+    return this.state();
+  }
   async wait() { if (this.task) await this.task; }
   async close() { this.closed = true; this.scheduler.stop(); this.cancel(); await this.wait(); }
 }
