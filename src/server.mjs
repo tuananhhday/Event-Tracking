@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SessionManager } from './core/session.mjs';
 import { redact } from './core/privacy.mjs';
-import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS } from './core/decoder.mjs';
+import { DEFAULT_ENDPOINT_PATTERNS, VENDOR_ENDPOINTS, decodeRequest } from './core/decoder.mjs';
 import { sanitizeCases } from './spec/sanitize.mjs';
 import { specCoverage, matchTracked, sessionRows } from './core/catalog.mjs';
 import { linkDeliveries, deliveryStatus, notForwarded, isRequest } from './core/delivery.mjs';
@@ -17,7 +17,7 @@ import { priceChecks } from './core/api-prices.mjs';
 import { apiLogPatterns, DEFAULT_API_LOG_PATTERNS } from './core/api-log.mjs';
 import { importSpec, specSheets, validateTestCase, manualCase } from './spec/import.mjs';
 import { exportReports, prepareReportData } from './report/export.mjs';
-import { CDPCollector, listTargets } from './collectors/cdp.mjs';
+import { CDPCollector, listTargets, queueEvents } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
@@ -34,6 +34,47 @@ const ASSETS = { '/assets/eventqa.css': ['shared/eventqa.css', 'text/css; charse
   '/assets/automation.css': ['shared/automation.css', 'text/css; charset=utf-8'], '/assets/automation.js': ['shared/automation.js', 'text/javascript; charset=utf-8'],
   '/assets/inspection.css': ['shared/inspection.css', 'text/css; charset=utf-8'], '/assets/inspection.js': ['shared/inspection.js', 'text/javascript; charset=utf-8'] };
 const PAGE_POLICY = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const escapeHtml = value => String(value).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]);
+// Help page for the F12 capture snippet: copy it, run it in the target site's Console, bring the JSON back.
+function capturePage(snippet) {
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EventQA · Bản ghi từ F12</title><style>
+:root{color-scheme:light dark;--bg:#f1f4f8;--card:#fff;--text:#13283c;--muted:#5d7184;--line:#dfe5ec;--accent:#4b3fa8}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1620;--card:#15202c;--text:#e4ebf2;--muted:#9db0c2;--line:#263546;--accent:#a48bff}}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px}h2{font-size:17px;margin-top:28px}
+ol{padding-left:22px}li{margin:6px 0}
+code{background:var(--line);padding:1px 5px;border-radius:4px}
+textarea{width:100%;height:150px;box-sizing:border-box;margin-top:10px;font:12px/1.5 ui-monospace,Consolas,monospace;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);padding:10px}
+button{margin-top:10px;padding:10px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:12px 14px;margin-top:16px;color:var(--muted)}
+a{color:var(--accent)}
+</style></head><body><main>
+<h1>Bản ghi event từ F12</h1>
+<p>Dùng khi trang cần kiểm chỉ mở được trên một máy/mạng nhất định (ví dụ UAT chặn theo IP). Bắt event ngay trong trình duyệt đã mở được trang, rồi mang file về EventQA để đối chiếu — không cần cài gì trên máy đó.</p>
+<h2>Các bước</h2>
+<ol>
+<li>Trên máy <b>vào được trang cần kiểm</b>, mở trang đó trong Chrome/Edge và đăng nhập như bình thường.</li>
+<li>Nhấn <b>F12</b> → tab <b>Console</b>.</li>
+<li>Bấm <b>Chép đoạn mã</b> bên dưới, dán vào Console, nhấn Enter. (Nếu Console báo chặn dán, gõ <code>allow pasting</code> rồi Enter, sau đó dán lại.) Một ô nhỏ “✦ EventQA · bản ghi” hiện ở góc phải.</li>
+<li>Thao tác trên trang như kịch bản test (tìm kiếm, chọn phòng, thanh toán…). Ô nhỏ đếm số push/request bắt được.</li>
+<li>Xong thì bấm <b>Dừng &amp; tải JSON</b> trong ô đó. Một file <code>eventqa-capture-….json</code> được tải về.</li>
+<li>Về EventQA, bước 1 → <b>Nhập bản ghi từ F12</b> → chọn file vừa tải. Event hiện lên; nạp file đặc tả để đối chiếu và xuất báo cáo như một phiên bình thường.</li>
+</ol>
+<button id="copy" type="button">Chép đoạn mã</button>
+<textarea id="snippet" readonly spellcheck="false">${escapeHtml(snippet)}</textarea>
+<div class="note">Đoạn mã chỉ <b>đọc</b> dataLayer/InsiderQueue và các request GA4/Insider/TP2 của trang, không gửi dữ liệu đi đâu và không sửa gì trên trang. Dừng lại là trả trang về như cũ. File JSON là bằng chứng của bạn; chỉ mở trên EventQA của bạn.</div>
+<script>
+document.getElementById('copy').addEventListener('click', async () => {
+  const text = document.getElementById('snippet').value, button = document.getElementById('copy');
+  try { await navigator.clipboard.writeText(text); button.textContent = 'Đã chép ✓'; }
+  catch { const t = document.getElementById('snippet'); t.focus(); t.select(); button.textContent = document.execCommand('copy') ? 'Đã chép ✓' : 'Hãy bôi đen và Ctrl+C'; }
+  setTimeout(() => { button.textContent = 'Chép đoạn mã'; }, 2500);
+});
+</script>
+</main></body></html>`;
+}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Smoke tests only: run the test browser without a window.
 const headless = process.env.EVENTQA_HEADLESS === '1';
@@ -503,10 +544,37 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     return closePromise;
   }
   const send = (res, code, data, contentType = 'application/json; charset=utf-8', headers = {}) => { res.writeHead(code, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', ...headers }); res.end(contentType.startsWith('application/json') ? JSON.stringify(data) : data); };
-  async function body(req) {
+  async function body(req, maxBytes = 5 * 1024 * 1024) {
     let size = 0; const chunks = [];
-    for await (const chunk of req) { size += chunk.length; if (size > 5 * 1024 * 1024) throw new Error('Request vượt 5 MB.'); chunks.push(chunk); }
+    for await (const chunk of req) { size += chunk.length; if (size > maxBytes) throw new Error(`Request vượt ${Math.round(maxBytes / (1024 * 1024))} MB.`); chunks.push(chunk); }
     const raw = Buffer.concat(chunks).toString('utf8'); return raw ? JSON.parse(raw) : {};
+  }
+  // Replays a browser capture (src/web/capture.js) into a fresh session: queue pushes decode with the
+  // same queueEvents() the live collector uses, requests with the same decodeRequest(); events replay in
+  // time order so repeat detection and the timeline match a real run.
+  function importCapture(capture) {
+    if (!capture || typeof capture !== 'object' || capture.app !== 'eventqa-capture') throw new Error('File không phải bản ghi EventQA từ F12 (thiếu app: "eventqa-capture").');
+    const pushes = Array.isArray(capture.pushes) ? capture.pushes : [];
+    const requests = Array.isArray(capture.requests) ? capture.requests : [];
+    if (pushes.length + requests.length === 0) throw new Error('Bản ghi rỗng: không có push hay request nào.');
+    if (pushes.length + requests.length > 60000) throw new Error('Bản ghi quá lớn (trên 60.000 mục).');
+    const events = [];
+    for (const record of pushes) {
+      if (!record || typeof record !== 'object' || typeof record.queue !== 'string') continue;
+      try { for (const event of queueEvents(record)) events.push(event); } catch { /* skip a malformed push */ }
+    }
+    for (const request of requests) {
+      if (!request || typeof request !== 'object' || typeof request.url !== 'string') continue;
+      try {
+        for (const event of decodeRequest({ url: request.url, body: typeof request.body === 'string' ? request.body : '', contentType: request.content_type || '',
+          method: request.method || 'POST', requestId: `IMP-${events.length}`, capturedAt: request.ts ? new Date(request.ts).toISOString() : undefined, pageUrl: request.page_url })) events.push(event);
+      } catch { /* skip a malformed request */ }
+    }
+    if (!events.length) throw new Error('Không giải mã được event nào từ bản ghi.');
+    events.sort((a, b) => Date.parse(a.captured_at) - Date.parse(b.captured_at));
+    manager.start({ environment: 'IMPORTED_CAPTURE', source: 'f12_capture', imported_at: new Date().toISOString(), captured_page: capture.page?.url ?? null });
+    for (const event of events) manager.emit(event);
+    return events.length;
   }
   const automation = mode === 'cdp-ai' ? new AutomationController({ directory: automationDir ?? path.join(runsDir, '.automation'), manager,
     getAi: () => ai, onStatus: status, isAvailable: () => !mutating && !closing && !stoppingSession,
@@ -530,6 +598,13 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       const url = new URL(req.url, `http://127.0.0.1:${port}`);
       if (req.method === 'GET' && url.pathname === '/') return send(res, 200, (await readWeb(MODE_PAGES[mode])).replace('__INSPECTION__', await readWeb('shared/inspection.html')).replaceAll('__CSRF__', csrf), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
       if (req.method === 'GET' && ASSETS[url.pathname]) return send(res, 200, await readWeb(ASSETS[url.pathname][0]), ASSETS[url.pathname][1]);
+      // The browser-capture snippet and a page explaining how to use it (for testing a site that only a
+      // whitelisted machine can open): run the snippet there, bring the JSON back here to import.
+      if (req.method === 'GET' && url.pathname === '/capture.js') return send(res, 200, await readWeb('capture.js'), 'text/javascript; charset=utf-8');
+      if (req.method === 'GET' && url.pathname === '/capture') {
+        const snippet = await readWeb('capture.js');
+        return send(res, 200, capturePage(snippet), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
+      }
       if (req.method === 'GET' && url.pathname === '/demo') return send(res, 200, await readWeb('demo.html'), 'text/html; charset=utf-8');
       // The demo product API whose price the demo page's tracking is checked against.
       if (req.method === 'GET' && url.pathname.startsWith('/demo/api/products/')) return send(res, 200, { data: { id: decodeURIComponent(url.pathname.slice('/demo/api/products/'.length)), name: 'Phòng Deluxe hướng biển', currency: 'VND', price: 1000000, originalPrice: 1200000 } });
@@ -669,7 +744,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       if (mutating) return send(res, 409, { error: 'Đang xử lý thao tác trước.' });
       mutating = true;
       try {
-        const data = finishData ?? await body(req);
+        const data = finishData ?? await body(req, url.pathname === '/api/import-capture' ? 20 * 1024 * 1024 : undefined);
         if (url.pathname === '/api/tp2/mapping') {
           if (data.deleteId) await tp2Mappings.delete(String(data.deleteId)); else await tp2Mappings.save(data.mapping);
           tp2ComparisonCache.clear(); return send(res, 200, tp2State());
@@ -746,6 +821,10 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           for (const pattern of patterns) { try { new RegExp(pattern, 'i'); } catch { throw new Error(`Regex endpoint không hợp lệ: ${pattern}`); } }
           activePatterns = [...new Set([...patterns, ...TP2_ENDPOINTS])]; collector?.setPatterns?.(activePatterns);
           status(`Allowlist: ${activePatterns.length} endpoint${collector ? ' (áp dụng cho request mới)' : ''}.`);
+        } else if (url.pathname === '/api/import-capture') {
+          if (manager.session?.status === 'RUNNING') throw new Error('Đang có phiên chạy. Kết thúc phiên trước khi nhập bản ghi.');
+          const count = importCapture(data.capture);
+          status(`Đã nhập ${count} event từ bản ghi F12. Nạp file đặc tả để đối chiếu, hoặc bấm Kết thúc & xuất báo cáo.`);
         } else if (url.pathname === '/api/start') {
           await startCapture(data);
         } else if (url.pathname === '/api/step/start') {

@@ -32,6 +32,16 @@ Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `n
 
 Không cần máy cá nhân hay thẻ: trên GitHub chọn **Code → Codespaces → Create codespace**. Codespace tự cài Chrome, desktop ảo và bật EventQA (bản AI) sau một gateway có mã truy cập. Chạy `bash .devcontainer/eventqa.sh info` để lấy link `https://…-8080.app.github.dev`, rồi đặt cổng 8080 sang **Public** để gửi cho người khác. Miễn phí khoảng 60 giờ mỗi tháng. Xem [hướng dẫn và giới hạn](.devcontainer/README.md).
 
+## Test trang chặn theo IP (UAT) bằng bản ghi từ F12
+
+Khi máy chạy EventQA không mở được trang (ví dụ UAT chỉ cho IP công ty), bắt event ngay trên **máy vào được trang** rồi nhập vào EventQA:
+
+1. Trên máy đó, mở trang trong Chrome/Edge, **F12 → Console**. Lấy đoạn mã và hướng dẫn ở `http://127.0.0.1:4174/capture` (hoặc `:4173/capture` bản thường); dán vào Console, Enter.
+2. Thao tác kịch bản test. Ô nhỏ ở góc đếm push/request; xong bấm **Dừng & tải JSON**.
+3. Về EventQA, bước **Website & trình duyệt test** → **Nhập bản ghi từ F12** → chọn file JSON vừa tải. Event hiện lên như một phiên bình thường; nạp file đặc tả để đối chiếu và xuất báo cáo.
+
+Đoạn mã chỉ đọc `dataLayer`/`InsiderQueue` và request GA4/Insider/TP2, không gửi dữ liệu đi đâu. Dùng khi hợp lệ (bạn có quyền mở trang trên máy đó); đây không phải cách vượt qua chặn IP.
+
 ## Test trên website thật
 
 Không cần file đặc tả để bắt đầu.

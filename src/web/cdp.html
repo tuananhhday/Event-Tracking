@@ -61,6 +61,11 @@
         <button type="button" class="btn primary big" id="start" data-action="start" style="margin-top:14px">Mở trình duyệt test</button>
         <p class="hint">Cửa sổ test dùng profile riêng và <b>giữ đăng nhập</b> cho lần sau. Website cần đăng nhập: đăng nhập trong cửa sổ test trước khi ghi bước.</p>
         <button type="button" class="btn ghost small" data-action="use-demo" data-lock-running>Chưa có website? Chạy thử với trang demo</button>
+        <details class="more" style="margin-top:10px"><summary>Trang chặn theo IP (UAT…)? Nhập bản ghi từ F12</summary>
+          <p class="hint" style="margin-top:8px">Nếu chỗ này không mở được trang (ví dụ UAT chỉ cho IP công ty), hãy bắt event bằng F12 trên máy vào được trang, rồi nhập file JSON vào đây để đối chiếu như một phiên bình thường. <a href="/capture" target="_blank" rel="noopener">Hướng dẫn &amp; lấy đoạn mã F12 ↗</a></p>
+          <label class="btn small" for="capture-file" data-lock-running>Nhập bản ghi từ F12<input id="capture-file" type="file" accept=".json,application/json" hidden></label>
+          <span class="hint" id="capture-file-status">Chọn file eventqa-capture-….json đã tải từ F12.</span>
+        </details>
       </div>
     </li>
 

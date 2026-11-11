@@ -1175,6 +1175,25 @@
       $('sheet').value = selected;
       $('spec-file-status').textContent = `${file.name} · ${names.length} sheet. Đã chọn ${selected || 'JSON'}; bấm Nhập file để áp dụng.`;
     }));
+    // Import an F12 browser capture (for a site only a whitelisted machine can open): parse the JSON here
+    // and replay it into a fresh session, then show the events like a normal capture.
+    $('capture-file')?.addEventListener('change', run(async () => {
+      const input = $('capture-file'), file = input.files[0]; if (!file) return;
+      const status = $('capture-file-status');
+      try {
+        if (ui.state?.running) throw new Error('Đang có phiên chạy. Bấm Kết thúc rồi nhập lại.');
+        if (file.size > 20 * 1024 * 1024) throw new Error('File lớn hơn 20 MB; chia nhỏ phiên ghi.');
+        status.textContent = `Đang đọc ${file.name}…`;
+        let capture;
+        try { capture = JSON.parse(await file.text()); } catch { throw new Error('File không phải JSON hợp lệ.'); }
+        if (capture?.app !== 'eventqa-capture') throw new Error('Không phải file bản ghi EventQA (chạy đoạn mã F12 ở trang /capture để tạo).');
+        await api('import-capture', { capture }, 'import-capture');
+        const pushes = Array.isArray(capture.pushes) ? capture.pushes.length : 0, requests = Array.isArray(capture.requests) ? capture.requests.length : 0;
+        status.textContent = `Đã nhập ${file.name} (${pushes} push, ${requests} request). Xem tab Event trực tiếp; nạp file đặc tả để đối chiếu.`;
+        selectTab('events');
+      } catch (error) { status.textContent = error.message; throw error; }
+      finally { input.value = ''; }
+    }));
     document.addEventListener('pointerdown', event => { if (event.target.closest('.board')) ui.holdUntil = Date.now() + 700; }, true);
     $('ev-pending')?.addEventListener('click', () => { ui.openEvents.clear(); for (const d of $$('#events details[open]')) d.open = false; ui.sig.events = null; render(); });
     document.addEventListener('click', event => {
