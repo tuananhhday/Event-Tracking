@@ -7,12 +7,17 @@ Bản AI bắt event giống hệt **bản thường** (đọc `dataLayer`, `Ins
 | Việc | Cách dùng | AI trả lời |
 |---|---|---|
 | **Viết nhận xét cho báo cáo** | Không cần bấm thêm: khi bấm **Kết thúc & xuất** hoặc **Xuất báo cáo** | Cột **Nhận xét của AI** trong sheet **Báo cáo event** của `report.xlsx`: mỗi event đủ gì, thiếu gì, sai gì và ai cần làm gì (mất khoảng 10–60 giây) |
+| **Hỏi AI về các event** | Ô **✦ Hỏi AI về các event** ở đầu tab **Event trực tiếp**: gõ câu hỏi (hoặc bấm câu gợi ý) rồi Enter. Vẫn test tiếp được trong lúc AI đọc | Trả lời thẳng câu hỏi (event có hợp lý không, có bắn lặp, GA4 và Insider có gửi giá trị xung đột, thiếu tham số, giá lệch API…), kết luận **Hợp lý / Có vấn đề / Chưa đủ dữ liệu** và danh sách vấn đề (Lỗi / Cần xem / Lưu ý), mỗi vấn đề có nút **Xem event** mở đúng event. AI nhớ 3 câu hỏi gần nhất trong phiên |
 | **Kiểm tra cả phiên** | Nhập file đặc tả (ví dụ sheet R1511), thao tác trên website, rồi mở tab **✦ Trợ lý AI** → ghi yêu cầu kiểm tra (không bắt buộc) → **✦ AI kiểm tra phiên này** | Event nào **đúng**, **sai** (sai trường nào), **thiếu**, đang có **vấn đề** gì (gửi lặp, ngoài đặc tả, có push nhưng không gửi lên server) và ai cần làm gì tiếp |
 | **Giải thích một event** | Tab **Event trực tiếp** → **Xem chi tiết** một event → **✦ AI giải thích event này** | Event là gì, người dùng làm gì thì bắn, có khớp file đặc tả không, giá gửi có lệch API của website không, vấn đề cụ thể và việc Dev/QC cần làm |
 | **Giải thích lỗi tự động** | Không cần bấm: khi một bước ra **Cần sửa** | Nguyên nhân và việc cần làm, hiện ngay dưới kết quả bước |
 | **Tạo rule từ mô tả** | Tab **✦ Trợ lý AI** → điền tên event, gửi cho GA4/Insider, mô tả, dán payload mẫu từ Excel → **✦ Tạo rule bằng AI** | Danh sách trường cần kiểm và cách kiểm (bằng tiếng Việt); bạn xem lại rồi lưu. Không cần AI: bước 2 → **Nhập tay event mong muốn** đọc payload mẫu giống file Excel |
 
 **AI không quyết định đúng/sai.** Kết luận khớp/lệch đặc tả luôn do công cụ tự kiểm theo file Excel; AI chỉ diễn giải kết luận đó và không được nói ngược lại. Rule AI tạo luôn là bản nháp, cần bạn duyệt trước khi dùng. Email, số điện thoại, token… được che trước khi gửi cho AI.
+
+## Hỏi AI về các event: AI đọc những gì
+
+Câu hỏi của bạn và 3 lượt hỏi đáp trước, cùng mọi thứ ở mục *Kiểm tra cả phiên* bên dưới, cộng thêm **tham số thực tế đã gửi** của từng event: các event có tên được nhắc trong câu hỏi (tối đa 30 lần gửi gần nhất), hoặc 40 event mới nhất nếu câu hỏi không nhắc tên event nào. Nhắc đúng tên event (ví dụ `add_to_cart`, `Product Page View`) để AI xem kỹ event đó. Kết luận khớp/lệch đặc tả vẫn là của công cụ; AI không được nói ngược, và chỉ được chỉ vào những event nó đã được đưa.
 
 ## Kiểm tra cả phiên: AI đọc những gì
 

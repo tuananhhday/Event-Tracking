@@ -174,6 +174,17 @@
         <button type="button" class="tab" role="tab" data-tab="log">Nhật ký</button>
       </div>
       <div class="tabpanel" data-panel="events">
+        <section class="ask-ai" aria-labelledby="ask-ai-title">
+          <div class="ask-ai-head"><b id="ask-ai-title">✦ Hỏi AI về các event</b><span class="hint">AI đọc các event đã bắt trong phiên (tham số thực tế, gửi lặp, giá vs API, đặc tả) rồi trả lời. Nhắc tên event trong câu hỏi để AI xem kỹ event đó.</span></div>
+          <div class="ask-ai-row"><input id="ask-ai-q" type="text" maxlength="1000" autocomplete="off" placeholder="Ví dụ: add_to_cart có hợp lý không? GA4 và Insider có gửi giá xung đột nhau không?" aria-label="Câu hỏi cho AI về các event"><button type="button" class="btn primary shrink" id="ask-ai-send">Hỏi AI</button></div>
+          <div class="ask-ai-chips" aria-label="Câu hỏi gợi ý">
+            <button type="button" class="ask-ai-chip" data-ask="Các event đã bắn trong phiên có hợp lý không? Có lỗi hay điểm đáng ngờ nào không?">Có hợp lý không?</button>
+            <button type="button" class="ask-ai-chip" data-ask="Có event nào bắn lặp, hoặc GA4 và Insider gửi giá trị xung đột nhau không?">Bắn lặp / xung đột?</button>
+            <button type="button" class="ask-ai-chip" data-ask="Giá, tiền tệ và mã sản phẩm gửi lên có nhất quán giữa các event và khớp API của website không?">Giá &amp; tiền tệ có khớp?</button>
+            <button type="button" class="ask-ai-chip" data-ask="Event nào thiếu tham số quan trọng hoặc có giá trị rỗng, null, undefined?">Thiếu tham số?</button>
+          </div>
+          <div id="ask-ai-thread" class="ask-ai-thread" aria-live="polite"></div>
+        </section>
         <div class="toolbar">
           <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Đã gửi lên server</button><button type="button" data-view="f12" aria-pressed="false">dataLayer · InsiderQueue (F12)</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
           <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
@@ -245,6 +256,7 @@
 
         <h3 class="section-title">AI còn giúp được gì?</h3>
         <div class="ai-helps">
+          <div class="ai-help"><b>Hỏi AI về các event</b><p>Ở đầu tab Event trực tiếp có ô <b>✦ Hỏi AI</b>: hỏi tự do (event có hợp lý không, có bắn lặp, xung đột GA4/Insider, thiếu tham số…). AI trả lời theo dữ liệu thật của phiên và chỉ tới từng event.</p><button type="button" class="btn small" data-workspace-tab="events">Mở ô Hỏi AI</button></div>
           <div class="ai-help"><b>1 · Giải thích một event</b><p>Ở tab Event trực tiếp, bấm <b>Xem chi tiết</b> một event rồi bấm <b>✦ AI giải thích event này</b>. AI cho biết event là gì, có khớp file đặc tả không và cần sửa gì.</p><button type="button" class="btn small" data-workspace-tab="events">Mở danh sách event</button></div>
           <div class="ai-help"><b>2 · Giải thích lỗi tự động</b><p>Khi một bước kiểm tra ra <b>Cần sửa</b>, AI tự viết nguyên nhân và việc cần làm ngay dưới kết quả. Không cần bấm gì thêm.</p></div>
           <div class="ai-help"><b>3 · Tạo rule từ mô tả</b><p>Điền thông tin một event ở ô bên dưới. AI đề xuất cần kiểm những trường nào; bạn xem lại rồi lưu.</p></div>
@@ -340,7 +352,7 @@ const AI_REASON = {
   AI_DISABLED: 'AI chưa bật: mở tab ✦ Trợ lý AI, dán key OpenRouter rồi bấm Bật AI.', API_KEY_MISSING: 'Chưa có OpenRouter key: mở tab ✦ Trợ lý AI, dán key rồi bấm Bật AI.',
   OPENROUTER_TIMEOUT: 'AI trả lời quá lâu. Thử lại sau ít phút.', OPENROUTER_UNAVAILABLE: 'Không kết nối được OpenRouter. Kiểm tra mạng rồi thử lại.',
   OPENROUTER_HTTP_401: 'OpenRouter key không đúng. Ở tab ✦ Trợ lý AI, mở “Đổi key OpenRouter” và dán lại key.', OPENROUTER_HTTP_402: 'Key hết credit cho model trả phí.', OPENROUTER_HTTP_429: 'AI đang quá tải. Thử lại sau ít phút.',
-  INVALID_AI_EXPLANATION: 'AI trả lời sai định dạng. Bấm thử lại.', INVALID_AI_REVIEW: 'AI trả lời sai định dạng. Bấm thử lại.',
+  INVALID_AI_EXPLANATION: 'AI trả lời sai định dạng. Bấm thử lại.', INVALID_AI_REVIEW: 'AI trả lời sai định dạng. Bấm thử lại.', INVALID_AI_ANSWER: 'AI trả lời sai định dạng. Hỏi lại.',
   AI_CANCELLED: 'Lệnh AI đã bị huỷ do dừng phiên.', NO_SUITABLE_MODELS: 'Không có model phù hợp giới hạn giá/ngân sách hiện tại.', MODEL_NOT_FOUND: 'Model cấu hình không tồn tại trên OpenRouter.',
   MODEL_STRUCTURED_OUTPUT_UNSUPPORTED: 'Model cấu hình không hỗ trợ xuất JSON.', MODEL_UNSUITABLE_OR_OVER_BUDGET: 'Model cấu hình vượt giới hạn giá hoặc ngân sách.',
   AI_REQUEST_BUDGET_EXCEEDED: 'Vượt ngân sách ước tính cho một tác vụ.', CREDIT_EXHAUSTED: 'Key hết credit cho model trả phí; chỉ còn model free.', API_KEYS_UNAVAILABLE: 'Key không dùng được (sai key hoặc hết credit). Mở “Đổi key OpenRouter” ở thẻ trên và dán lại key.',
@@ -380,6 +392,64 @@ function reviewHtml(result) {
     ${section('Đúng', 'PASS', r.correct)}${section('Sai', 'FAIL', r.wrong)}${section('Thiếu', 'REVIEW', r.missing)}${section('Đang có vấn đề', 'warn', r.problems)}${section('Nên làm tiếp', '', r.next_steps, true)}
     <p class="hint">Đúng / sai theo kết quả công cụ tự kiểm ở tab Đối chiếu đặc tả. ${aiCost(result.routing)}</p></div>`;
 }
+
+// Questions to the AI about the captured events, answered in a thread. The last three answered turns go
+// with the next question; the thread starts over with a new session. Asking does not lock the page: it
+// calls the API directly so the test can go on while the AI reads.
+const askThread = [];
+let askBusy = false, askSessionId;
+const ASK_VERDICT = { OK: ['PASS', 'Hợp lý'], ISSUES: ['FAIL', 'Có vấn đề'], NOT_ENOUGH_DATA: ['REVIEW', 'Chưa đủ dữ liệu'] };
+const ASK_SEVERITY = { error: ['FAIL', 'Lỗi'], warning: ['REVIEW', 'Cần xem'], info: ['', 'Lưu ý'] };
+// AI answers put one point per "- " line.
+function answerHtml(text) {
+  const blocks = []; let list = [];
+  const flush = () => { if (list.length) blocks.push(`<ul>${list.map(item => `<li>${aiText(item)}</li>`).join('')}</ul>`); list = []; };
+  for (const line of String(text).split(/\n+/)) {
+    const value = line.trim(); if (!value) continue;
+    const point = value.match(/^[-•*]\s+(.*)$/);
+    if (point) list.push(point[1]); else { flush(); blocks.push(`<p>${aiText(value)}</p>`); }
+  }
+  flush(); return blocks.join('');
+}
+function askTurnHtml(turn) {
+  const question = `<div class="ask-ai-q">${esc(turn.question)}</div>`;
+  if (turn.loading) return `${question}<div class="ai-answer"><p class="hint">AI đang đọc các event của phiên… (thường mất 10–40 giây; vẫn test tiếp được)</p></div>`;
+  if (turn.error) return `${question}<div class="banner warn"><p>${esc(turn.error)}</p></div>`;
+  const r = turn.result, [cls, label] = ASK_VERDICT[r.verdict] || ['', ''];
+  const findings = r.findings.length ? `<ul class="ask-ai-findings">${r.findings.map(f => {
+    const [fc, fl] = ASK_SEVERITY[f.severity] || ['', f.severity];
+    return `<li><span class="pill ${fc}">${esc(fl)}</span><span class="ask-ai-finding">${f.event ? `<b>${esc(f.event)}</b> · ` : ''}${aiText(f.note)}</span>${f.evidence_id ? `<button type="button" class="btn small shrink" data-evidence="${esc(f.evidence_id)}">Xem event</button>` : ''}</li>`;
+  }).join('')}</ul>` : '';
+  return `${question}<div class="ai-answer"><div class="ai-answer-title">✦ AI trả lời ${label ? `<span class="pill ${cls}">${esc(label)}</span>` : ''}</div>${answerHtml(r.answer)}${findings}<p class="hint">${aiCost(r.routing)}</p></div>`;
+}
+function renderAsk() {
+  $('ask-ai-thread').innerHTML = askThread.length
+    ? askThread.map(askTurnHtml).join('') + '<div class="row"><button type="button" class="btn ghost small shrink" id="ask-ai-clear">Xóa hội thoại</button></div>' : '';
+  $('ask-ai-send').disabled = askBusy;
+}
+async function askAi(text) {
+  const question = String(text ?? '').trim();
+  if (!question) { $('ask-ai-q').focus(); return EventQA.toast('Nhập câu hỏi cho AI trước.'); }
+  if (askBusy) return EventQA.toast('AI đang trả lời câu hỏi trước; đợi xong rồi hỏi tiếp.');
+  const history = askThread.filter(turn => turn.result).slice(-3).map(turn => ({ question: turn.question, answer: turn.result.answer }));
+  const turn = { question, loading: true };
+  askThread.push(turn); if (askThread.length > 10) askThread.shift();
+  askBusy = true; $('ask-ai-q').value = ''; renderAsk();
+  try {
+    const response = await fetch('/api/ai-ask', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-EventQA-Token': token }, body: JSON.stringify({ question, history }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) turn.error = result.error || `Hỏi AI thất bại (HTTP ${response.status}).`;
+    else if (!result.available) turn.error = reasonText(result.reason);
+    else turn.result = result;
+  } catch { turn.error = 'Mất kết nối tới EventQA. Thử lại.'; }
+  finally { turn.loading = false; askBusy = false; renderAsk(); }
+}
+$('ask-ai-send').addEventListener('click', () => askAi($('ask-ai-q').value));
+$('ask-ai-q').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); askAi($('ask-ai-q').value); } });
+document.addEventListener('click', event => {
+  const chip = event.target.closest('[data-ask]'); if (chip) return askAi(chip.dataset.ask);
+  if (event.target.closest('#ask-ai-clear')) { askThread.length = 0; renderAsk(); }
+});
 
 function setAttach(value) {
   attach = value; targetId = '';
@@ -445,7 +515,13 @@ function draftInput() {
 }
 EventQA.boot({ token, mode: 'cdp-ai', hooks: {
   startPayload: () => { if (attach && !targetId) throw new Error('Quét và chọn tab cần gắn trước.'); return attach ? { attach: true, targetId } : { attach: false }; },
-  render: s => renderAi(s.ai),
+  render: s => {
+    renderAi(s.ai);
+    // A new session starts a new conversation: earlier answers were about other events.
+    const session = s.session?.id ?? null;
+    if (askSessionId !== undefined && session && session !== askSessionId && !askBusy) { askThread.length = 0; renderAsk(); }
+    if (session) askSessionId = session;
+  },
   eventExtras: e => `<div class="ai-explain" data-ai-for="${esc(e.evidence_id)}"><button type="button" class="btn small" data-action="ai-explain-event" data-event-id="${esc(e.evidence_id)}">✦ AI giải thích event này</button><div class="ai-answer">${explanationHtml(explanations.get(e.evidence_id))}</div></div>`,
   actions: {
     'ai-explain-event': async button => {

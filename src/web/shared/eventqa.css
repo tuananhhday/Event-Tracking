@@ -243,6 +243,26 @@ pre { font-size: 11px; line-height: 1.6; max-height: 340px; overflow: auto; whit
 .rule-plain td:first-child { white-space: nowrap; }
 .ai-review-section { margin: 10px 0 4px; }
 .ai-review-section > b { display: flex; align-items: center; gap: 6px; }
+/* "Hỏi AI về các event" bar at the top of the live events tab (AI edition). */
+.ask-ai { border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; background: var(--surface); }
+.ask-ai-head { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.ask-ai-head b { color: var(--accent); }
+.ask-ai-head .hint { margin: 0; }
+.ask-ai-row { display: flex; gap: 8px; }
+.ask-ai-row input { flex: 1; min-width: 0; }
+.ask-ai-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ask-ai-chip { border: 1px solid var(--line); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.ask-ai-chip:hover { border-color: var(--accent); color: var(--accent); }
+.ask-ai-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ask-ai-thread:empty { display: none; }
+.ask-ai-thread { margin-top: 12px; display: grid; gap: 8px; max-height: 560px; overflow: auto; }
+.ask-ai-q { justify-self: end; max-width: 85%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px 12px 2px 12px; padding: 6px 12px; }
+.ask-ai-thread .ai-answer { margin-top: 0; }
+.ask-ai-thread .banner { margin: 0; }
+.ask-ai-findings { list-style: none; padding: 0 !important; margin: 6px 0 8px; display: grid; gap: 6px; }
+.ask-ai-findings li { display: flex; gap: 8px; align-items: flex-start; }
+.ask-ai-finding { flex: 1; min-width: 0; }
+@media (max-width: 640px) { .ask-ai-row { flex-direction: column; } .ask-ai-findings li { flex-wrap: wrap; } }
 
 /* Toasts */
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; max-width: min(380px, calc(100vw - 32px)); }

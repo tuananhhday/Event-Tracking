@@ -158,7 +158,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     return specCoverage(manager.cases, events, coverageCache, { links: deliveryLinks(events) });
   };
   const statuses = []; let collector = null, browserHandle = null, testPage = null, exported = null, mutating = false;
-  let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0;
+  let closing = false, closePromise = null, stoppingSession = null, captureEpoch = 0, asking = false;
   let reportNotesCache = null, reportNotesController = null, reportExportTask = null, reportWriteTask = null, reportExportEpoch = 0;
   const status = message => { statuses.push({ at: new Date().toISOString(), message: redact(String(message && typeof message === 'object' ? message.message ?? JSON.stringify(message) : message)) }); if (statuses.length > 40) statuses.shift(); };
   let ai = aiClient ?? new OpenRouterClient();
@@ -212,6 +212,63 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       price_mismatches: prices(events, manager.snapshot().api).checks.filter(check => check.status === 'MISMATCH').slice(-30).map(check => ({ at: check.at.slice(11, 19), vendor: check.source, event: check.event,
         field: check.field, sent: check.sent, api: check.api?.value, api_field: check.api?.path, ...(check.stale ? { matches_older_api: true } : {}) })),
     };
+  }
+  // What the AI reads to answer a QC question about the session: the review input (specification, the
+  // tool's verdicts, what was sent, problems) plus the parameters actually sent by the events the question
+  // names (otherwise the latest ones), so it can judge values, conflicts and errors. Kept under ~90 KB.
+  function sessionAskInput(events, question, history) {
+    const { requirement: _unused, ...review } = sessionReviewInput(events, null);
+    const links = deliveryLinks(events);
+    const rows = activityEntries(events, { links }).filter(row => row.event_kind === 'business');
+    const where = url => { try { const parsed = new URL(url); return parsed.pathname + parsed.search.slice(0, 80); } catch { return ''; } };
+    const clip = (value, max) => {
+      if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+      const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+      return text.length > max ? `${text.slice(0, max)}…` : text;
+    };
+    const params = json => {
+      const all = { ...(json?.default_parameters ?? {}), ...(json?.custom_parameters ?? {}) }, out = {};
+      for (const [key, value] of Object.entries(all).slice(0, 40)) {
+        if (key === 'items' && Array.isArray(value)) {
+          out.items = value.slice(0, 4).map(item => item && typeof item === 'object' ? Object.fromEntries(Object.entries(item).slice(0, 20).map(([k, v]) => [k, clip(v, 80)])) : clip(item, 80));
+          if (value.length > 4) out.items_total = value.length;
+        } else out[key] = clip(value, 160);
+      }
+      return out;
+    };
+    // Event names the question mentions, as whole names (page_view is not named by "listing_page_view").
+    const lower = question.toLowerCase(), literal = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const names = [...new Set(rows.flatMap(row => [row.display_name, row.event_name]).filter(name => typeof name === 'string' && name.length > 2))];
+    const named = names.filter(name => new RegExp(`(?:^|[^\\p{L}\\p{N}_])${literal(name.toLowerCase())}(?:[^\\p{L}\\p{N}_]|$)`, 'u').test(lower));
+    let focus = named.length ? rows.filter(row => named.includes(row.display_name) || named.includes(row.event_name)).slice(-30) : rows.slice(-40);
+    // Events around the ones asked about (±15 s, both vendors) come along marked `nearby`: the same user
+    // action seen by the other vendor, and the steps before/after, are what conflicts are judged against.
+    const time = row => Date.parse(row.sent_at ?? row.captured_at);
+    let nearby = [];
+    if (named.length) {
+      const asked = new Set(focus), times = focus.map(time);
+      nearby = rows.filter(row => !asked.has(row) && times.some(at => Math.abs(time(row) - at) <= 15000)).slice(-20);
+    }
+    const detail = row => ({ id: row.evidence_id, at: row.captured_at.slice(11, 19), vendor: row.source, event: row.display_name,
+      ...(row.display_name !== row.event_name ? { raw_event: row.event_name } : {}), delivery: row.delivery, page: where(row.page?.url),
+      ...(row.measurement_id ? { ga4_property: row.measurement_id } : {}),
+      ...(row.repeat ? { repeat_of: row.repeat.evidence_id, repeat_after_s: Number((row.repeat.after_ms / 1000).toFixed(1)) } : {}), params: params(row.json) });
+    const counts = new Map();
+    for (const row of rows) {
+      const key = `${row.source}|${row.display_name}`, count = counts.get(key) ?? { vendor: row.source, event: row.display_name, sent: 0, not_sent: 0 };
+      if (row.delivery === 'sent') count.sent++; else if (row.delivery === 'not_sent') count.not_sent++;
+      counts.set(key, count);
+    }
+    const past = (Array.isArray(history) ? history : []).slice(-3)
+      .map(turn => ({ question: String(turn?.question ?? '').slice(0, 500), answer: String(turn?.answer ?? '').slice(0, 1500) })).filter(turn => turn.question);
+    const details = () => [...focus.map(detail), ...nearby.map(row => ({ ...detail(row), nearby: true }))].sort((a, b) => a.at.localeCompare(b.at));
+    const build = () => ({ question, history: past, focused_on: named.length ? named : 'latest_events', event_counts: [...counts.values()].slice(0, 80), event_details: details(), ...review });
+    let input = build();
+    while (JSON.stringify(input).length > 90000 && (nearby.length || focus.length > 5)) {
+      if (nearby.length) nearby = nearby.slice(Math.ceil(nearby.length / 2)); else focus = focus.slice(Math.ceil(focus.length / 4));
+      input = build();
+    }
+    return input;
   }
   // The AI writes the words; which rows are correct, wrong or missing is the tool's verdict. The three
   // lists are rebuilt from it, keeping the AI's sentence for a row only when it names that row's event
@@ -593,6 +650,21 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       }
       if (finishData && automation?.busy) return send(res, 409, { error: 'Luồng tự động đang chạy; dùng Kết thúc để dừng trước khi xuất.' });
       if (closing || stoppingSession) return send(res, 503, { error: 'Ứng dụng đang dừng; bằng chứng đang được lưu.' });
+      // A question about the captured events only reads the session, so it runs beside capture, steps and
+      // automation instead of holding the lock other actions wait on. One question at a time.
+      if (url.pathname === '/api/ai-ask') {
+        if (mode !== 'cdp-ai') { req.resume(); return send(res, 404, { error: 'Chức năng AI chỉ có trong bản AI.' }); }
+        if (asking) { req.resume(); return send(res, 409, { error: 'AI đang trả lời câu hỏi trước; đợi xong rồi hỏi tiếp.' }); }
+        asking = true;
+        try {
+          const data = await body(req), question = String(data.question ?? '').trim();
+          if (!question) throw new Error('Nhập câu hỏi cho AI trước.');
+          if (question.length > 1000) throw new Error('Câu hỏi dài quá 1000 ký tự; hỏi ngắn gọn hơn.');
+          const events = manager.snapshot().events;
+          if (!events.some(event => eventKind(event) === 'business')) throw new Error('Phiên chưa có event để AI xem. Mở website và thao tác trước.');
+          return send(res, 200, await ai.askSession(sessionAskInput(events, question, data.history)));
+        } finally { asking = false; }
+      }
       if (automation?.busy && !['/api/export', '/api/ai-review', '/api/ai-explain-event', '/api/tp2/mapping'].includes(url.pathname)) return send(res, 409, { error: 'Luồng tự động đang chạy. Dừng luồng trước khi thay đổi phiên hoặc kịch bản.' });
       if (mutating) return send(res, 409, { error: 'Đang xử lý thao tác trước.' });
       mutating = true;

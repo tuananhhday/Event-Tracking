@@ -639,11 +639,18 @@
     ui.sig.events = null; render();
   }
   async function jumpToEvidence(id) {
+    // The click that asked for this event set the short render hold; going to the event must not wait for it.
+    ui.holdUntil = 0; clearTimeout(ui.holdTimer);
     selectTab('events'); ui.view = 'stream'; ui.groupFilter = null;
     for (const [elId, value] of [['ev-layer', ''], ['ev-source', '']]) if ($(elId)) $(elId).value = value;
     if ($('ev-marked')) $('ev-marked').checked = false;
     if ($('ev-search')) $('ev-search').value = id; ui.openEvents.add(id); ui.sig.events = null;
-    if (ui.state?.eventsCompact) await refresh(); else render();
+    render();
+    // The timeline needs full events. refresh() returns at once while a poll is in flight, so wait for it.
+    if (ui.state?.eventsCompact) {
+      for (let tries = 0; ui.refreshing && tries < 50; tries++) await new Promise(resolve => setTimeout(resolve, 100));
+      await refresh();
+    }
     const target = document.querySelector(`[data-ev="${CSS.escape(id)}"]`);
     if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
     else if (id.startsWith('STEP-')) toast('Đây là bằng chứng của bước (event vắng mặt). Xem steps.jsonl trong thư mục phiên.');
