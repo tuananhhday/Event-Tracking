@@ -13,7 +13,9 @@ const COOKIE = 'eqa_gate';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 // The app's rail links to the local mode chooser; online there is only this app.
 const HUB_LINK = 'http://127.0.0.1:4172/';
-const VNC_PAGE = '/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true';
+// resize=remote makes the remote desktop match the viewer's tab (pixel for pixel, no blurry scaling);
+// quality=9 is noVNC's sharpest JPEG level.
+const VNC_PAGE = '/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=remote&quality=9&compression=2&reconnect=true';
 const HOP_BY_HOP = ['connection', 'keep-alive', 'proxy-connection', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'];
 const PAGE_HEADERS = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
   'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };

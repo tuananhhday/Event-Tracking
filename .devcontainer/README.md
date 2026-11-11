@@ -32,9 +32,20 @@ Trên cloud, Chrome không bật cửa sổ trên máy bạn mà chạy trong **
 
 Codespace có cả **Google Chrome** và **Microsoft Edge** (bản Linux, cùng nhân với bản Windows; website chỉ thấy hệ điều hành là Linux). Nếu Edge cài không được thì EventQA ẩn lựa chọn Edge và vẫn chạy với Chrome.
 
-## Đăng nhập có được lưu không
+Màn hình Chrome chạy 1920×1080 màu 24-bit và tự khớp đúng kích thước tab của bạn (không co giãn nên chữ nét). Muốn nét hơn nữa thì mở tab Chrome to ra (F11 toàn màn hình).
 
-Có. Mỗi trình duyệt dùng một profile test riêng trong `profiles/` của codespace (Chrome và Edge tách nhau, mỗi trình duyệt đăng nhập một lần). Cookie đăng nhập còn nguyên khi tắt phiên EventQA hay khi codespace dừng rồi mở lại. Chỉ mất khi **xóa codespace** hoặc khi website tự hết hạn phiên đăng nhập. `profiles/` không bao giờ được đẩy lên GitHub.
+## Đăng nhập được lưu ở đâu
+
+Trên **máy ảo của GitHub Codespaces** (chạy trên Microsoft Azure, region tự chọn theo vị trí của bạn; xem hoặc đổi ở GitHub → Settings → Codespaces → Region), trong thư mục:
+
+```
+/workspaces/Event-Tracking/profiles/cdp-ai-chrome   ← Chrome
+/workspaces/Event-Tracking/profiles/cdp-ai-edge     ← Edge
+```
+
+Chrome và Edge tách nhau, mỗi trình duyệt đăng nhập một lần. Cookie đăng nhập còn nguyên khi tắt phiên EventQA, khi codespace dừng rồi mở lại, và khi *Rebuild Container*. Chỉ mất khi website tự hết hạn phiên đăng nhập hoặc khi **codespace bị xóa**: tự xóa hoặc GitHub tự xóa codespace không dùng sau thời gian giữ lại (mặc định 30 ngày, chỉnh ở Settings → Codespaces → Default retention period). `profiles/` không bao giờ được đẩy lên GitHub.
+
+Muốn xóa đăng nhập ngay: đăng xuất trên website, hoặc chạy `bash .devcontainer/eventqa.sh stop && rm -rf profiles/cdp-ai-* && bash .devcontainer/eventqa.sh start`.
 
 Vì phiên đăng nhập nằm trên máy chủ, **ai có link và mã truy cập đều dùng được tài khoản đang đăng nhập** trong Chrome/Edge đó. Không bấm “Lưu mật khẩu” của trình duyệt; chỉ để cookie đăng nhập.
 

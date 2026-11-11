@@ -6,6 +6,7 @@
     "ghcr.io/devcontainers/features/desktop-lite:1": { "password": "noPassword", "webPort": "6080" }
   },
   "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "containerEnv": { "VNC_RESOLUTION": "1920x1080x24", "VNC_DPI": "96" },
   "forwardPorts": [8080],
   "portsAttributes": {
     "8080": { "label": "EventQA (link chia sẻ)", "onAutoForward": "notify" },
