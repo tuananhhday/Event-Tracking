@@ -53,7 +53,7 @@ a{color:var(--accent)}
 </style></head><body><main>
 <h1>Bản ghi event từ F12</h1>
 <p>Dùng khi trang cần kiểm chỉ mở được trên một máy/mạng nhất định (ví dụ UAT chặn theo IP). Bắt event ngay trong trình duyệt đã mở được trang, rồi mang file về EventQA để đối chiếu — không cần cài gì trên máy đó.</p>
-<h2>Cách 1 · Dán vào Console (nhanh, cho một trang)</h2>
+<h2>Cách dùng (không cần cài gì)</h2>
 <ol>
 <li>Trên máy <b>vào được trang cần kiểm</b>, mở trang đó trong Chrome/Edge và đăng nhập như bình thường.</li>
 <li>Nhấn <b>F12</b> → tab <b>Console</b>.</li>
@@ -63,15 +63,10 @@ a{color:var(--accent)}
 </ol>
 <button id="copy" type="button">Chép đoạn mã</button>
 <textarea id="snippet" readonly spellcheck="false">${escapeHtml(snippet)}</textarea>
-<p class="hint" style="color:var(--muted)">Cách này <b>mất khi tải lại trang (F5) hoặc chuyển trang có tải lại</b> — phải dán lại. Nếu kịch bản đi qua nhiều trang hoặc có đăng nhập chuyển trang, dùng Cách 2.</p>
 
-<h2>Cách 2 · Cài tiện ích Tampermonkey (tự chạy mọi lần tải trang)</h2>
-<ol>
-<li>Cài tiện ích <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a> cho Chrome/Edge (một lần).</li>
-<li>Mở link <a href="/capture.user.js">/capture.user.js</a> — Tampermonkey hiện trang cài, bấm <b>Install</b>.</li>
-<li>Mở trang cần kiểm. Đoạn mã <b>tự chạy</b> và giữ bản ghi qua các lần tải trang/đăng nhập. Làm hết kịch bản rồi bấm <b>Dừng &amp; tải JSON</b> ở ô góc phải.</li>
-</ol>
-<div class="note">Mặc định tiện ích chạy trên <code>vinpearlota.com</code>. Trang khác: trong Tampermonkey mở script này, sửa dòng <code>// @match</code> thành tên miền của bạn. Tắt script khi không dùng để nó không chạy nền.</div>
+<div class="note"><b>Khi phải tải lại trang (F5) hoặc chuyển trang có tải lại:</b> bản ghi <b>không mất</b> — nó được giữ trong tab. Sau mỗi lần tải trang, chỉ cần <b>dán lại đoạn mã</b> một lần (Console nhớ lệnh cũ: bấm mũi tên ↑ rồi Enter) là ghi tiếp, số đếm cộng dồn. Đừng đóng tab giữa chừng. Làm xong cả kịch bản mới bấm Dừng &amp; tải.</div>
+<p class="hint" style="color:var(--muted)">Mẹo: nhiều trang (như VP-OTA) chuyển trang trong cùng ứng dụng khi bạn <b>bấm link/nút</b> (không tải lại) — khi đó dán một lần là đủ cho cả luồng, không cần dán lại. Chỉ khi bạn tự F5 hoặc đăng nhập chuyển sang trang khác mới cần dán lại.</p>
+<p class="hint" style="color:var(--muted)">Cài được tiện ích? Có bản tự chạy mọi lần tải trang: <a href="/capture.user.js">Tampermonkey userscript</a> (cài <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a> rồi mở link này → Install).</p>
 
 <h2>Nhập vào EventQA</h2>
 <p>Về EventQA, bước <b>Website &amp; trình duyệt test</b> → mở <b>“Trang chặn theo IP (UAT…)? Nhập bản ghi từ F12”</b> → chọn file JSON vừa tải. Event hiện lên; nạp file đặc tả để đối chiếu và xuất báo cáo như một phiên bình thường.</p>
