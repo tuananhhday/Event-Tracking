@@ -30,7 +30,13 @@ Chỉ cổng **8080** (gateway) được chia sẻ. EventQA, desktop ảo và c�
 
 Trên cloud, Chrome không bật cửa sổ trên máy bạn mà chạy trong **màn hình ảo** của codespace. Sau khi bấm **Mở trình duyệt test** trong EventQA, bấm mục **Chrome** ở thanh bên trái (hoặc mở `link/vnc`). Một tab mới hiện trang web đang test, thao tác ở đó như thao tác trên máy: đăng nhập SSO, tìm phòng, đặt phòng… Event bắt được vẫn hiện ở tab EventQA. Kéo hai tab ra hai nửa màn hình để vừa thao tác vừa xem event.
 
-Máy codespace chỉ có Google Chrome nên lựa chọn Edge được ẩn.
+Codespace có cả **Google Chrome** và **Microsoft Edge** (bản Linux, cùng nhân với bản Windows; website chỉ thấy hệ điều hành là Linux). Nếu Edge cài không được thì EventQA ẩn lựa chọn Edge và vẫn chạy với Chrome.
+
+## Đăng nhập có được lưu không
+
+Có. Mỗi trình duyệt dùng một profile test riêng trong `profiles/` của codespace (Chrome và Edge tách nhau, mỗi trình duyệt đăng nhập một lần). Cookie đăng nhập còn nguyên khi tắt phiên EventQA hay khi codespace dừng rồi mở lại. Chỉ mất khi **xóa codespace** hoặc khi website tự hết hạn phiên đăng nhập. `profiles/` không bao giờ được đẩy lên GitHub.
+
+Vì phiên đăng nhập nằm trên máy chủ, **ai có link và mã truy cập đều dùng được tài khoản đang đăng nhập** trong Chrome/Edge đó. Không bấm “Lưu mật khẩu” của trình duyệt; chỉ để cookie đăng nhập.
 
 ## Lệnh
 
@@ -40,6 +46,7 @@ Máy codespace chỉ có Google Chrome nên lựa chọn Edge được ẩn.
 | `bash .devcontainer/eventqa.sh start` | Bật lại EventQA và gateway (tự chạy mỗi khi codespace khởi động) |
 | `bash .devcontainer/eventqa.sh stop` | Tắt |
 | `bash .devcontainer/eventqa.sh logs` | Xem log khi có lỗi |
+| `bash .devcontainer/setup.sh` | Cài lại Chrome, Edge, thư viện (sau `git pull` có thay đổi cài đặt) |
 
 EventQA hoặc gateway mà bị dừng thì tự bật lại sau 3 giây. Bằng chứng nằm trong `runs/` của codespace, còn nguyên khi codespace dừng rồi mở lại. Codespace bị xóa thì mất `runs/`.
 
