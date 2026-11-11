@@ -1,2 +1,4 @@
 # Windows launchers keep CRLF in clones and source downloads.
 *.cmd text eol=crlf
+# Scripts run inside Linux (Codespaces) and need LF endings.
+*.sh text eol=lf

@@ -1,0 +1,21 @@
+{
+  "name": "EventQA online",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "24" },
+    "ghcr.io/devcontainers/features/desktop-lite:1": { "password": "noPassword", "webPort": "6080" }
+  },
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": { "label": "EventQA (link chia sẻ)", "onAutoForward": "notify" },
+    "4174": { "label": "EventQA nội bộ", "onAutoForward": "ignore" },
+    "6080": { "label": "Desktop nội bộ (mở qua /vnc)", "onAutoForward": "ignore" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "ignore" },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/eventqa.sh start",
+  "customizations": {
+    "codespaces": { "openFiles": [".devcontainer/README.md"] }
+  }
+}

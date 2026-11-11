@@ -52,6 +52,18 @@ function validateProfile(path) {
   return candidate;
 }
 
+/** Extra Chrome flags for hosted Linux runs (EVENTQA_BROWSER_ARGS), e.g. --no-sandbox where the
+ * container has no usable sandbox and --disable-dev-shm-usage for a small /dev/shm. Flags that would
+ * move the debug endpoint, the profile or the headless mode are refused: CDP stays on 127.0.0.1. */
+export function extraBrowserArgs(value = process.env.EVENTQA_BROWSER_ARGS) {
+  const args = String(value ?? '').split(/\s+/).filter(Boolean);
+  for (const arg of args) {
+    if (!/^--[a-z0-9][a-z0-9-]*(=[^\s]*)?$/i.test(arg)) throw new Error(`EVENTQA_BROWSER_ARGS chỉ nhận cờ dạng --ten hoặc --ten=gia-tri (gặp "${arg}").`);
+    if (/^--(remote-debugging|remote-allow-origins|user-data-dir|headless)/i.test(arg)) throw new Error(`EVENTQA_BROWSER_ARGS không được đổi ${arg.split('=')[0]}.`);
+  }
+  return args;
+}
+
 export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'about:blank', profileDir,
   executablePath, headless = false, startupTimeoutMs = 15000 } = {}) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Debug port must be an integer from 1024 to 65535.');
@@ -70,6 +82,7 @@ export async function launchBrowser({ browser = 'chrome', port = 9222, url = 'ab
     `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--new-window'];
   if (!headless) args.push('--start-maximized');
   if (headless) args.push('--headless=new');
+  args.push(...extraBrowserArgs());
   args.push(url);
   const child = spawn(executable, args, { windowsHide: true, stdio: 'ignore' });
   let startupError;

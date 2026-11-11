@@ -28,6 +28,10 @@ Sau khi clone Git, cấu hình riêng cho AI bằng cách copy `.env.example` th
 
 Dùng `npm.cmd` trong PowerShell để không vướng execution policy của `npm.ps1`. Yêu cầu Node.js **24 trở lên**. Mỗi bản chỉ chạy một tiến trình: mở lần hai khi bản đầu còn chạy sẽ báo trùng cổng; dùng `STOP_EVENT_QA.cmd` để tắt bản cũ.
 
+## Chạy online bằng GitHub Codespaces
+
+Không cần máy cá nhân hay thẻ: trên GitHub chọn **Code → Codespaces → Create codespace**. Codespace tự cài Chrome, desktop ảo và bật EventQA (bản AI) sau một gateway có mã truy cập. Chạy `bash .devcontainer/eventqa.sh info` để lấy link `https://…-8080.app.github.dev`, rồi đặt cổng 8080 sang **Public** để gửi cho người khác. Miễn phí khoảng 60 giờ mỗi tháng. Xem [hướng dẫn và giới hạn](.devcontainer/README.md).
+
 ## Test trên website thật
 
 Không cần file đặc tả để bắt đầu.
