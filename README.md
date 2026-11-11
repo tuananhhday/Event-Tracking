@@ -36,9 +36,12 @@ Không cần máy cá nhân hay thẻ: trên GitHub chọn **Code → Codespaces
 
 Khi máy chạy EventQA không mở được trang (ví dụ UAT chỉ cho IP công ty), bắt event ngay trên **máy vào được trang** rồi nhập vào EventQA:
 
-1. Trên máy đó, mở trang trong Chrome/Edge, **F12 → Console**. Lấy đoạn mã và hướng dẫn ở `http://127.0.0.1:4174/capture` (hoặc `:4173/capture` bản thường); dán vào Console, Enter.
-2. Thao tác kịch bản test. Ô nhỏ ở góc đếm push/request; xong bấm **Dừng & tải JSON**.
-3. Về EventQA, bước **Website & trình duyệt test** → **Nhập bản ghi từ F12** → chọn file JSON vừa tải. Event hiện lên như một phiên bình thường; nạp file đặc tả để đối chiếu và xuất báo cáo.
+Mở `http://127.0.0.1:4174/capture` (hoặc `:4173/capture` bản thường) để lấy đoạn mã và hướng dẫn. Có hai cách bắt:
+
+- **Dán Console** (nhanh, cho một trang): F12 → Console → dán đoạn mã → Enter. **Mất khi F5/chuyển trang có tải lại**, phải dán lại.
+- **Tiện ích Tampermonkey** (kịch bản nhiều trang, có đăng nhập chuyển trang): cài [Tampermonkey](https://www.tampermonkey.net/), mở `…/capture.user.js` → Install. Đoạn mã **tự chạy mọi lần tải trang và gộp bản ghi**, nên F5 hay đăng nhập giữa chừng không mất. Mặc định chạy trên `vinpearlota.com`; trang khác thì sửa dòng `// @match`.
+
+Thao tác kịch bản test, xong bấm **Dừng & tải JSON** ở ô góc phải. Về EventQA, bước **Website & trình duyệt test** → **Nhập bản ghi từ F12** → chọn file JSON. Event hiện lên như một phiên bình thường; nạp file đặc tả để đối chiếu và xuất báo cáo.
 
 Đoạn mã chỉ đọc `dataLayer`/`InsiderQueue` và request GA4/Insider/TP2, không gửi dữ liệu đi đâu. Dùng khi hợp lệ (bạn có quyền mở trang trên máy đó); đây không phải cách vượt qua chặn IP.
 

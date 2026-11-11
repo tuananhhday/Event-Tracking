@@ -14,6 +14,22 @@
   const state = { enabled: true, arrays: new WeakMap(), ownedArrays: new Set(), properties: [], timer: null };
   Object.defineProperty(window, marker, { value: state, configurable: true });
 
+  // When loaded as a userscript (Tampermonkey), window.__eventqaCapturePersist is set so the capture
+  // survives page reloads/navigations: each load restores what earlier loads of this tab collected
+  // (sessionStorage, per tab + origin) and keeps appending, so a multi-page flow ends in one file.
+  const PERSIST = window.__eventqaCapturePersist === true, STORE = 'eventqa_capture_v1';
+  let saveTimer, saveOff = false;
+  if (PERSIST) try {
+    const prior = JSON.parse(sessionStorage.getItem(STORE) || '{}');
+    if (Array.isArray(prior.pushes)) for (const p of prior.pushes) if (pushes.length < MAX) pushes.push(p);
+    if (Array.isArray(prior.requests)) for (const r of prior.requests) if (requests.length < MAX) requests.push(r);
+  } catch { /* storage blocked */ }
+  function persist() {
+    if (!PERSIST || saveOff) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { try { sessionStorage.setItem(STORE, JSON.stringify({ pushes, requests })); } catch { saveOff = true; } }, 400);
+  }
+
   // ---- queue pushes (same snapshot/hook approach EventQA uses, so imports decode identically) ----
   function snapshotItem(item) {
     const capture = { incomplete: false, reasons: [] };
@@ -54,7 +70,7 @@
       const safe = prepared || snapshotItem(item);
       const record = { queue, ...safe, historical, href: location.href, title: document.title, ts: at || Date.now() };
       if (Number.isInteger(index) && index >= 0) record.index = index;
-      if (pushes.length < MAX) { pushes.push(record); refresh(); }
+      if (pushes.length < MAX) { pushes.push(record); persist(); refresh(); }
     } catch { /* evidence capture must never break the site */ }
   }
 
@@ -148,7 +164,7 @@
     if (!state.enabled || requests.length >= MAX) return;
     let abs; try { abs = new URL(url, location.href).href; } catch { abs = String(url); }
     if (!wanted(abs)) return;
-    const add = text => { requests.push({ url: abs, method: (method || 'POST').toUpperCase(), body: typeof text === 'string' ? text.slice(0, 200000) : '', content_type: contentType || '', ts: Date.now(), page_url: location.href }); refresh(); };
+    const add = text => { requests.push({ url: abs, method: (method || 'POST').toUpperCase(), body: typeof text === 'string' ? text.slice(0, 200000) : '', content_type: contentType || '', ts: Date.now(), page_url: location.href }); persist(); refresh(); };
     if (body == null || body === '') return add('');
     if (typeof body === 'string') return add(body);
     try {
@@ -190,6 +206,7 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }
   async function copy() { try { await navigator.clipboard.writeText(JSON.stringify(data())); return true; } catch { return false; } }
+  function reset() { pushes.length = 0; requests.length = 0; try { sessionStorage.removeItem(STORE); } catch { /* ignore */ } refresh(); }
   state.startedAt = new Date().toISOString();
   state.stop = () => {
     state.enabled = false; clearInterval(state.timer);
@@ -219,10 +236,12 @@
       + '<div id="eqa-cap-count" style="margin-bottom:8px">0 push · 0 request</div>'
       + '<button id="eqa-cap-dl" style="all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;text-align:center;background:#fff;color:#4b3fa8;font-weight:700;border-radius:8px;padding:8px;margin-bottom:6px">Dừng &amp; tải JSON</button>'
       + '<button id="eqa-cap-copy" style="all:unset;cursor:pointer;display:block;width:100%;box-sizing:border-box;text-align:center;border:1px solid #fff;border-radius:8px;padding:6px;margin-bottom:6px">Chép JSON</button>'
-      + '<div id="eqa-cap-msg" style="font-size:11px;opacity:.85"></div>';
+      + (PERSIST ? '<div style="font-size:11px;opacity:.85;margin-bottom:4px">Tự chạy mỗi lần tải trang, gộp bản ghi.</div><button id="eqa-cap-reset" style="all:unset;cursor:pointer;font-size:11px;text-decoration:underline;opacity:.85">Xóa & ghi lại từ đầu</button>' : '')
+      + '<div id="eqa-cap-msg" style="font-size:11px;opacity:.85;margin-top:4px"></div>';
     (document.body || document.documentElement).appendChild(box);
     box.querySelector('#eqa-cap-dl').onclick = () => { download(); state.stop(); box.querySelector('#eqa-cap-msg').textContent = 'Đã tải file. Đã dừng ghi.'; box.querySelector('#eqa-cap-dl').textContent = 'Đã tải ✓'; };
     box.querySelector('#eqa-cap-copy').onclick = async () => { box.querySelector('#eqa-cap-msg').textContent = await copy() ? 'Đã chép JSON vào clipboard.' : 'Không chép được; dùng nút tải.'; };
+    box.querySelector('#eqa-cap-reset')?.addEventListener('click', () => { reset(); box.querySelector('#eqa-cap-msg').textContent = 'Đã xóa bản ghi. Bắt đầu lại.'; });
   }
   function refresh() { const el = box?.querySelector('#eqa-cap-count'); if (el) el.textContent = `${pushes.length} push · ${requests.length} request`; }
 

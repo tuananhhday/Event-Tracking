@@ -34,6 +34,15 @@ test('the capture snippet and help page are served', async t => {
   assert.match(html, /Bản ghi event từ F12/);
   assert.match(html, /eventqa\.capture\.v1/, 'the page embeds the snippet to copy');
   assert.doesNotMatch(html, /<script>\(\(\) =>/, 'the snippet sits in a textarea, not an executable script');
+  assert.match(html, /capture\.user\.js/, 'the page links the Tampermonkey userscript');
+
+  const userscript = await fetch(`${base}/capture.user.js`);
+  const us = await userscript.text();
+  assert.equal(userscript.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  assert.match(us, /==UserScript==/);
+  assert.match(us, /@match\s+https:\/\/\*\.vinpearlota\.com\/\*/);
+  assert.match(us, /window\.__eventqaCapturePersist = true/, 'the userscript turns on reload-persistence');
+  assert.match(us, /eventqa\.capture\.v1/, 'the userscript carries the capture body');
 });
 
 test('importing a capture replays pushes and requests into a session with decoded events', { timeout: 5000 }, async t => {

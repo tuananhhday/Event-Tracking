@@ -53,17 +53,28 @@ a{color:var(--accent)}
 </style></head><body><main>
 <h1>Bản ghi event từ F12</h1>
 <p>Dùng khi trang cần kiểm chỉ mở được trên một máy/mạng nhất định (ví dụ UAT chặn theo IP). Bắt event ngay trong trình duyệt đã mở được trang, rồi mang file về EventQA để đối chiếu — không cần cài gì trên máy đó.</p>
-<h2>Các bước</h2>
+<h2>Cách 1 · Dán vào Console (nhanh, cho một trang)</h2>
 <ol>
 <li>Trên máy <b>vào được trang cần kiểm</b>, mở trang đó trong Chrome/Edge và đăng nhập như bình thường.</li>
 <li>Nhấn <b>F12</b> → tab <b>Console</b>.</li>
 <li>Bấm <b>Chép đoạn mã</b> bên dưới, dán vào Console, nhấn Enter. (Nếu Console báo chặn dán, gõ <code>allow pasting</code> rồi Enter, sau đó dán lại.) Một ô nhỏ “✦ EventQA · bản ghi” hiện ở góc phải.</li>
-<li>Thao tác trên trang như kịch bản test (tìm kiếm, chọn phòng, thanh toán…). Ô nhỏ đếm số push/request bắt được.</li>
-<li>Xong thì bấm <b>Dừng &amp; tải JSON</b> trong ô đó. Một file <code>eventqa-capture-….json</code> được tải về.</li>
-<li>Về EventQA, bước 1 → <b>Nhập bản ghi từ F12</b> → chọn file vừa tải. Event hiện lên; nạp file đặc tả để đối chiếu và xuất báo cáo như một phiên bình thường.</li>
+<li>Thao tác trên trang như kịch bản test. Ô nhỏ đếm số push/request bắt được.</li>
+<li>Xong thì bấm <b>Dừng &amp; tải JSON</b>. Một file <code>eventqa-capture-….json</code> được tải về.</li>
 </ol>
 <button id="copy" type="button">Chép đoạn mã</button>
 <textarea id="snippet" readonly spellcheck="false">${escapeHtml(snippet)}</textarea>
+<p class="hint" style="color:var(--muted)">Cách này <b>mất khi tải lại trang (F5) hoặc chuyển trang có tải lại</b> — phải dán lại. Nếu kịch bản đi qua nhiều trang hoặc có đăng nhập chuyển trang, dùng Cách 2.</p>
+
+<h2>Cách 2 · Cài tiện ích Tampermonkey (tự chạy mọi lần tải trang)</h2>
+<ol>
+<li>Cài tiện ích <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a> cho Chrome/Edge (một lần).</li>
+<li>Mở link <a href="/capture.user.js">/capture.user.js</a> — Tampermonkey hiện trang cài, bấm <b>Install</b>.</li>
+<li>Mở trang cần kiểm. Đoạn mã <b>tự chạy</b> và giữ bản ghi qua các lần tải trang/đăng nhập. Làm hết kịch bản rồi bấm <b>Dừng &amp; tải JSON</b> ở ô góc phải.</li>
+</ol>
+<div class="note">Mặc định tiện ích chạy trên <code>vinpearlota.com</code>. Trang khác: trong Tampermonkey mở script này, sửa dòng <code>// @match</code> thành tên miền của bạn. Tắt script khi không dùng để nó không chạy nền.</div>
+
+<h2>Nhập vào EventQA</h2>
+<p>Về EventQA, bước <b>Website &amp; trình duyệt test</b> → mở <b>“Trang chặn theo IP (UAT…)? Nhập bản ghi từ F12”</b> → chọn file JSON vừa tải. Event hiện lên; nạp file đặc tả để đối chiếu và xuất báo cáo như một phiên bình thường.</p>
 <div class="note">Đoạn mã chỉ <b>đọc</b> dataLayer/InsiderQueue và các request GA4/Insider/TP2 của trang, không gửi dữ liệu đi đâu và không sửa gì trên trang. Dừng lại là trả trang về như cũ. File JSON là bằng chứng của bạn; chỉ mở trên EventQA của bạn.</div>
 <script>
 document.getElementById('copy').addEventListener('click', async () => {
@@ -601,6 +612,15 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       // The browser-capture snippet and a page explaining how to use it (for testing a site that only a
       // whitelisted machine can open): run the snippet there, bring the JSON back here to import.
       if (req.method === 'GET' && url.pathname === '/capture.js') return send(res, 200, await readWeb('capture.js'), 'text/javascript; charset=utf-8');
+      // Tampermonkey userscript: same capture, but it runs on every page load and keeps the record across
+      // reloads/navigations, so a multi-page flow (with logins or F5) ends in one file. Edit @match for
+      // another site. Tampermonkey offers to install when a .user.js URL is opened.
+      if (req.method === 'GET' && url.pathname === '/capture.user.js') {
+        const header = ['// ==UserScript==', '// @name         EventQA · Bản ghi event', '// @namespace    eventqa', '// @version      1.0',
+          '// @description  Ghi dataLayer/InsiderQueue + request GA4/Insider/TP2 qua các lần tải trang, để nhập vào EventQA',
+          '// @match        https://*.vinpearlota.com/*', '// @match        https://vinpearlota.com/*', '// @run-at       document-start', '// @grant        none', '// ==/UserScript==', ''].join('\n');
+        return send(res, 200, `${header}window.__eventqaCapturePersist = true;\n${await readWeb('capture.js')}`, 'text/javascript; charset=utf-8');
+      }
       if (req.method === 'GET' && url.pathname === '/capture') {
         const snippet = await readWeb('capture.js');
         return send(res, 200, capturePage(snippet), 'text/html; charset=utf-8', { 'Content-Security-Policy': PAGE_POLICY });
