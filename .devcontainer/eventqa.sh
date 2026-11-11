@@ -62,6 +62,22 @@ stop_one() {
   rm -f "$file"
 }
 
+# A rebuilt codespace has a new hostname, so the lock files a browser left in a kept profile make
+# Chrome/Edge refuse it ("in use by another process on another computer"). With no browser using
+# the profile, those locks are stale: remove them. Logins (cookies) are not touched.
+clear_stale_locks() {
+  local dir
+  for dir in "$ROOT"/profiles/*/ "$ROOT"/.profiles/*/; do
+    [ -d "$dir" ] || continue
+    dir="${dir%/}"
+    if [ -L "$dir/SingletonLock" ] || [ -e "$dir/SingletonLock" ]; then
+      if pgrep -f -- "--user-data-dir=$dir" >/dev/null 2>&1; then continue; fi
+      rm -f "$dir/SingletonLock" "$dir/SingletonSocket" "$dir/SingletonCookie"
+      echo "Đã gỡ khóa cũ của profile $(basename "$dir")."
+    fi
+  done
+}
+
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 wait_port() {
@@ -86,6 +102,7 @@ start() {
     echo "Secret EVENTQA_ACCESS_KEY ngắn hơn 12 ký tự nên không dùng; tạo mã ngẫu nhiên." >&2
   fi
   cd "$ROOT" || return 1
+  clear_stale_locks
   export DISPLAY="${DISPLAY:-:1}"
   export EVENTQA_BROWSER_ARGS
   EVENTQA_BROWSER_ARGS="$(chrome_args)"
