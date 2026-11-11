@@ -67,5 +67,16 @@ EventQA hoặc gateway mà bị dừng thì tự bật lại sau 3 giây. Bằng
 - **Không chạy 24/7**: không ai thao tác trong codespace hết thời gian chờ (tối đa 240 phút) thì codespace tự dừng và link ngừng hoạt động. Mở lại codespace thì link giữ nguyên, nhưng nên kiểm tra cổng 8080 vẫn là Public.
 - GitHub có thể hiện trang cảnh báo trước khi vào link Public. Bấm *Continue*.
 - **Website có thể chặn IP datacenter**: vinpearlota trả 403 trong codespace là do phía website chặn. Không lách được; test trên máy thật hoặc nhờ chủ website cho phép.
-- **UAT/staging nội bộ** cần VPN công ty sẽ không truy cập được.
+- **UAT/staging nội bộ** cần VPN công ty sẽ không truy cập được (xem mục *Mạng, IP và vị trí* bên dưới).
+
+## Mạng, IP và vị trí
+
+- **Giờ**: codespace chạy giờ Việt Nam (`Asia/Ho_Chi_Minh`), nên ngày giờ website tự tính và giờ trong báo cáo giống khi test trên máy.
+- **IP**: trình duyệt test đi ra Internet bằng IP datacenter của GitHub (Microsoft Azure), không phải IP Việt Nam hay IP công ty. GitHub không có region Việt Nam; gần nhất là **Southeast Asia** (Singapore), chọn ở GitHub → Settings → Codespaces → Region. Website xem vị trí theo IP sẽ thấy Singapore.
+- **Mạng công ty** (UAT, trang nội bộ, hệ thống chỉ cho IP công ty): codespace không tự vào được. Ba cách, theo thứ tự nên dùng:
+  1. Chạy EventQA trên máy Windows nối mạng công ty (gói portable): đơn giản và đúng quy định nhất.
+  2. VPN công ty bên trong codespace (OpenVPN/WireGuard…): cần IT cấp cấu hình và **cho phép** máy cloud vào mạng nội bộ. Khi đó IP ra ngoài là IP công ty.
+  3. `gh net` của GitHub (bản preview): codespace đi nhờ mạng của máy bạn đang nối mạng công ty; máy bạn phải bật trong lúc dùng. Cũng cần IT đồng ý.
+
+  Không dùng VPN/proxy miễn phí để giả IP Việt Nam cho hệ thống công ty.
 - Ai có link **và** mã truy cập thì điều khiển được EventQA và Chrome (kể cả phiên đã đăng nhập SSO). Chỉ gửi mã cho người cần dùng. Đổi mã bằng cách đổi secret (hoặc xóa `~/.eventqa/access-key`) rồi chạy `eventqa.sh start`.

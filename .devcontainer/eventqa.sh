@@ -104,6 +104,9 @@ start() {
   cd "$ROOT" || return 1
   clear_stale_locks
   export DISPLAY="${DISPLAY:-:1}"
+  # Vietnam time for the app and the test browser (dates a website computes, report times), also in a
+  # codespace created before devcontainer.json set TZ.
+  export TZ="${TZ:-Asia/Ho_Chi_Minh}"
   export EVENTQA_BROWSER_ARGS
   EVENTQA_BROWSER_ARGS="$(chrome_args)"
   if [ -n "${OPENROUTER_API_KEY:-}" ]; then export AI_ENABLED="${AI_ENABLED:-true}"; fi
