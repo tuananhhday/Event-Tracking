@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createGateway, publicHosts } from '../src/cloud/gateway.mjs';
+import { createGateway, publicHosts, injectOnline } from '../src/cloud/gateway.mjs';
 import { extraBrowserArgs } from '../src/browser/launcher.mjs';
 
 const KEY = 'correct-horse-battery-staple';
@@ -19,7 +19,7 @@ async function upstream(handler) {
 
 async function setup(options = {}) {
   const app = await upstream((req, res) => {
-    if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<a href="http://127.0.0.1:4172/">hub</a>'); }
+    if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<a href="http://127.0.0.1:4172/">hub</a><nav class="app-rail"><button>Event</button><div class="rail-bottom"></div></nav></body>'); }
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, path: req.url }));
   });
   const vnc = await upstream((req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end(`vnc:${req.url}`); });
@@ -64,7 +64,11 @@ test('signed-in requests reach the app with a localhost Host/Origin and no gatew
     assert.match(cookie, /^eqa_gate=/);
     const page = await fetch(`${ctx.base}/`, { headers: { cookie } });
     assert.equal(page.status, 200);
-    assert.equal(await page.text(), '<a href="/">hub</a>', 'the local mode-chooser link points back to this app');
+    const html = await page.text();
+    assert.ok(html.startsWith('<a href="/">hub</a>'), 'the local mode-chooser link points back to this app');
+    assert.match(html, /<button>Event<\/button><a id="eqa-online-chrome" href="\/vnc" target="eventqa-chrome"[^>]*><svg[^]*<span>Chrome<\/span><\/a><div class="rail-bottom">/,
+      'the left rail gets a Chrome item opening the remote screen');
+    assert.doesNotMatch(html, /data-browser="edge"/, 'Edge stays selectable unless the machine has none');
 
     const post = await fetch(`${ctx.base}/api/export`, { method: 'POST', headers: { cookie, origin: ctx.base, 'content-type': 'application/json', 'x-eventqa-token': 't' }, body: '{"a":1}' });
     assert.equal(post.status, 200);
@@ -78,6 +82,17 @@ test('signed-in requests reach the app with a localhost Host/Origin and no gatew
     const quick = await fetch(`${ctx.base}/login?key=${encodeURIComponent(KEY)}`, { redirect: 'manual' });
     assert.equal(quick.status, 303);
     assert.equal(quick.headers.get('location'), '/');
+  } finally { await ctx.close(); }
+});
+
+test('on a machine without Edge the app page hides the Edge choice; other responses are untouched', async () => {
+  const ctx = await setup({ hideEdge: true });
+  try {
+    const cookie = await login(ctx.base);
+    const html = await (await fetch(`${ctx.base}/`, { headers: { cookie } })).text();
+    assert.match(html, /\[data-browser="edge"\],option\[value="edge"\]\{display:none!important\}/);
+    const api = await (await fetch(`${ctx.base}/api/state`, { headers: { cookie } })).json();
+    assert.deepEqual(api, { ok: true, path: '/api/state' });
   } finally { await ctx.close(); }
 });
 
@@ -135,6 +150,12 @@ test('/vnc serves noVNC and relays its WebSocket with the prefix removed', async
     });
     assert.equal(anonymous, 401);
   } finally { await ctx.close(); }
+});
+
+test('a page without the rail gets a floating Chrome button; nothing is added without noVNC or hidden Edge', () => {
+  const floating = injectOnline('<main>x</main></body>', { vnc: true });
+  assert.match(floating, /<main>x<\/main><style>#eqa-online-chrome\{position:fixed[^<]*<\/style><a id="eqa-online-chrome" href="\/vnc"[^>]*>Màn hình Chrome<\/a><\/body>/);
+  assert.equal(injectOnline('<main>x</main></body>', { vnc: false, hideEdge: false }), '<main>x</main></body>');
 });
 
 test('gateway refuses a short access key and a malformed public URL', () => {

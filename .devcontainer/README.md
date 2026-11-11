@@ -24,7 +24,13 @@ Chỉ cổng **8080** (gateway) được chia sẻ. EventQA, desktop ảo và c�
    ```
    Lệnh in ra link `https://…-8080.app.github.dev` và mã truy cập.
 4. Tab **PORTS** → chuột phải cổng **8080** → **Port Visibility → Public**. Chưa làm bước này thì chỉ bạn mở được (phải đăng nhập GitHub).
-5. Gửi link và mã cho người cần dùng. `link/vnc` là màn hình Chrome thật: đăng nhập SSO, giải CAPTCHA hay thao tác tay ở đó.
+5. Gửi link và mã cho người cần dùng.
+
+## Xem và thao tác trang web đang test
+
+Trên cloud, Chrome không bật cửa sổ trên máy bạn mà chạy trong **màn hình ảo** của codespace. Sau khi bấm **Mở trình duyệt test** trong EventQA, bấm mục **Chrome** ở thanh bên trái (hoặc mở `link/vnc`). Một tab mới hiện trang web đang test, thao tác ở đó như thao tác trên máy: đăng nhập SSO, tìm phòng, đặt phòng… Event bắt được vẫn hiện ở tab EventQA. Kéo hai tab ra hai nửa màn hình để vừa thao tác vừa xem event.
+
+Máy codespace chỉ có Google Chrome nên lựa chọn Edge được ẩn.
 
 ## Lệnh
 

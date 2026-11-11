@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { findBrowser } from '../browser/launcher.mjs';
 
 const COOKIE = 'eqa_gate';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -39,6 +40,24 @@ export function publicHosts(value) {
   });
 }
 
+const RAIL_BOTTOM = '<div class="rail-bottom">';
+const SCREEN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
+
+/** Online, the test Chrome runs on the remote desktop: the app page gets a "Chrome" item in its left
+ * rail (a floating button where there is no rail) opening /vnc, and hides Edge where the machine has none. */
+export function injectOnline(html, { vnc = true, hideEdge = false } = {}) {
+  if (!vnc && !hideEdge) return html;
+  const title = 'Xem và thao tác trang web đang test (Chrome trên máy chủ) ở tab riêng';
+  const rail = vnc && html.includes(RAIL_BOTTOM);
+  const css = (hideEdge ? '[data-browser="edge"],option[value="edge"]{display:none!important}' : '')
+    + (rail ? '.app-rail a#eqa-online-chrome{color:#fff;background:#4b3fa8}.app-rail a#eqa-online-chrome:hover{background:#5d50c4}#eqa-online-chrome span{font-size:9px;font-weight:600}' : '')
+    + (vnc && !rail ? '#eqa-online-chrome{position:fixed;right:16px;bottom:16px;z-index:2147483000;padding:10px 16px;border-radius:999px;background:#4b3fa8;color:#fff;font:600 14px/1.2 system-ui,sans-serif;text-decoration:none}' : '');
+  let out = html;
+  if (rail) out = out.replace(RAIL_BOTTOM, `<a id="eqa-online-chrome" href="/vnc" target="eventqa-chrome" title="${title}" aria-label="${title}">${SCREEN_ICON}<span>Chrome</span></a>${RAIL_BOTTOM}`);
+  const tail = `<style>${css}</style>${vnc && !rail ? `<a id="eqa-online-chrome" href="/vnc" target="eventqa-chrome" title="${title}">Màn hình Chrome</a>` : ''}`;
+  return out.includes('</body>') ? out.replace('</body>', `${tail}</body>`) : out + tail;
+}
+
 const escapeHtml = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
 function loginPage(message = '') {
@@ -66,10 +85,11 @@ async function readForm(req, limit = 4096) {
 /**
  * @param {{ key: string, appPort: number, vncPort?: number|null, port?: number, publicUrl?: string, failureDelayMs?: number }} options
  */
-export function createGateway({ key, appPort, vncPort = null, port = 8080, publicUrl = '', failureDelayMs = 800 }) {
+export function createGateway({ key, appPort, vncPort = null, port = 8080, publicUrl = '', hideEdge = false, failureDelayMs = 800 }) {
   if (typeof key !== 'string' || key.length < 12) throw new Error('Mã truy cập (EVENTQA_ACCESS_KEY) cần ít nhất 12 ký tự.');
   if (!Number.isInteger(appPort)) throw new Error('Thiếu cổng app.');
   const knownHosts = publicHosts(publicUrl);
+  const online = { vnc: Boolean(vncPort), hideEdge };
   // Same key → same session value, so a gateway restart keeps people signed in; a new key signs everyone out.
   const session = createHmac('sha256', key).update('eventqa-gateway-session-v1').digest('base64url');
   const failures = [];
@@ -114,7 +134,9 @@ export function createGateway({ key, appPort, vncPort = null, port = 8080, publi
         const chunks = [];
         up.on('data', chunk => chunks.push(chunk));
         up.on('end', () => {
-          const body = Buffer.from(Buffer.concat(chunks).toString('utf8').replaceAll(HUB_LINK, '/'));
+          let html = Buffer.concat(chunks).toString('utf8').replaceAll(HUB_LINK, '/');
+          if (upstreamPath.split('?')[0] === '/') html = injectOnline(html, online);
+          const body = Buffer.from(html);
           res.writeHead(up.statusCode, { ...outHeaders, 'content-length': body.length }); res.end(body);
         });
         up.on('error', () => res.destroy());
@@ -214,8 +236,10 @@ export function createGateway({ key, appPort, vncPort = null, port = 8080, publi
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const { values } = parseArgs({ options: { port: { type: 'string', default: '8080' }, app: { type: 'string', default: '4174' }, vnc: { type: 'string' } } });
+  let edgeInstalled = true;
+  try { findBrowser('edge'); } catch { edgeInstalled = false; }
   const gateway = createGateway({ key: process.env.EVENTQA_ACCESS_KEY, appPort: Number(values.app), publicUrl: process.env.EVENTQA_PUBLIC_URL,
-    vncPort: values.vnc ? Number(values.vnc) : null, port: Number(values.port) });
+    vncPort: values.vnc ? Number(values.vnc) : null, port: Number(values.port), hideEdge: !edgeInstalled });
   console.log(`EventQA gateway ${await gateway.listen()} → app 127.0.0.1:${values.app}${values.vnc ? `, noVNC 127.0.0.1:${values.vnc}` : ''}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { gateway.close().finally(() => process.exit(0)); });
 }
