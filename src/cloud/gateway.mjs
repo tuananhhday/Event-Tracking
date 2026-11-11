@@ -49,14 +49,14 @@ const SCREEN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
  * rail (a floating button where there is no rail) opening /vnc, and hides Edge where the machine has none. */
 export function injectOnline(html, { vnc = true, hideEdge = false } = {}) {
   if (!vnc && !hideEdge) return html;
-  const title = 'Xem và thao tác trang web đang test (Chrome trên máy chủ) ở tab riêng';
+  const title = 'Màn hình điều khiển trình duyệt test (Chrome hoặc Edge trên máy chủ): xem và thao tác trang web ở tab riêng';
   const rail = vnc && html.includes(RAIL_BOTTOM);
   const css = (hideEdge ? '[data-browser="edge"],option[value="edge"]{display:none!important}' : '')
-    + (rail ? '.app-rail a#eqa-online-chrome{color:#fff;background:#4b3fa8}.app-rail a#eqa-online-chrome:hover{background:#5d50c4}#eqa-online-chrome span{font-size:9px;font-weight:600}' : '')
-    + (vnc && !rail ? '#eqa-online-chrome{position:fixed;right:16px;bottom:16px;z-index:2147483000;padding:10px 16px;border-radius:999px;background:#4b3fa8;color:#fff;font:600 14px/1.2 system-ui,sans-serif;text-decoration:none}' : '');
+    + (rail ? '.app-rail a#eqa-online-screen{color:#fff;background:#4b3fa8}.app-rail a#eqa-online-screen:hover{background:#5d50c4}#eqa-online-screen span{font-size:9px;font-weight:600}' : '')
+    + (vnc && !rail ? '#eqa-online-screen{position:fixed;right:16px;bottom:16px;z-index:2147483000;padding:10px 16px;border-radius:999px;background:#4b3fa8;color:#fff;font:600 14px/1.2 system-ui,sans-serif;text-decoration:none}' : '');
   let out = html;
-  if (rail) out = out.replace(RAIL_BOTTOM, `<a id="eqa-online-chrome" href="/vnc" target="eventqa-chrome" title="${title}" aria-label="${title}">${SCREEN_ICON}<span>Chrome</span></a>${RAIL_BOTTOM}`);
-  const tail = `<style>${css}</style>${vnc && !rail ? `<a id="eqa-online-chrome" href="/vnc" target="eventqa-chrome" title="${title}">Màn hình Chrome</a>` : ''}`;
+  if (rail) out = out.replace(RAIL_BOTTOM, `<a id="eqa-online-screen" href="/vnc" target="eventqa-screen" title="${title}" aria-label="${title}">${SCREEN_ICON}<span>Điều khiển</span></a>${RAIL_BOTTOM}`);
+  const tail = `<style>${css}</style>${vnc && !rail ? `<a id="eqa-online-screen" href="/vnc" target="eventqa-screen" title="${title}">Màn hình điều khiển</a>` : ''}`;
   return out.includes('</body>') ? out.replace('</body>', `${tail}</body>`) : out + tail;
 }
 

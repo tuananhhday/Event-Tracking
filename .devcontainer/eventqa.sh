@@ -135,7 +135,7 @@ info() {
     echo "Mã truy cập      : $key"
     echo "Vào nhanh        : $url/login?key=$key"
   fi
-  echo "Màn hình Chrome  : $url/vnc   (đăng nhập SSO, thao tác tay)"
+  echo "Màn hình điều khiển: $url/vnc   (Chrome/Edge: đăng nhập SSO, thao tác tay)"
   echo
   echo "Để người khác mở được: tab PORTS → chuột phải cổng $GATEWAY_PORT → Port Visibility → Public."
   echo "Chỉ chia sẻ cổng $GATEWAY_PORT. Không đổi cổng $APP_PORT hay $VNC_PORT sang Public."

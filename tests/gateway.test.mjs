@@ -66,8 +66,8 @@ test('signed-in requests reach the app with a localhost Host/Origin and no gatew
     assert.equal(page.status, 200);
     const html = await page.text();
     assert.ok(html.startsWith('<a href="/">hub</a>'), 'the local mode-chooser link points back to this app');
-    assert.match(html, /<button>Event<\/button><a id="eqa-online-chrome" href="\/vnc" target="eventqa-chrome"[^>]*><svg[^]*<span>Chrome<\/span><\/a><div class="rail-bottom">/,
-      'the left rail gets a Chrome item opening the remote screen');
+    assert.match(html, /<button>Event<\/button><a id="eqa-online-screen" href="\/vnc" target="eventqa-screen"[^>]*><svg[^]*<span>Điều khiển<\/span><\/a><div class="rail-bottom">/,
+      'the left rail gets a shared "Điều khiển" item opening the remote browser screen');
     assert.doesNotMatch(html, /data-browser="edge"/, 'Edge stays selectable unless the machine has none');
 
     const post = await fetch(`${ctx.base}/api/export`, { method: 'POST', headers: { cookie, origin: ctx.base, 'content-type': 'application/json', 'x-eventqa-token': 't' }, body: '{"a":1}' });
@@ -154,7 +154,7 @@ test('/vnc serves noVNC and relays its WebSocket with the prefix removed', async
 
 test('a page without the rail gets a floating Chrome button; nothing is added without noVNC or hidden Edge', () => {
   const floating = injectOnline('<main>x</main></body>', { vnc: true });
-  assert.match(floating, /<main>x<\/main><style>#eqa-online-chrome\{position:fixed[^<]*<\/style><a id="eqa-online-chrome" href="\/vnc"[^>]*>Màn hình Chrome<\/a><\/body>/);
+  assert.match(floating, /<main>x<\/main><style>#eqa-online-screen\{position:fixed[^<]*<\/style><a id="eqa-online-screen" href="\/vnc"[^>]*>Màn hình điều khiển<\/a><\/body>/);
   assert.equal(injectOnline('<main>x</main></body>', { vnc: false, hideEdge: false }), '<main>x</main></body>');
 });
 

@@ -29,5 +29,38 @@ if ! command -v microsoft-edge >/dev/null 2>&1; then
 fi
 command -v microsoft-edge >/dev/null 2>&1 && microsoft-edge --version
 
+# Websites ask for Windows/macOS fonts (Segoe UI, Helvetica Neue…) that Linux lacks; without a
+# match Chrome/Edge fall back to a Times-like serif and pages look broken. Install open look-alikes
+# and map those names to them.
+FONT_CONF=/etc/fonts/local.conf
+if ! grep -q "EventQA font aliases" "$FONT_CONF" 2>/dev/null; then
+  echo "Cài font giống Windows..."
+  sudo apt-get update -q
+  sudo -E apt-get install -y -q fonts-open-sans fonts-roboto fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea fontconfig
+  alias_to() { # family → preferred look-alikes
+    local family=$1; shift
+    printf '  <alias binding="same"><family>%s</family><prefer>' "$family"
+    printf '<family>%s</family>' "$@"
+    printf '</prefer></alias>\n'
+  }
+  {
+    echo '<?xml version="1.0"?>'
+    echo '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">'
+    echo '<!-- EventQA font aliases: Windows/macOS UI fonts mapped to open look-alikes. -->'
+    echo '<fontconfig>'
+    for family in "Segoe UI" "Segoe UI Webfont" "Segoe UI Web (West European)" "Segoe UI Variable" "Segoe UI Variable Text" \
+                  "Segoe UI Semibold" "Segoe UI Light" "SF Pro Text" "SF Pro Display" "San Francisco" "Lucida Grande"; do
+      alias_to "$family" "Open Sans" "Roboto" "DejaVu Sans"
+    done
+    alias_to "Helvetica Neue" "Liberation Sans" "Roboto"
+    alias_to "Tahoma" "DejaVu Sans"
+    alias_to "Verdana" "DejaVu Sans"
+    alias_to "Calibri" "Carlito"
+    alias_to "Cambria" "Caladea"
+    echo '</fontconfig>'
+  } | sudo tee "$FONT_CONF" >/dev/null
+  sudo fc-cache -f >/dev/null
+fi
+
 echo "Cài thư viện EventQA..."
 npm ci --ignore-scripts --no-audit --no-fund

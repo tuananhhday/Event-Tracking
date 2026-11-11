@@ -28,11 +28,11 @@ Chỉ cổng **8080** (gateway) được chia sẻ. EventQA, desktop ảo và c�
 
 ## Xem và thao tác trang web đang test
 
-Trên cloud, Chrome không bật cửa sổ trên máy bạn mà chạy trong **màn hình ảo** của codespace. Sau khi bấm **Mở trình duyệt test** trong EventQA, bấm mục **Chrome** ở thanh bên trái (hoặc mở `link/vnc`). Một tab mới hiện trang web đang test, thao tác ở đó như thao tác trên máy: đăng nhập SSO, tìm phòng, đặt phòng… Event bắt được vẫn hiện ở tab EventQA. Kéo hai tab ra hai nửa màn hình để vừa thao tác vừa xem event.
+Trên cloud, trình duyệt test (Chrome hoặc Edge) không bật cửa sổ trên máy bạn mà chạy trong **màn hình ảo** của codespace. Sau khi bấm **Mở trình duyệt test** trong EventQA, bấm mục **Điều khiển** ở thanh bên trái (hoặc mở `link/vnc`). Một tab mới hiện trang web đang test, thao tác ở đó như thao tác trên máy: đăng nhập SSO, tìm phòng, đặt phòng… Event bắt được vẫn hiện ở tab EventQA. Kéo hai tab ra hai nửa màn hình để vừa thao tác vừa xem event.
 
 Codespace có cả **Google Chrome** và **Microsoft Edge** (bản Linux, cùng nhân với bản Windows; website chỉ thấy hệ điều hành là Linux). Nếu Edge cài không được thì EventQA ẩn lựa chọn Edge và vẫn chạy với Chrome.
 
-Màn hình Chrome chạy 1920×1080 màu 24-bit và tự khớp đúng kích thước tab của bạn (không co giãn nên chữ nét). Muốn nét hơn nữa thì mở tab Chrome to ra (F11 toàn màn hình).
+Màn hình điều khiển chạy 1920×1080 màu 24-bit và tự khớp đúng kích thước tab của bạn (không co giãn nên chữ nét). Muốn nét hơn nữa thì mở tab đó to ra (F11 toàn màn hình). Codespace có sẵn font giống Windows (Segoe UI → Open Sans, Calibri → Carlito…) để trang như đăng nhập Microsoft không bị vỡ chữ. Dòng “unsupported command-line flag: --no-sandbox” trên trình duyệt chỉ là cảnh báo, bấm X để ẩn.
 
 ## Đăng nhập được lưu ở đâu
 
