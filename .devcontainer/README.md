@@ -76,7 +76,7 @@ EventQA hoặc gateway mà bị dừng thì tự bật lại sau 3 giây. Bằng
 - **Mạng công ty** (UAT, trang nội bộ, hệ thống chỉ cho IP công ty): codespace không tự vào được. Ba cách, theo thứ tự nên dùng:
   1. Chạy EventQA trên máy Windows nối mạng công ty (gói portable): đơn giản và đúng quy định nhất.
   2. VPN công ty bên trong codespace (OpenVPN/WireGuard…): cần IT cấp cấu hình và **cho phép** máy cloud vào mạng nội bộ. Khi đó IP ra ngoài là IP công ty.
-  3. `gh net` của GitHub (bản preview): codespace đi nhờ mạng của máy bạn đang nối mạng công ty; máy bạn phải bật trong lúc dùng. Cũng cần IT đồng ý.
+  3. Đi nhờ mạng qua một máy trong công ty (ví dụ Tailscale: máy công ty làm “cổng ra”, codespace đi qua máy đó): máy đó phải bật trong lúc dùng. Đây là mở đường từ cloud vào mạng nội bộ nên **bắt buộc IT đồng ý**. (`gh net` của GitHub từng làm việc này nhưng đã ngừng hỗ trợ từ 10/2023.)
 
   Không dùng VPN/proxy miễn phí để giả IP Việt Nam cho hệ thống công ty.
 - Ai có link **và** mã truy cập thì điều khiển được EventQA và Chrome (kể cả phiên đã đăng nhập SSO). Chỉ gửi mã cho người cần dùng. Đổi mã bằng cách đổi secret (hoặc xóa `~/.eventqa/access-key`) rồi chạy `eventqa.sh start`.
