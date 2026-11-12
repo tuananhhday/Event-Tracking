@@ -115,7 +115,7 @@ export function linkDeliveries(events, { windowMs = DELIVERY_WINDOW_MS } = {}) {
  * started, its hit may have gone earlier). Null for records that are not tracking events.
  */
 export function deliveryStatus(event, links, now = Date.now()) {
-  if (isRequest(event)) return 'sent';
+  if (isRequest(event) || event.layer === 'TEST_LAB') return 'sent';
   if (event.layer !== 'JS_QUEUE' || eventKind(event) !== 'business') return null;
   if (event.historical) return 'unverified';
   if (links.sentBy.has(event.evidence_id)) return 'sent';

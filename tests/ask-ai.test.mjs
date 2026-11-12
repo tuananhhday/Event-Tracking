@@ -107,3 +107,31 @@ test('a question reads the parameters of the events it names, runs beside other 
   assert.equal((await post(`${base}/api/ai-ask`, app.csrf, { question: 'x'.repeat(1001) })).status, 400);
   assert.equal((await fetch(`${base}/api/ai-ask`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"question":"x?"}' })).status, 403, 'the page token is required');
 });
+
+test('a question asked on one event is about that event, with the events around it and its Test Lab status', { timeout: 10000 }, async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eventqa-ask-event-'));
+  const received = [];
+  const stubAI = { diagnostics: () => ({ enabled: true, configured_key_count: 1 }), close() {},
+    async askSession(input) { received.push(input); return { available: true, answer: 'ok', verdict: 'OK', findings: [], routing: { model: 'test/model' } }; } };
+  const app = await createApp({ mode: 'cdp-ai', runsDir: dir, port: 0, aiClient: stubAI, initialCases: [] });
+  const base = await app.listen();
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  assert.match(await (await fetch(`${base}/`)).text(), /data-action="ask-event"|ask-event/, 'the page has the per-event question box');
+  app.manager.start({ environment: 'MOCK_ONLY' });
+  const at = ms => new Date(Date.now() - 120000 + ms).toISOString();
+  const page = { url: 'https://vinpearlota.com/vi/hotel', target_id: 'tab' };
+  app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'view_item', captured_at: at(0), page, network: { phase: 'request' }, payload: { v: '2', tid: 'G-1', event: 'view_item', value: 100 } });
+  const pdp = app.manager.emit({ source: 'INSIDER', layer: 'TEST_LAB', event_name: 'product_detail_page_view', event_kind: 'business', captured_at: at(4000), page: { url: 'https://mobile.useinsider.com/test_lab' },
+    payload: { event: 'Product Page View', default_parameters: { unit_price: 100 }, custom_parameters: { adults: 'two' } },
+    testlab: { receipt: '4', status: 'failed', complete: true, params: [{ name: 'Adults', key: 'c_adults', field: 'custom_parameters.adults', value: 'two', status: 'failed', failed_detail: { ios: { expected_type: 'number', observed_type: 'string' } } }] } });
+  app.manager.emit({ source: 'GA4', layer: 'TRACKING_REQUEST', event_name: 'purchase', captured_at: at(90000), page, network: { phase: 'request' }, payload: { v: '2', tid: 'G-1', event: 'purchase', value: 1 } });
+  const response = await post(`${base}/api/ai-ask`, app.csrf, { question: 'Event này có sai gì không?', evidence_id: pdp.evidence_id });
+  assert.equal(response.status, 200, await response.text());
+  const input = received.at(-1);
+  assert.deepEqual(input.focused_on, { this_event: 'Product Page View', evidence_id: pdp.evidence_id });
+  const asked = input.event_details.find(detail => detail.id === pdp.evidence_id);
+  assert.ok(asked && !asked.nearby, 'the event asked about is the focus');
+  assert.deepEqual(asked.testlab, { status: 'failed', read_whole: true, failed: [{ field: 'custom_parameters.adults', value: 'two', expected_type: 'number', observed_type: 'string' }] });
+  assert.deepEqual(input.event_details.filter(detail => detail.nearby).map(detail => detail.event), ['view_item'], 'events within 15 s come along to compare; later ones do not');
+  assert.equal((await post(`${base}/api/ai-ask`, app.csrf, { question: 'x?', evidence_id: 'EV-unknown' })).status, 400);
+});

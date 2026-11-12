@@ -135,7 +135,8 @@ export function priceChecks(rows, records = [], { windowMs = 30 * 60000 } = {}) 
   }
   const checks = [];
   for (const row of rows) {
-    if (row.source === 'TP2') continue;
+    // TP2, and app events read from Insider's Test Lab, are not priced by the website's API.
+    if (row.source === 'TP2' || row.layers?.includes('TEST_LAB') || row.layer === 'TEST_LAB') continue;
     if (row.delivery !== 'sent' || row.event_kind !== 'business') continue;
     const fields = sentPrices(row);
     if (!fields.length) continue;

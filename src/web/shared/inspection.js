@@ -8,13 +8,13 @@
   async function get(route) { const response = await fetch(`/api/${route}`, { cache: 'no-store' }); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Không tải được dữ liệu.'); return result; }
   async function post(route, data) { const response = await fetch(`/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-EventQA-Token': token }, body: JSON.stringify(data) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Thao tác chưa hoàn tất.'); return result; }
   const run = fn => async () => { try { await fn(); } catch (error) { if ($('tp2-detail').open) $('tp2-detail-error').textContent = error.message; else EventQA.toast(error.message, 'error'); } };
-  const columns = [['stt', 'STT'], ['platform', 'Nền tảng'], ['flow', 'Luồng'], ['event_name', 'Tên event'], ['expected', 'Mong muốn'], ['actual_ga4', 'Thực tế GA4'], ['actual_insider', 'Thực tế Insider'], ['comment', 'Nhận xét']];
+  const columns = [['stt', 'STT'], ['at', 'Thời điểm'], ['platform', 'Nền tảng'], ['flow', 'Luồng'], ['event_name', 'Tên event'], ['expected', 'Mong muốn'], ['actual_ga4', 'Thực tế GA4'], ['actual_insider', 'Thực tế Insider'], ['comment', 'Nhận xét']];
   $('export-columns').innerHTML = columns.map(([key, label]) => `<label class="check"><input type="checkbox" data-export-column="${key}" checked> ${label} <button type="button" class="btn small" data-export-up title="Đưa cột lên trước">↑</button></label>`).join('');
   $('export-columns').onclick = event => { const button = event.target.closest('[data-export-up]'); if (button) { const label = button.closest('label'); if (label.previousElementSibling) label.parentNode.insertBefore(label, label.previousElementSibling); } };
   window.EventQAExports = { open(endSession = false) {
     finish = endSession; $('export-title').textContent = finish ? 'Kết thúc & xuất báo cáo' : 'Xuất báo cáo'; $('export-confirm').textContent = finish ? 'Kết thúc & xuất' : 'Xuất báo cáo'; $('export-error').textContent = '';
     let prefs = {}; try { prefs = JSON.parse(localStorage.getItem(prefsKey) || '{}'); } catch { /* use defaults */ }
-    for (const type of ['events', 'tp2', 'api']) $(`export-${type}`).checked = (prefs.contents || ['events']).includes(type);
+    for (const type of ['events', 'insider', 'tp2', 'api']) $(`export-${type}`).checked = (prefs.contents || ['events']).includes(type);
     $('export-format').value = prefs.format || 'html'; $('export-font').value = prefs.htmlSettings?.fontSize || 14; $('export-page-size').value = prefs.htmlSettings?.rowsPerPage || 50;
     $('export-wrap').checked = prefs.htmlSettings?.wrap !== false; $('export-issues').checked = prefs.htmlSettings?.onlyIssues === true;
     for (const input of document.querySelectorAll('[data-export-column]')) input.checked = !prefs.htmlSettings?.hiddenColumns?.includes(input.dataset.exportColumn);
@@ -23,7 +23,7 @@
   } };
   $('export-close').onclick = () => $('export-dialog').close();
   $('export-confirm').onclick = async () => {
-    const contents = ['events', 'tp2', 'api'].filter(type => $(`export-${type}`).checked), format = $('export-format').value;
+    const contents = ['events', 'insider', 'tp2', 'api'].filter(type => $(`export-${type}`).checked), format = $('export-format').value;
     if (!contents.length) { $('export-error').textContent = 'Chọn ít nhất một nội dung để xuất.'; return; }
     const htmlSettings = { fontSize: Number($('export-font').value), rowsPerPage: Number($('export-page-size').value), wrap: $('export-wrap').checked, onlyIssues: $('export-issues').checked,
       hiddenColumns: [...document.querySelectorAll('[data-export-column]')].filter(input => !input.checked).map(input => input.dataset.exportColumn), columnOrder: [...document.querySelectorAll('[data-export-column]')].map(input => input.dataset.exportColumn) };
@@ -31,7 +31,7 @@
     $('export-confirm').disabled = true; $('export-error').textContent = '';
     try {
       const result = await EventQA.api(finish ? 'finish' : 'export', { selection: { contents, formats: format === 'all' ? ['xlsx', 'html', 'json', 'bugs'] : [format], htmlSettings },
-        aiNotes: contents.includes('events') && $('report-ai-notes')?.checked !== false }, 'export');
+        aiNotes: (contents.includes('events') || contents.includes('insider')) && $('report-ai-notes')?.checked !== false }, 'export');
       $('export-dialog').close(); EventQA.toast(result.exported ? 'Đã tạo các file đã chọn trong phần báo cáo.' : 'Tác vụ xuất đã dừng.', 'ok');
     } catch (error) { $('export-error').textContent = error.message; }
     finally { $('export-confirm').disabled = false; }

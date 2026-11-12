@@ -258,6 +258,29 @@ pre { font-size: 11px; line-height: 1.6; max-height: 340px; overflow: auto; whit
 .ask-ai-thread { margin-top: 12px; display: grid; gap: 8px; max-height: 560px; overflow: auto; }
 .ask-ai-q { justify-self: end; max-width: 85%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px 12px 2px 12px; padding: 6px 12px; }
 .ask-ai-thread .ai-answer { margin-top: 0; }
+/* A question box on each event's detail (AI version). */
+/* The specification's sample beside the actual event (event detail). */
+.diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 12px; }
+.diff-head { font-weight: 700; font-size: 12px; margin-bottom: 4px; }
+.diff-lines { font: 12px/1.5 Consolas, ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; border: 1px solid var(--line, #dfe5ec); border-radius: var(--radius); padding: 6px; overflow-x: auto; }
+.diff-lines div { padding: 0 3px; border-radius: 2px; min-height: 1.5em; }
+.mark-different, .mark-extra { background: #fff3b0; color: #1f2937; }
+.mark-wrong { background: #fff3b0; color: #b91c1c; font-weight: 700; }
+.mark-missing { background: #fff3b0; color: #b91c1c; font-weight: 700; font-style: italic; }
+.mark-extra { color: #92400e; font-style: italic; }
+.mark-optional { color: #6b7280; font-style: italic; }
+.diff-sentences { margin: 4px 0 8px; padding-left: 18px; }
+@media (max-width: 760px) { .diff-grid { grid-template-columns: 1fr; } }
+/* The app define upload (step 2) and its comparison table in an event's detail. */
+.define-box { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line, #dfe5ec); border-radius: var(--radius); }
+.define-box .row { gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.define-table td { vertical-align: top; }
+.event-ask { margin: 10px 0; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: var(--radius); }
+.event-ask-label { display: block; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+.event-ask .row { gap: 8px; }
+.event-ask-q { flex: 1; min-width: 0; }
+.event-ask-thread:empty { display: none; }
+.event-ask-thread { margin-top: 8px; }
 .ask-ai-thread .banner { margin: 0; }
 .ask-ai-findings { list-style: none; padding: 0 !important; margin: 6px 0 8px; display: grid; gap: 6px; }
 .ask-ai-findings li { display: flex; gap: 8px; align-items: flex-start; }

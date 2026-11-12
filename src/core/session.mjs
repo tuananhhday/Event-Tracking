@@ -50,6 +50,27 @@ export class SessionManager {
     }
     return event;
   }
+  /**
+   * A later, fuller reading of evidence already recorded (an Insider Test Lab event whose parameters were
+   * scrolled into view): the record is replaced under the same evidence id, step and capture time, and the
+   * result of its completed step is checked again. The events file keeps every version; the last one counts.
+   */
+  revise(evidenceId, partial) {
+    if (this.session?.status !== 'RUNNING' || !evidenceId) return null;
+    const previous = this.store.events().find(event => event.evidence_id === evidenceId);
+    if (!previous) return null;
+    const { evidence_id: _id, session_id: _session, test_case_id: _case, step_id: _step, captured_at: _at, correlation: _correlation, historical: _historical, ...changes } = partial;
+    const event = this.store.append({ ...changes, schema_version: '1.0', evidence_id: previous.evidence_id, session_id: previous.session_id, test_case_id: previous.test_case_id, step_id: previous.step_id,
+      captured_at: previous.captured_at, correlation: previous.correlation, ...(previous.historical ? { historical: true } : {}), privacy: { redacted: true } });
+    const step = this.steps.find(candidate => candidate.id === previous.step_id);
+    if (step?.status === 'COMPLETED') {
+      const index = this.results.findIndex(result => result.step_id === step.id);
+      const fresh = validateCase(this.cases.find(testCase => testCase.id === step.test_case_id), this.store.events(), step);
+      if (index < 0) this.results.push(fresh); else this.results[index] = { ...this.results[index], ...fresh };
+      this.persist();
+    }
+    return event;
+  }
   // Prices the website's API returned during the session (api-prices.mjs), capped per session.
   emitApi(partial) {
     if (this.session?.status !== 'RUNNING' || this.store.apiList.length >= 3000) return null;

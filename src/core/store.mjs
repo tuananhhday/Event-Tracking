@@ -50,7 +50,8 @@ export class EvidenceStore {
     this.apiCallPath = path.join(this.runDir, 'api-calls.jsonl');
     this.db = new DatabaseSync(path.join(this.runDir, 'eventqa.db'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS events(evidence_id TEXT PRIMARY KEY,session_id TEXT,test_case_id TEXT,step_id TEXT,captured_at TEXT,source TEXT,layer TEXT,event_name TEXT,page_url TEXT,record_json TEXT); CREATE INDEX IF NOT EXISTS event_scope ON events(test_case_id,step_id,layer,event_name);');
-    this.insert = this.db.prepare('INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?,?,?)');
+    // A revised record (session.revise) keeps its place: the row is updated, not deleted and re-added.
+    this.insert = this.db.prepare('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(evidence_id) DO UPDATE SET session_id=excluded.session_id, test_case_id=excluded.test_case_id, step_id=excluded.step_id, captured_at=excluded.captured_at, source=excluded.source, layer=excluded.layer, event_name=excluded.event_name, page_url=excluded.page_url, record_json=excluded.record_json');
     this.recover();
     this.fd = fs.openSync(this.eventPath, 'a');
     this.stepsFd = fs.openSync(this.stepPath, 'a');

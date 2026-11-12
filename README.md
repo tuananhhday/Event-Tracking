@@ -45,6 +45,22 @@ Thao tác kịch bản test, xong bấm **Dừng & tải JSON** ở ô góc ph�
 
 Đoạn mã chỉ đọc `dataLayer`/`InsiderQueue` và request GA4/Insider/TP2, không gửi dữ liệu đi đâu. Dùng khi hợp lệ (bạn có quyền mở trang trên máy đó); đây không phải cách vượt qua chặn IP.
 
+## Kiểm event app (AppOTA) qua Insider Test Lab
+
+App không chạy trong trình duyệt nên EventQA không bắt trực tiếp được; nhưng Insider **Test Lab** hiện các event Insider đã nhận từ máy test. EventQA đọc bảng đó:
+
+1. Nhập địa chỉ panel Insider (`…useinsider.com`) vào ô Website → **Mở trình duyệt test** (hoặc mở thêm tab panel Insider trong cửa sổ test đang chạy).
+2. Đăng nhập Insider trong cửa sổ test (lần đầu; profile giữ đăng nhập) → **Test Lab** → mở bảng **Test Results**.
+3. Thao tác trên app. Mỗi dòng **Event** cùng các dòng **Event Parameter** bên dưới thành một event tầng **Test Lab** dạng `{event, default_parameters, custom_parameters}` (cột TYPE `Default`/`Custom` quyết định nhóm), dùng được trong bước test như event web.
+4. Muốn so với define: bước 2 (File đặc tả) → **Nạp file define (app)**. Chi tiết mỗi event Test Lab có bảng **So với define** từng tham số.
+
+- **Giá trị y như Test Lab.** Event giữ đúng những gì bảng Test Results hiện: tên tham số ở cột NAME, giá trị là chữ ở cột VALUE (không đổi tên, không đổi kiểu: `1149999` vẫn là chữ `"1149999"`, `attraction` vẫn là `"attraction"`), đúng thứ tự trong bảng. Chi tiết event có bảng Status · Name · Type · Value như Test Lab để đối chiếu bằng mắt. Chỉ khi **so sánh** (với define hay file đặc tả) EventQA mới ghép tham số theo key thật của Insider (`c_slug`, `up`, `usp`… lấy từ danh mục Test Lab mà panel tải) và đọc kiểu Insider khai báo; dữ liệu đã bắt không bị sửa.
+- **File define app.** Hai dạng: (1) bảng mỗi dòng một tham số — cột **Event · Tham số · Loại (Default/Custom) · Giá trị mong đợi · Kiểu dữ liệu · Bắt buộc** (bấm **Tải file define mẫu**); có giá trị mong đợi thì so đúng từng chữ, để trống thì chỉ kiểm có mặt và đúng kiểu; "Bắt buộc: Không" thì thiếu không tính lỗi. (2) sheet đặc tả viết cho app (AppOTA_Insider/R1511, mẫu `default_parameters`/`custom_parameters`). Sheet có nhiều event app nhất được dùng. Event và tham số được ghép theo tên như Test Lab hiện hoặc theo key. Nạp define **không thay** file đặc tả website; nạp define mới thay define cũ. Kết quả từng tham số: **Khớp**, **Lệch** (sai giá trị cố định, sai kiểu, hoặc Insider báo thất bại kèm kiểu mong đợi/kiểu app gửi), **Thiếu** (define có, Test Lab không có), **Ngoài define**, **Chưa đọc** (event chưa đọc đủ). Báo cáo Insider có cột **So với define**.
+
+- **Cách đọc.** Test Results của Insider là bảng ag-Grid: mỗi lần app gửi là một dòng event có số thứ tự (1, 2, 3… mới nhất ở trên), các dòng tham số nằm dưới nó. EventQA đọc theo tên cột của bảng, ghi lại **key thật** của tham số (`c_slug`, `up`, `usp`… để so sánh) và trạng thái theo chữ của biểu tượng (Success / In Progress / Failed). Mỗi lần nhận là **một event**. Tham số Insider báo **Thất bại** có kèm lý do (mong đợi kiểu gì, nhận kiểu gì).
+- **Dòng bị ẩn.** ag-Grid chỉ vẽ phần bảng gần màn hình, event đang thu gọn (▸) không có dòng tham số. Khi đọc được dữ liệu của chính bảng, EventQA đọc đủ mọi dòng. Nếu không, nó đọc các dòng đang hiện và **bổ sung dần vào cùng event** khi bạn cuộn hoặc mở rộng; event chưa đọc đủ được ghi "chưa đọc đủ tham số" và đối chiếu đặc tả ở trạng thái **Cần xem** cho tới khi đủ. Trạng thái chuyển xanh cũng cập nhật vào event đó, không tạo event mới.
+- **Kiểm lại cách đọc.** Network (XHR/fetch, WebSocket), Console, HTML bảng và cách đọc (`reader.jsonl`) của panel được lưu trong thư mục phiên, `insider-panel/` (đã che email, số điện thoại, token; không đọc request đăng nhập). Analytics riêng của panel không lẫn vào event của website. Dòng có sẵn khi vừa mở trang được đánh dấu **cũ**.
+
 ## Test trên website thật
 
 Không cần file đặc tả để bắt đầu.
@@ -60,17 +76,20 @@ Không cần file đặc tả để bắt đầu.
 
 Sheet đầu tiên của `report.xlsx` là bảng báo cáo:
 
-| STT | Nền tảng | Luồng | Tên event | Event mong muốn | Event thực tế (GA4) | Event thực tế (Insider) | Nhận xét của AI |
-|---|---|---|---|---|---|---|---|
-| 1 | Insider | Golf | listing_page_view | mẫu event trong file đặc tả | | event Insider đã nhận, cùng dạng với mẫu | [Lệch] Taxonomy gửi 'Golf' thay vì 'golf'; thiếu breadcrumb… |
-| 2 | GA4 | Golf | view_item | `dataLayer.push({event: 'view_item', ecommerce: …})` | dữ liệu Google đã nhận, viết theo dạng mẫu | | [Lệch] Thiếu: service. |
+| STT | Thời điểm | Nền tảng | Luồng | Tên event | Event mong muốn | Event thực tế (GA4) | Event thực tế (Insider) | Nhận xét của AI |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 02/11/2026 16:00:00 | Insider | Golf | listing_page_view | mẫu event trong file đặc tả | | event Insider đã nhận, cùng dạng với mẫu | [Lệch] Taxonomy gửi 'Golf' thay vì 'golf'; thiếu breadcrumb… |
+| 2 | 02/11/2026 16:00:04 | GA4 | Golf | view_item | `dataLayer.push({event: 'view_item', ecommerce: …})` | dữ liệu Google đã nhận, viết theo dạng mẫu | | [Lệch] Thiếu: service. |
+| 3 | 02/11/2026 16:05:00 | Insider (app) | Golf | product_detail_page_view | mẫu event app | | event app đọc từ Insider Test Lab | [Đủ] … |
 
-- **Dòng nào có mặt:** các dòng đặc tả của luồng đã test (dòng đã bắn và dòng chưa thấy của cùng luồng), rồi các event gửi lên nhưng đặc tả không có. Chưa nhập file đặc tả thì mỗi tên event là một dòng, hiện cả những gì GA4 và Insider đã nhận.
-- **Event thực tế theo payload mong muốn:** mẫu viết cho GA4 (`dataLayer.push`) thì event thực tế nằm ở cột **GA4**, mẫu viết cho Insider (`InsiderQueue.push`, dạng R1511…) thì ở cột **Insider**; dòng không có mẫu thì hiện cả hai cột. Event thực tế là lần bắn dùng để kết luận (lần lệch nếu có), viết cùng dạng và cùng thứ tự trường với mẫu để đọc song song: event GA4 là dữ liệu Google nhận được (chỉ tham số nghiệp vụ, không có tham số kỹ thuật như `v`, `tid`, `gtm`; trường nằm trong `ecommerce` nếu mẫu để trong `ecommerce`; `uid` của GA4 là `user_id`), event Insider là `{event, default_parameters, custom_parameters}`. Có push nhưng không gửi lên server thì ghi rõ.
+- **Dòng nào có mặt:** **mọi lần bắn** của phiên, mỗi lần một dòng theo thứ tự thời gian (bắn 3 lần là 3 dòng, không chỉ lần mới nhất), mỗi dòng so với dòng đặc tả của chính nó; một push và request gửi nó đi là một lần bắn, event app đọc từ Test Lab là một dòng mỗi lần nhận (nền tảng ghi **Insider (app)**). Sau đó là các dòng đặc tả của luồng đã test mà **chưa thấy** bắn. Chưa nhập file đặc tả thì mỗi lần bắn vẫn là một dòng. Tổng hợp theo dòng đặc tả (đã bắn mấy lần, lệch mấy lần) nằm ở sheet **Spec Coverage**.
+- **Event thực tế:** nằm ở cột của nền tảng đã nhận event đó (**GA4** hoặc **Insider**), viết cùng dạng và cùng thứ tự trường với mẫu để đọc song song: event GA4 là dữ liệu Google nhận được (chỉ tham số nghiệp vụ, không có tham số kỹ thuật như `v`, `tid`, `gtm`; trường nằm trong `ecommerce` nếu mẫu để trong `ecommerce`; `uid` của GA4 là `user_id`), event Insider là `{event, default_parameters, custom_parameters}`. Có push nhưng không gửi lên server thì ghi rõ.
 - **[Đã gửi, chưa so được]:** nền tảng đã nhận event nhưng mẫu đặc tả là dữ liệu website push (vào dataLayer / InsiderQueue) mà phiên chỉ thấy request, nên chưa so từng trường; event đã nhận vẫn hiện ở cột của nền tảng. Mở phiên có đọc dataLayer / InsiderQueue để so đủ.
 - **Nhận xét:** mở đầu bằng kết luận của công cụ ([Đủ], [Lệch], [Chưa thấy], [Không gửi lên server], [Ngoài đặc tả]…) và tô màu theo kết luận. Bản AI: khi bấm **Kết thúc & xuất** hoặc **Xuất báo cáo**, AI viết phần nhận xét (đủ gì, thiếu gì, sai gì, ai cần làm gì) từ kết luận của công cụ, mất khoảng 10–60 giây; cột có tên **Nhận xét của AI**. Bản thường, hoặc khi AI chưa bật / lỗi, công cụ tự viết (cột **Nhận xét**). Dòng có giá lệch API ghi thêm giá đã gửi và giá API.
 
-Ở bản AI, bỏ chọn **Kèm nhận xét AI khi xuất** trong phần **Kết thúc & báo cáo** để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo. Các event, kết quả đối chiếu và sheet bằng chứng vẫn được xuất đầy đủ. Khi bật nhận xét AI, các lô được xử lý tối đa hai lô cùng lúc; xuất lại cùng nội dung dùng lại nhận xét đã có.
+- **Báo cáo Insider (file riêng):** trong hộp **Xuất báo cáo** / **Kết thúc & xuất**, tick **Báo cáo Insider** để có thêm `insider-report.html` / `.xlsx` / `.json`: chỉ các event Insider (website và app đọc từ Test Lab), mỗi lần bắn một dòng, có cột **Nguồn** (Website / App · Insider Test Lab), trạng thái Test Lab và nhận xét; file Excel có sheet chi tiết với dữ liệu gốc và các tham số Test Lab.
+
+Ở bản AI, AI nhận xét tối đa 100 dòng mỗi lần xuất, ưu tiên dòng có vấn đề (lệch, không gửi, cần xem); các dòng còn lại giữ nhận xét của công cụ. Bỏ chọn **Kèm nhận xét AI khi xuất** trong phần **Kết thúc & báo cáo** để xuất nhanh bằng nhận xét của công cụ, không gọi AI cho báo cáo. Các event, kết quả đối chiếu và sheet bằng chứng vẫn được xuất đầy đủ. Khi bật nhận xét AI, các lô được xử lý tối đa hai lô cùng lúc; xuất lại cùng nội dung dùng lại nhận xét đã có.
 
 Rule đã lưu nằm ở `imports/reviewed-cases.json` và được tự nạp khi mở app lần sau. **Mỗi lần chạy lại một case cần bắt đầu bước mới**; `within_ms` tính từ lúc bắt đầu bước.
 

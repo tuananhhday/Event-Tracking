@@ -38,7 +38,7 @@ export function activityEvent(event) {
     if (object(p.ecommerce)) for (const [key, value] of Object.entries(p.ecommerce)) if (key !== 'items' && !Object.hasOwn(defaults, key)) defaults[key] = value;
     if (p.cu && !defaults.currency) defaults.currency = p.cu;
   }
-  const display = event.source === 'INSIDER' ? insiderDisplayName(event.event_name) : event.event_name;
+  const display = event.layer === 'TEST_LAB' && typeof p.event === 'string' && p.event ? p.event : event.source === 'INSIDER' ? insiderDisplayName(event.event_name) : event.event_name;
   return {
     evidence_id: event.evidence_id, event_name: event.event_name, display_name: display,
     captured_at: event.captured_at, source: event.source, layer: event.layer,

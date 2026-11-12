@@ -76,3 +76,7 @@ Có thể thay `auto` bằng một ID model để chọn cố định; kiểm tr
 Input gửi đi được che token, thông tin đăng nhập và PII trước khi gọi API. Không ghi API key hoặc body lỗi provider vào log. Request đặt `provider.data_collection=deny`; hãy chọn model/provider phù hợp chính sách dữ liệu của môi trường kiểm thử. Việc truyền dữ liệu ra OpenRouter chỉ diễn ra sau khi đã bật AI và gọi chức năng AI.
 
 Tài liệu kỹ thuật: [OpenRouter API](https://openrouter.ai/docs/api_reference/overview), [Models API](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties), [provider selection và trần giá](https://openrouter.ai/docs/guides/routing/provider-selection), [model fallback](https://openrouter.ai/docs/guides/routing/model-fallbacks).
+
+## Hỏi AI về một event
+
+Mở chi tiết một event (tab Event, bấm vào dòng event): dưới nút **✦ AI giải thích event này** có ô **✦ Hỏi AI về event này**. Gõ câu hỏi (ví dụ: "giá có khớp với Insider không?", "thiếu tham số gì?", "có bắn lặp không?") rồi bấm **Hỏi** hoặc Enter. AI trả lời về đúng event đó, so với các event GA4/Insider xảy ra quanh nó (±15 giây) và kết luận đặc tả của công cụ; với event app đọc từ Insider Test Lab, AI biết tham số nào Insider báo thất bại và kiểu dữ liệu Insider mong đợi. Mỗi event giữ hội thoại riêng (3 câu gần nhất đi kèm câu hỏi tiếp theo); hỏi không khoá trang, vẫn test tiếp được. Thanh **✦ Hỏi AI về các event** ở đầu tab Event vẫn dùng để hỏi về cả phiên.

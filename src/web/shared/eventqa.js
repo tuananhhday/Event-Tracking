@@ -36,11 +36,53 @@
   const DELIVERY_PILL = { sent: s => ['PASS', `Đã gửi lên ${vendorName(s)}`], not_sent: () => ['FAIL', 'Không gửi lên server'], pending: () => ['REVIEW', 'Đang chờ gửi'], unverified: () => ['', 'Trước khi thu thập'] };
   const deliveryPill = (status, source) => DELIVERY_PILL[status] ? (([cls, label]) => `<span class="pill ${cls}">${esc(label)}</span>`)(DELIVERY_PILL[status](source)) : '';
   const VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', REVIEW: 'REVIEW', NOT_EXECUTED: 'Chưa chạy' };
-  const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request' };
+  const LAYER_TEXT = { JS_QUEUE: 'JS queue', TRACKING_REQUEST: 'Request', TEST_LAB: 'Test Lab' };
+  // Status Insider's Test Lab shows for an event read from its table (testlab.mjs).
+  const TESTLAB_STATUS = { successful: ['PASS', 'Thành công'], failed: ['FAIL', 'Thất bại'], in_progress: ['warn', 'Đang xử lý'], not_tested: ['', 'Chưa test'], unknown: ['', 'Chưa rõ trạng thái'] };
+  const testlabPill = e => { const [cls, label] = TESTLAB_STATUS[e.testlab?.status] ?? TESTLAB_STATUS.unknown; return `<span class="pill ${cls}" title="Trạng thái trong Insider Test Lab">${esc(label)}</span>`; };
+  // The specification's sample beside the actual event, line against line: same lines plain, differing
+  // values yellow, wrong ones red too, and the lines one side lacks said in words.
+  function diffHtml(spec) {
+    const d = spec?.diff; if (!d?.rows?.length) return '';
+    const column = side => d.rows.map(row => `<div${row[side].mark ? ` class="mark-${esc(row[side].mark)}"` : ''}>${row[side].text ? esc(row[side].text) : '&nbsp;'}</div>`).join('');
+    return `<div class="list-title"><b>Đặc tả ↔ Thực tế</b> <small class="hint">dòng giống để nguyên · <span class="mark-different">vàng</span> = khác mẫu · <span class="mark-wrong">vàng chữ đỏ</span> = sai đặc tả · <span class="mark-missing">(thiếu)</span> = bên đó thiếu trường</small></div>
+      ${d.sentences?.length ? `<ul class="diff-sentences">${d.sentences.map(sentence => `<li>${esc(sentence)}</li>`).join('')}</ul>` : '<p class="hint">Giống hệt mẫu trong đặc tả.</p>'}
+      <div class="diff-grid"><div><div class="diff-head">Event mong muốn (đặc tả)</div><div class="diff-lines">${column('expected')}</div></div><div><div class="diff-head">Event thực tế</div><div class="diff-lines">${column('actual')}</div></div></div>`;
+  }
+  const DEFINE_TEXT = { MATCH: ['PASS', 'Khớp'], MISMATCH: ['FAIL', 'Lệch'], MISSING: ['FAIL', 'Thiếu'], EXTRA: ['warn', 'Ngoài define'], UNREAD: ['', 'Chưa đọc'] };
+  // An app event from Test Lab beside its define row: each parameter as Test Lab shows it, what the define expects, the result.
+  function defineHtml(detail) {
+    if (detail?.event?.layer !== 'TEST_LAB') return '';
+    const d = detail.define;
+    if (!d) return `<div class="list-title"><b>So với define</b></div><p class="hint">${detail.define_loaded ? 'File define chưa có event này.' : 'Chưa nạp file define app: bước 2 (File đặc tả) → <b>Nạp file define (app)</b>.'}</p>`;
+    const order = ['MISMATCH', 'MISSING', 'EXTRA', 'UNREAD', 'MATCH'];
+    const pills = order.filter(result => d.summary[result]).map(result => `<span class="pill ${DEFINE_TEXT[result][0]}">${DEFINE_TEXT[result][1]} ${d.summary[result]}</span>`).join(' ');
+    const rows = [...d.rows].sort((a, b) => order.indexOf(a.result) - order.indexOf(b.result)).map(row => `<tr><td>${esc(row.name)}${row.key ? `<br><small class="hint"><code>${esc(row.key)}</code></small>` : ''}</td>
+      <td>${row.rule ? esc(row.rule) : ''}${row.expected !== '' && row.expected !== 'null' ? `<br><small class="hint">mẫu: ${esc(short(row.expected, 80))}</small>` : ''}</td>
+      <td>${row.actual === null ? '<span class="hint">—</span>' : formatValue(row.actual)}</td>
+      <td><span class="pill ${DEFINE_TEXT[row.result][0]}">${DEFINE_TEXT[row.result][1]}</span>${row.note ? `<br><small class="hint">${esc(row.note)}</small>` : ''}</td></tr>`).join('');
+    return `<div class="list-title"><b>So với define</b> · ${esc(d.event_name)}${d.sheet ? ` <small class="hint">(${esc(d.file || '')} · ${esc(d.sheet)}${d.row ? ` dòng ${esc(d.row)}` : ''})</small>` : ''} ${pills}</div>
+      <div class="table-scroll"><table class="params define-table"><thead><tr><th>Tham số (Test Lab)</th><th>Define</th><th>Test Lab</th><th>Kết quả</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+  const testlabText = e => `Test Lab${e.testlab?.receipt ? ` #${e.testlab.receipt}` : ''}: ${(TESTLAB_STATUS[e.testlab?.status] ?? TESTLAB_STATUS.unknown)[1]}${e.capture?.incomplete ? ' · chưa đọc đủ tham số' : ''}`;
+  // What Insider's Test Lab says about the event: parameters it marked failed (with the type it expected) and
+  // whether every parameter has been read yet.
+  function testlabHtml(e) {
+    const t = e.testlab; if (!t) return '';
+    const params = t.params || [], failed = params.filter(p => p.status === 'failed');
+    const why = p => Object.entries(p.failed_detail || {}).map(([platform, d]) => `${platform}: mong đợi ${d?.expected_type ?? '?'}, nhận ${d?.observed_type ?? '?'}`).join('; ');
+    const pill = status => { const [cls, label] = TESTLAB_STATUS[status] ?? TESTLAB_STATUS.unknown; return `<span class="pill ${cls}">${esc(label)}</span>`; };
+    // The Test Results table as Insider shows it: status, NAME, TYPE, VALUE, in its order.
+    const rows = params.map(p => `<tr><td>${pill(p.status)}${why(p) ? `<br><small class="hint">${esc(why(p))}</small>` : ''}</td><td>${esc(p.name)}</td><td>Event Parameter<br><small class="hint">${esc(/^custom_/.test(p.field || '') ? 'Custom' : 'Default')}</small></td><td>${p.value === '' ? '<span class="hint">(trống)</span>' : esc(p.value)}</td></tr>`).join('');
+    const note = e.capture?.incomplete ? `<p class="hint">${t.collapsed ? 'Event đang thu gọn trong Test Lab: mở rộng (▸) để EventQA đọc tham số.' : 'Chưa đọc đủ tham số: cuộn tới event này trong bảng Test Lab để EventQA đọc nốt.'} Đối chiếu chờ tới khi đọc đủ.</p>` : '';
+    return `<div class="list-title"><b>Insider Test Lab${t.receipt ? ` · lần nhận #${esc(t.receipt)}` : ''}</b> · ${pill(t.status)} · ${params.length} tham số${failed.length ? ` · <span class="pill FAIL">${failed.length} thất bại</span>` : ''}</div>${note}
+      ${rows ? `<div class="table-scroll"><table class="params testlab-table"><thead><tr><th>Status</th><th>Name</th><th>Type</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table></div><p class="hint">Giữ nguyên như bảng Test Results (tên, giá trị, thứ tự).</p>` : ''}`;
+  }
   // Where a specification row comes from: Excel sheet!row, or "Nhập tay" for an event typed in the app.
   const whereSpec = (sheet, row) => row == null || row === '' ? String(sheet ?? '') : `${sheet ?? ''}!${row}`;
   const SOURCE_TEXT = { GA4: 'GA4', INSIDER: 'Insider' };
-  const FILE_TEXT = { xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Bảng đối chiếu có lọc và xem chi tiết'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'], api_html: ['API · HTML', 'Toàn bộ API và chi tiết trong một file'], api_json: ['API · JSON', 'Request/response của phiên'], api_xlsx: ['API · Excel', 'Danh sách và trường chi tiết'], tp2_html: ['TP2 ↔ API · HTML', 'Dữ liệu giải mã và đối chiếu'], tp2_json: ['TP2 ↔ API · JSON', 'Dữ liệu giải mã và đối chiếu'], tp2_xlsx: ['TP2 ↔ API · Excel', 'Dữ liệu giải mã và đối chiếu'] };
+  const FILE_TEXT = { insider_html: ['Insider · HTML', 'Mọi event Insider (website + app Test Lab) so với đặc tả'], insider_xlsx: ['Insider · Excel', 'Mọi event Insider, có sheet chi tiết'],
+    insider_json: ['Insider · JSON', 'Event Insider và bảng đối chiếu'], xlsx: ['Excel', 'Báo cáo và bằng chứng đối chiếu'], html: ['HTML', 'Bảng đối chiếu có lọc và xem chi tiết'], json: ['JSON', 'Comparison đầy đủ'], bugs: ['Bug (Markdown)', 'Dán vào Jira thủ công'], api_calls: ['API Request/Response', 'api-calls.jsonl: mỗi dòng một lời gọi API'], automation: ['Luồng tự động', 'Tiến độ và kết quả thao tác'], api_html: ['API · HTML', 'Toàn bộ API và chi tiết trong một file'], api_json: ['API · JSON', 'Request/response của phiên'], api_xlsx: ['API · Excel', 'Danh sách và trường chi tiết'], tp2_html: ['TP2 ↔ API · HTML', 'Dữ liệu giải mã và đối chiếu'], tp2_json: ['TP2 ↔ API · JSON', 'Dữ liệu giải mã và đối chiếu'], tp2_xlsx: ['TP2 ↔ API · Excel', 'Dữ liệu giải mã và đối chiếu'] };
   const OPS = [['eq', 'bằng'], ['exists', 'có mặt'], ['type', 'kiểu'], ['regex', 'regex'], ['ref', 'lấy từ context'], ['one_of', 'một trong'], ['not_exists', 'không được có'], ['ignore', 'bỏ qua']];
 
   const ui = { state: null, busy: null, stopped: false, offline: false, selectedCase: null, contexts: new Map(),
@@ -368,7 +410,7 @@
     const full = path => base ? `${base}.${path}` : path;
     const pageUrl = (() => { try { const u = new URL(e.page?.url); return u.host + u.pathname; } catch { return e.page?.url || ''; } })();
     const head = `<div class="ev-head"><div><span class="ev-title">${esc(e.event_name)}</span>
-        <span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span> <span class="pill">${esc(e.source)}</span>
+        <span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span> <span class="pill">${esc(e.source)}</span>${e.testlab ? ` ${testlabPill(e)}` : ''}
         <div class="hint">${esc(clock(e.captured_at))} · ${esc(pageUrl)}${e.network?.status ? ` · HTTP ${esc(e.network.status)}` : ''}</div></div>
       ${spec ? `<div class="ev-spec"><span class="pill ${spec.verdict}">${spec.verdict === 'PASS' ? 'Khớp đặc tả' : spec.verdict === 'FAIL' ? 'Lệch đặc tả' : 'Cần xem'}</span><div class="hint">Đặc tả #${esc(spec.stt)} · ${esc(spec.flow)}</div></div>`
         : (ui.state?.cases.length ? '<div class="ev-spec"><span class="pill warn">Ngoài đặc tả</span></div>' : '')}</div>`;
@@ -393,7 +435,7 @@
     const absentHtml = absent.length ? `<div class="list-title"><span class="pill FAIL">Thiếu so với đặc tả</span> ${absent.map(i => `<code>${esc(base && i.path.startsWith(`${base}.`) ? i.path.slice(base.length + 1) : i.path)}</code>`).join(', ')}</div>` : '';
     const note = spec?.notes ? `<p class="hint">Ghi chú đặc tả: ${esc(spec.notes)}</p>` : '';
     const contract = spec ? `<p><b>Event Name trong đặc tả:</b> ${esc(spec.event_name)} · ${esc(whereSpec(spec.provenance?.sheet, spec.provenance?.row))}<br>${esc(spec.description)}</p><button type="button" class="btn small" data-spec-detail="${esc(spec.case_id)}">Xem chi tiết đặc tả</button>` : '';
-    return `${head}${contract}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
+    return `${head}${contract}${diffHtml(spec)}${firingHtml(firing)}${absentHtml}${scalarHtml}${listHtml}${note}
       <div class="row" style="margin:10px 0 0">${e.network?.phase && e.network.phase !== 'request' ? '' : `<button type="button" class="btn small primary shrink" data-build="${esc(e.evidence_id)}">Tạo rule từ event này</button>`}</div>
       ${ui.hooks.eventExtras?.(e) || ''}
       <details class="raw"><summary>JSON gốc (bằng chứng đầy đủ)</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details>`;
@@ -411,7 +453,7 @@
   function detailContent(id) {
     const loaded = ui.details.get(id);
     if (!loaded) { loadDetail(id); return '<p class="hint">Đang tải chi tiết…</p>'; }
-    return eventDetailHtml(loaded.event, loaded.spec, loaded.firing);
+    return eventDetailHtml(loaded.event, loaded.spec, loaded.firing) + testlabHtml(loaded.event) + defineHtml(loaded);
   }
 
   // ---- live evidence ------------------------------------------------------
@@ -441,7 +483,7 @@
       ui.activity = []; ui.activityNext = null; ui.activityVersion = null; ui.activityExtended = false; ui.activitySession = session;
     }
     // A pending push turns not_sent without new evidence: its count is part of the version.
-    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${ui.state.delivery?.pending ?? ''}:${ui.state.delivery?.not_sent ?? ''}:${JSON.stringify(ui.state.prices || {})}`;
+    const version = `${ui.state.session?.id || ''}:${ui.state.eventCount}:${ui.state.eventRevision ?? 0}:${ui.state.delivery?.pending ?? ''}:${ui.state.delivery?.not_sent ?? ''}:${JSON.stringify(ui.state.prices || {})}`;
     if (!more && version === ui.activityVersion) return;
     ui.activityLoading = true;
     try {
@@ -497,17 +539,20 @@
     const date = new Date(a.captured_at);
     // What reached the vendor: the push, the request that sent it, and pushed fields Google did not receive.
     const d = detail.delivery || {}, vendor = vendorName(a.source), queue = a.source === 'GA4' ? 'dataLayer' : 'InsiderQueue';
-    const deliveryHtml = d.status === 'sent' ? `<div class="banner info"><p><b>✓ Đã gửi lên ${vendor}</b>${d.push && d.hit ? `, ${Math.max(0, Date.parse(d.hit.captured_at) - Date.parse(d.push.captured_at))} ms sau khi website push vào ${queue}` : d.push ? '' : ' (request gửi thẳng, không thấy push tương ứng trong ' + queue + ')'}.${a.source === 'GA4' ? ' Tham số bên dưới là những gì Google nhận được.' : ''}</p>${d.not_forwarded?.length ? `<p><b>Website có push nhưng Google không nhận:</b> ${d.not_forwarded.map(path => `<code>${esc(path)}</code>`).join(', ')}. Tag GA4 trong GTM chưa gửi các trường này.</p>` : ''}</div>`
+    const deliveryHtml = e.layer === 'TEST_LAB' ? `<div class="banner info"><p><b>✓ Insider đã nhận từ app</b> (đọc từ bảng Test Results của Insider Test Lab${e.testlab?.receipt ? `, lần nhận #${esc(e.testlab.receipt)}` : ''}).</p></div>`
+      : d.status === 'sent' ? `<div class="banner info"><p><b>✓ Đã gửi lên ${vendor}</b>${d.push && d.hit ? `, ${Math.max(0, Date.parse(d.hit.captured_at) - Date.parse(d.push.captured_at))} ms sau khi website push vào ${queue}` : d.push ? '' : ' (request gửi thẳng, không thấy push tương ứng trong ' + queue + ')'}.${a.source === 'GA4' ? ' Tham số bên dưới là những gì Google nhận được.' : ''}</p>${d.not_forwarded?.length ? `<p><b>Website có push nhưng Google không nhận:</b> ${d.not_forwarded.map(path => `<code>${esc(path)}</code>`).join(', ')}. Tag GA4 trong GTM chưa gửi các trường này.</p>` : ''}</div>`
       : d.status === 'not_sent' ? `<div class="banner error"><p><b>✗ Không gửi lên ${vendor}.</b> Website đã push vào ${queue} nhưng không có request nào mang event này lên ${vendor}, nên event chưa được bắn. Kiểm tra tag/trigger trong GTM${a.source === 'INSIDER' ? ' hoặc init của Insider' : ''}.</p></div>`
       : d.status === 'pending' ? `<div class="banner warn"><p>Website vừa push; đang chờ ${vendor} gửi request (GA4 gom event rồi mới gửi).</p></div>`
       : d.status === 'unverified' ? '<div class="banner warn"><p>Push từ trước khi bắt đầu thu thập: không xác định được đã gửi lên server hay chưa.</p></div>' : '';
     const payloadOf = view => view === 'hit' ? d.hit?.payload ?? null : view === 'push' ? (a.capture?.incomplete ? { _capture: a.capture, payload: d.push?.payload } : d.push?.payload ?? null) : a.json;
     const selectedView = () => document.querySelector('[data-activity-view][aria-pressed="true"]')?.dataset.activityView ?? 'params';
     $('activity-content').innerHTML = `<header class="insider-event-title"><h2>${esc(a.display_name)}</h2><code>${esc(a.event_name)}</code></header>
-      <section class="insider-event-details"><h3>Event Details</h3><div class="kv"><div><span>Platform</span><b>Web</b></div><div><span>Date</span><b>${esc(date.toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Time (UTC)</span><b>${esc(date.toISOString().slice(11, 19))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc((a.layers || [a.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}</b></div></div>${e.page?.url ? `<p class="hint event-page">${esc(e.page.url)}</p>` : ''}</section>
+      <section class="insider-event-details"><h3>Event Details</h3><div class="kv"><div><span>Platform</span><b>${e.layer === 'TEST_LAB' ? 'App · Insider Test Lab' : 'Web'}</b></div><div><span>Date</span><b>${esc(date.toLocaleString('vi-VN', { hour12: false }))}</b></div><div><span>Time (UTC)</span><b>${esc(date.toISOString().slice(11, 19))}</b></div><div><span>Nguồn bằng chứng</span><b>${esc(a.source)} · ${esc((a.layers || [a.layer]).map(layer => LAYER_TEXT[layer] || layer).join(' + '))}</b></div></div>${e.page?.url ? `<p class="hint event-page">${esc(e.page.url)}</p>` : ''}</section>
       ${deliveryHtml}
+      ${diffHtml(detail.spec)}
       ${detail.prices?.length ? `<section class="price-check"><h3>Giá so với API của website</h3><div class="table-scroll"><table class="params"><thead><tr><th>Trường giá</th><th>Đã gửi</th><th>Giá trong API</th><th>Kết quả</th></tr></thead><tbody>${detail.prices.map(check => `<tr><td><code>${esc(check.field)}</code></td><td><b>${esc(vnd(check.sent))}</b></td><td>${priceApiHtml(check)}</td><td>${pricePill(check)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
-      ${a.capture?.incomplete ? '<div class="banner warn">Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.</div>' : ''}
+      ${a.capture?.incomplete ? `<div class="banner warn">${e.layer === 'TEST_LAB' ? 'Chưa đọc đủ tham số từ Insider Test Lab: mở rộng (▸) và cuộn tới event này trong Test Lab để EventQA đọc nốt.' : 'Payload thu chưa đầy đủ; không dùng bản này để kết luận PASS/FAIL của website.'}</div>` : ''}
+      ${e.testlab ? testlabHtml(e) + defineHtml(detail) : ''}
       <div class="toolbar activity-actions"><button type="button" class="btn primary" id="activity-copy">Sao chép JSON</button><button type="button" class="btn" id="activity-download">Tải JSON</button></div>${ui.hooks.eventExtras?.(e) || ''}<div class="segmented"><button type="button" data-activity-view="params" aria-pressed="true">Event Details</button><button type="button" data-activity-view="json" aria-pressed="false">JSON tham số</button><button type="button" data-activity-view="hit" aria-pressed="false">Request gửi lên server</button><button type="button" data-activity-view="push" aria-pressed="false">Website push</button></div>
       <section data-activity-panel="params"><h3>Default Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.default_parameters)}</tbody></table><h3>Custom Parameters</h3><table class="params insider-parameters"><tbody>${parameters(a.json.custom_parameters)}</tbody></table></section>
       <section data-activity-panel="json" class="hidden"><pre class="activity-json" tabindex="0">${esc(JSON.stringify(a.json, null, 2))}</pre></section>
@@ -566,7 +611,7 @@
     const f = eventFilters();
     if ($('ev-search')) $('ev-search').placeholder = ui.view === 'activity' ? 'Tìm tên event, nguồn hoặc evidence ID…' : 'Tìm event, giá trị, evidence ID…';
     const view = JSON.stringify([f, ui.view, ui.marker, ui.expandedGroup, $('activity-from')?.value, $('activity-to')?.value, ui.activity.length, ui.pushVersion]);
-    const sig = JSON.stringify([s.eventCount, s.events.at(-1)?.evidence_id, view, s.cases.length, s.delivery]); if (sig === ui.sig.events) return;
+    const sig = JSON.stringify([s.eventCount, s.eventRevision, s.events.at(-1)?.evidence_id, view, s.cases.length, s.delivery]); if (sig === ui.sig.events) return;
     // Keep an expanded event steady while new evidence arrives; offer to refresh instead.
     const reading = ui.view === 'stream' && $$('#events details[open]').length > 0 && ui.sig.eventsView === view;
     if (reading) { const note = $('ev-pending'); if (note) { note.classList.remove('hidden'); note.textContent = 'Có event mới · bấm để cập nhật danh sách'; } return; }
@@ -617,7 +662,8 @@
       const firstRender = ui.seenEvents.size === 0;
       $('events').innerHTML = rows.map(({ event: e, count, oldest }) => {
         const fresh = !firstRender && !ui.seenEvents.has(e.evidence_id);
-        const phase = e.network?.phase ? `${e.network.method || ''} ${e.network.phase}${e.network.status ? ` ${e.network.status}` : ''}${e.network.error ? ` ${e.network.error}` : ''}` : e.queue_name || '';
+        const phase = e.testlab ? testlabText(e)
+          : e.network?.phase ? `${e.network.method || ''} ${e.network.phase}${e.network.status ? ` ${e.network.status}` : ''}${e.network.error ? ` ${e.network.error}` : ''}` : e.queue_name || '';
         return `<details class="event${fresh ? ' flash' : ''}" data-ev="${esc(e.evidence_id)}" ${ui.openEvents.has(e.evidence_id) ? 'open' : ''}><summary>
           <time>${esc(clock(e.captured_at))}</time><span class="ev-name">${esc(e.event_name)}</span>${count > 1 ? `<span class="pill warn" title="Từ ${esc(clock(oldest.captured_at))}">×${count} giống hệt nhau</span>` : ''}<span class="pill layer">${esc(LAYER_TEXT[e.layer] || e.layer)}</span><span class="pill">${esc(e.source)}</span>
           <span class="ev-meta">${esc(phase)} · ${e.step_id ? esc(e.test_case_id) : 'chưa gắn bước'}</span></summary>
@@ -1019,6 +1065,8 @@
     if (indicator) { indicator.textContent = s.running ? (s.session?.capture_queues === false ? 'Chỉ bắt request' : 'Đang thu thập') : s.session ? 'Đã kết thúc phiên' : 'Chưa mở phiên'; indicator.classList.toggle('active', !!s.running); }
     const casesKey = JSON.stringify([s.specSource, s.cases.length, s.cases.at(-1)?.id]);
     if (casesKey !== ui.casesKey) { ui.casesKey = casesKey; ui.details.clear(); ui.sig.events = null; }
+    // Evidence revised in place (a Test Lab event read further): its loaded details are stale.
+    if ((s.eventRevision ?? 0) !== ui.eventRevision) { ui.eventRevision = s.eventRevision ?? 0; ui.details.clear(); ui.sig.events = null; }
     renderVendors(s); renderCases(s); renderFlow(s, phase); renderBar(s, phase); renderMetrics(s); renderControls(s, phase);
     if (Date.now() < ui.holdUntil) { clearTimeout(ui.holdTimer); ui.holdTimer = setTimeout(render, ui.holdUntil - Date.now() + 50); }
     else { renderResults(s); renderEvents(s); renderSpec(s); renderFiring(s); renderPrices(s); renderApiCalls(s); renderEndpoints(s); }
@@ -1161,6 +1209,20 @@
     $('setup-toggle')?.addEventListener('click', () => toggleSetup());
     $('spec-detail-close')?.addEventListener('click', () => $('spec-detail-dialog').close());
     $('sheet-select')?.addEventListener('change', () => { $('sheet').value = $('sheet-select').value; });
+    $('define-file')?.addEventListener('change', run(async () => {
+      const file = $('define-file').files[0]; if (!file) return;
+      if (file.size > 3 * 1024 * 1024) throw new Error('Chọn file nhỏ hơn 3 MB.');
+      const content = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = reject; reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(file); });
+      $('define-file-status').textContent = `Đang đọc ${file.name}…`;
+      try {
+        const uploaded = await api('spec-upload', { name: file.name, content }, 'define-upload');
+        const result = await api('import-define', { path: uploaded.path, name: file.name }, 'import-define');
+        $('define-file-status').textContent = `${file.name}: ${result.define.events} event app${result.define.sheet ? ` (sheet ${result.define.sheet})` : ''}: ${result.define.names.slice(0, 8).join(', ')}${result.define.names.length > 8 ? '…' : ''}.`;
+        ui.details.clear(); ui.sig.events = null; render();
+        toast(`Đã nạp define: ${result.define.events} event app. Mở chi tiết một event Test Lab để xem bảng So với define.`, 'ok');
+      } catch (error) { $('define-file-status').textContent = error.message; throw error; }
+      finally { $('define-file').value = ''; }
+    }));
     $('spec-file')?.addEventListener('change', run(async () => {
       const file = $('spec-file').files[0]; if (!file) return;
       if (file.size > 3 * 1024 * 1024) throw new Error('Chọn file nhỏ hơn 3 MB.');

@@ -2,6 +2,7 @@ import { checkField } from './rules.mjs';
 import { isBusinessEvent } from './event-kind.mjs';
 import { linkDeliveries, deliveryStatus, ga4HitAsPush } from './delivery.mjs';
 import { insiderHitView } from './insider-hit.mjs';
+import { testLabSpecView } from './testlab.mjs';
 
 // Queue/request records that set up a vendor SDK rather than report a user action.
 const SETUP_EVENT = /^(?:gtm\.|gtag\.|insider_|ecommerce_reset$|QUEUE_ITEM$|config$|js$|set$|consent$|UNPARSED$|tracking_request$)/;
@@ -16,7 +17,7 @@ function leaves(value, prefix = '', out = new Map(), depth = 0) {
 export const APP_ONLY_FIELD = /^custom_parameters\.(?:app_version|device_manufacturer|device_model|os_version|platform)$/;
 // Which row an event belongs to (its flow) is told by everything observed, including the push behind
 // a GA4 hit (page_type, service…); whether its fields are right is judged on the hit alone.
-const observedLeaves = event => event.pushed ? new Map([...leaves(event.pushed), ...leaves(event.payload)]) : leaves(event.payload);
+const observedLeaves = event => event.spec_view ? leaves(event.spec_view) : event.pushed ? new Map([...leaves(event.pushed), ...leaves(event.payload)]) : leaves(event.payload);
 const valueAt = (object, path) => path.split('.').reduce((value, key) => value == null ? undefined : value[key], object);
 // A field judged on a GA4 hit: GA4 omits empty values and sends booleans as text, and a field the
 // website did push but Google did not receive points at the GTM tag, not at the website.
@@ -41,7 +42,8 @@ function evaluate(testCase, rule, event) {
   // An AppOTA_Insider row (R1511…) describes the event as Insider records it: a web Insider hit is
   // judged in that form, without the fields only the app sends (app_version, device_*, os_version, platform).
   const appRow = rule.capture_platform === 'APP_SDK', webAsInsider = appRow && event.insider_view;
-  const payload = webAsInsider ? event.insider_view : event.payload;
+  // A Test Lab event is checked on its spec view (Insider's keys and types), not on the text it shows.
+  const payload = event.spec_view ?? (webAsInsider ? event.insider_view : event.payload);
   const referenceOnly = appRow && !(payload?.default_parameters && payload?.custom_parameters);
   const fields = Object.entries(rule.fields ?? {}).filter(([path]) => !(webAsInsider && APP_ONLY_FIELD.test(path)));
   let checks = referenceOnly ? [{ code: 'SPEC_PLATFORM_MISMATCH', verdict: 'REVIEW', expected: 'APP_SDK', actual: 'WEB', evidence_id: event.evidence_id }]
@@ -104,6 +106,18 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
   return { case_id: best.testCase.id, verdict: issues.some(issue => issue.verdict === 'FAIL') ? 'FAIL' : issues.length ? 'REVIEW' : 'PASS', issues, fields, ambiguous: candidates.length > 1 && best.score <= 0 };
 }
 
+// The AppOTA_Insider rows of a specification (capture_platform APP_SDK), indexed once per case list.
+const appCaseCache = new WeakMap();
+function appCases(cases) {
+  let app = appCaseCache.get(cases);
+  if (!app) {
+    const list = cases.filter(testCase => (testCase.rules ?? []).some(rule => rule.capture_platform === 'APP_SDK'));
+    app = { cases: list, index: indexCases(list) };
+    appCaseCache.set(cases, app);
+  }
+  return app;
+}
+
 /**
  * The specification view of one record, judged on what reached the vendor. A GA4 push that was sent
  * is judged on its hit (Google's parameters, with the push to tell a missing push from a field the
@@ -113,6 +127,12 @@ export function matchEvent(cases, event, index = indexCases(cases)) {
  */
 export function matchTracked(cases, event, { links = linkDeliveries([event]), now = Date.now(), index = indexCases(cases) } = {}) {
   if (!isBusinessEvent(event) || (event.network?.phase && event.network.phase !== 'request')) return null;
+  // An event Insider's Test Lab received from the app is judged against the AppOTA_Insider rows, which
+  // were imported as request or queue rows depending on their sample.
+  if (event.layer === 'TEST_LAB') {
+    const app = appCases(cases), view = { ...event, spec_view: testLabSpecView(event) };
+    return matchEvent(app.cases, { ...view, layer: 'TRACKING_REQUEST' }, app.index) ?? matchEvent(app.cases, { ...view, layer: 'JS_QUEUE' }, app.index);
+  }
   if (event.layer === 'JS_QUEUE') {
     const hit = links.sentBy.get(event.evidence_id);
     if (hit && event.source === 'GA4') return matchTracked(cases, hit, { links, now, index });

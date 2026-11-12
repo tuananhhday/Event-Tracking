@@ -15,6 +15,10 @@ const DISPLAY_NAMES = {
   cart_page_view: 'Cart Page View', confirmation_page_view: 'Purchase', purchase: 'Purchase',
   add_to_cart: 'Item Added to Cart', item_added_to_cart: 'Item Added to Cart', remove_from_cart: 'Item Removed from Cart', item_removed_from_cart: 'Item Removed from Cart',
 };
+// The specification name of an event as the panel shows it; the first name listed for a label wins.
+const EVENT_NAMES = new Map(Object.entries(DISPLAY_NAMES).reverse().map(([name, label]) => [label.toLowerCase(), name]));
+/** "Homepage View" → homepage_view, "Item Added to Cart" → add_to_cart; null for a custom event. */
+export const insiderEventName = label => EVENT_NAMES.get(String(label ?? '').trim().toLowerCase()) ?? null;
 /** Page and cart events Insider defines itself; everything else is a custom event. */
 export const isInsiderStandardEvent = name => Object.hasOwn(DISPLAY_NAMES, name) || INSIDER_PAGE_EVENTS.includes(name) || name === 'pageView';
 /** The name Insider shows: "Listing Page View", "Item Added to Cart", custom events title-cased ("Search Golf"). */
@@ -30,6 +34,8 @@ const ENVELOPE = new Set(['version', 'partner_name', 'user_id', 'event', 'init_s
   'language', 'locale', 'ucd', 'ad_blocker', 'country', 'time_zone', 'partner', 'insider_id', 'lane', 'event_name', 'timestamp', 'product', 'products', 'category', 'cart_amount']);
 // Short names of default parameters in Insider's event API.
 const SHORT_NAMES = { pid: 'product_id', na: 'product_name', cu: 'currency', up: 'unit_price', usp: 'unit_sale_price', piu: 'product_image_url', qu: 'quantity', ta: 'taxonomy', e_guid: 'event_group_id' };
+/** The name of a default parameter Insider keys by a short name (usp → unit_sale_price); other keys as they are. */
+export const insiderParameterName = key => SHORT_NAMES[key] ?? key;
 const ORDER_KEYS = ['order_id', 'event_group_id', 'unique_sale_id', 'sale_id'];
 
 function productParameters(product) {

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { testLabSpecView } from './testlab.mjs';
 
 const MISSING = Symbol('missing');
 const SUPPORTED = new Set(['eq', 'exists', 'not_exists', 'type', 'regex', 'one_of', 'range', 'ref', 'subset', 'ignore']);
@@ -85,6 +86,13 @@ export function checkField(payload, path, rule, context, evidenceId) {
   }
 }
 
+// An event read from Insider's Test Lab is the app event an AppOTA_Insider row (capture_platform
+// APP_SDK) describes, whichever layer that row was imported with; its own name, the specification
+// name or the label the panel shows, may be the one the row uses.
+const layerMatches = (event, rule) => event.layer === rule.layer || (event.layer === 'TEST_LAB' && rule.capture_platform === 'APP_SDK');
+const nameMatches = (event, rule) => event.event_name === rule.event_name || rule.event_aliases?.includes(event.event_name)
+  || (event.layer === 'TEST_LAB' && (event.aliases ?? []).some(alias => alias === rule.event_name || rule.event_aliases?.includes(alias)));
+
 function verdictOf(items, fallback = 'PASS') {
   if (items.some(item => item.verdict === 'FAIL')) return 'FAIL';
   if (items.some(item => item.verdict === 'REVIEW')) return 'REVIEW';
@@ -108,7 +116,7 @@ export function validateCase(testCase, events = [], step) {
     const source = rule.source ?? testCase.source;
     // Native SDK examples are reference contracts. A reviewer must supply Web
     // field paths and remove this marker before evaluating them as browser rules.
-    if (rule.capture_platform === 'APP_SDK' && !scoped.some(e => (e.event_name === rule.event_name || rule.event_aliases?.includes(e.event_name)) && e.layer === rule.layer && (!source || e.source === source) && e.payload?.default_parameters && e.payload?.custom_parameters) || ['partial', 'unparsed'].includes(rule.sample_status)) {
+    if (rule.capture_platform === 'APP_SDK' && !scoped.some(e => nameMatches(e, rule) && layerMatches(e, rule) && (!source || e.source === source) && e.payload?.default_parameters && e.payload?.custom_parameters) || ['partial', 'unparsed'].includes(rule.sample_status)) {
       const issue = { code: rule.capture_platform === 'APP_SDK' ? 'SPEC_PLATFORM_MISMATCH' : 'SPEC_INCOMPLETE', expected: 'Reviewed Web mapping', actual: rule.capture_platform ?? rule.sample_status, evidence_id: stepEvidence, verdict: 'REVIEW' };
       base.results.push({ event_name: rule.event_name, layer: rule.layer, source, verdict: 'REVIEW', evidence_ids: [], checks: [issue], issues: [issue] });
       continue;
@@ -119,7 +127,7 @@ export function validateCase(testCase, events = [], step) {
       continue;
     }
     const matchesSource = event => !source || String(event.source).toUpperCase() === String(source).toUpperCase();
-    const matching = scoped.filter(event => (event.event_name === rule.event_name || rule.event_aliases?.includes(event.event_name)) && event.layer === rule.layer && matchesSource(event));
+    const matching = scoped.filter(event => nameMatches(event, rule) && layerMatches(event, rule) && matchesSource(event));
     const checks = [];
     const issues = [];
     const add = (code, expected, actual, evidenceId = stepEvidence, verdict = 'FAIL', path = undefined) => {
@@ -153,7 +161,8 @@ export function validateCase(testCase, events = [], step) {
         }
       }
       for (const [path, fieldRule] of Object.entries(rule.fields ?? {})) {
-        const check = checkField(event.payload, path, fieldRule, step.context ?? {}, evidenceId);
+        // A Test Lab event keeps the text Test Lab shows; its fields are checked on its spec view.
+        const check = checkField(event.layer === 'TEST_LAB' ? testLabSpecView(event) : event.payload, path, fieldRule, step.context ?? {}, evidenceId);
         checks.push(check);
         if (check.verdict !== 'PASS') issues.push({ ...check, code: check.code });
       }
@@ -167,7 +176,7 @@ export function validateCase(testCase, events = [], step) {
         }
       }
       if (rule.after) {
-        const previous = scoped.filter(candidate => candidate.event_name === rule.after && candidate.layer === rule.layer && matchesSource(candidate));
+        const previous = scoped.filter(candidate => candidate.event_name === rule.after && layerMatches(candidate, rule) && matchesSource(candidate));
         const candidateTime = Date.parse(event.captured_at);
         if (!previous.length) add('ORDER_PREDECESSOR_MISSING', rule.after, null, evidenceId);
         else if (!Number.isFinite(candidateTime) || previous.every(candidate => !Number.isFinite(Date.parse(candidate.captured_at)))) add('MISSING_TIMING', `after ${rule.after}`, null, evidenceId, 'REVIEW');

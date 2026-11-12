@@ -25,6 +25,15 @@ const escape = value => json(value).replace(/[&<>"']/g, char => ({ '&': '&amp;',
 const colors = { PASS: 'DCFCE7', FAIL: 'FEE2E2', REVIEW: 'FEF3C7', NOT_EXECUTED: 'E2E8F0', 'Khớp': 'DCFCE7', 'Lệch': 'FEE2E2', 'Cần xem': 'FEF3C7', 'Chưa thấy': 'E2E8F0', 'Ngoài đặc tả': 'FEF3C7', 'Không gửi lên server': 'FEE2E2', 'Đang chờ gửi': 'FEF3C7', 'Đã gửi': 'DCFCE7', 'Khớp API': 'DCFCE7', 'Khớp giá trên API': 'DCFCE7', 'Lệch API': 'FEE2E2', 'Không thấy trong API': 'E2E8F0' };
 // The comment of each row of the report sheet is coloured by the tool's verdict.
 const REPORT_FILL = { MATCH: 'DCFCE7', SENT: 'DCFCE7', MISMATCH: 'FEE2E2', NOT_SENT: 'FEE2E2', NOT_SEEN: 'E2E8F0', REVIEW: 'FEF3C7', PENDING: 'FEF3C7', UNCHECKED: 'FEF3C7', OUTSIDE: 'FEF3C7' };
+// One cell of lines, marked lines in bold colour (Excel colours a whole cell, not part of it: the cell
+// is yellow when anything in it differs).
+const MARK_FONT = { different: { bold: true, color: { argb: '9A6700' } }, wrong: { bold: true, color: { argb: 'B91C1C' } }, missing: { bold: true, italic: true, color: { argb: 'B91C1C' } },
+  extra: { bold: true, italic: true, color: { argb: '9A6700' } }, optional: { italic: true, color: { argb: '6B7280' } } };
+function richLines(lines, prefix = '') {
+  if (!Array.isArray(lines) || !lines.length || lines.reduce((size, line) => size + line.text.length + 1, 0) > 30000) return null;
+  return { richText: [...(prefix ? [{ text: prefix, font: { name: 'Calibri', size: 11, italic: true } }] : []),
+    ...lines.map((line, index) => ({ text: `${line.text}${index < lines.length - 1 ? '\n' : ''}`, font: { name: 'Calibri', size: 11, ...(MARK_FONT[line.mark] ?? {}) } }))] };
+}
 const PRICE_LABEL = { MATCH: 'Khớp API', MATCH_PAGE: 'Khớp giá trên API', MISMATCH: 'Lệch API', NO_API: 'Không thấy trong API' };
 const money = value => typeof value === 'number' ? value.toLocaleString('vi-VN') : '';
 const COVERAGE_LABEL = { MATCH: 'Khớp', MISMATCH: 'Lệch', REVIEW: 'Cần xem', NOT_SEEN: 'Chưa thấy', NOT_SENT: 'Không gửi lên server', PENDING: 'Đang chờ gửi' };
@@ -157,9 +166,21 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   workbook.creator = 'Event Tracking QA';
   workbook.created = new Date();
   // The actual event in the column of the platform the expected payload is written for (both without one).
-  const reportSheet = addSheet(workbook, 'Báo cáo event', ['STT', 'Nền tảng', 'Luồng', 'Tên event', 'Event mong muốn', 'Event thực tế (GA4)', 'Event thực tế (Insider)', byAi ? 'Nhận xét của AI' : 'Nhận xét'],
-    report.map(row => [row.stt, row.platform, row.flow, row.event_name, row.expected, row.actual_ga4, row.actual_insider, `[${REPORT_LABEL[row.status]}] ${notes[row.key] ?? row.comment}`]), [6, 11, 18, 26, 55, 55, 55, 60]);
-  report.forEach((row, index) => { reportSheet.getRow(index + 2).getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_FILL[row.status] ?? 'FFFFFF' } }; });
+  // Every event fired, in time order, then the expected events never seen.
+  const reportSheet = addSheet(workbook, 'Báo cáo event', ['STT', 'Thời điểm', 'Nền tảng', 'Luồng', 'Tên event', 'Event mong muốn', 'Event thực tế (GA4)', 'Event thực tế (Insider)', byAi ? 'Nhận xét của AI' : 'Nhận xét'],
+    report.map(row => [row.stt, row.at_text, row.platform, row.flow, row.event_name, row.expected, row.actual_ga4, row.actual_insider, `[${REPORT_LABEL[row.status]}] ${notes[row.key] ?? row.comment}`]), [6, 19, 13, 18, 26, 55, 55, 55, 60]);
+  report.forEach((row, index) => {
+    const sheetRow = reportSheet.getRow(index + 2);
+    sheetRow.getCell(9).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REPORT_FILL[row.status] ?? 'FFFFFF' } };
+    if (!row.diff) return;
+    // Same lines stay plain; a differing value is yellow, a wrong or missing one red as well.
+    for (const [column, lines, prefix] of [[6, row.diff.expected, ''], [row.source === 'GA4' ? 7 : 8, row.diff.actual, row.diff.prefix]]) {
+      const cell = sheetRow.getCell(column), value = richLines(lines, prefix);
+      if (!value) continue;
+      cell.value = value;
+      if (lines.some(line => line.mark && line.mark !== 'optional')) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3B0' } };
+    }
+  });
   addSheet(workbook, 'Run Summary', ['Metric', 'Value'], [
     ['Session', session.id ?? session.session_id], ['Mode', session.mode], ['Started', session.started_at], ['Completed', session.completed_at],
     ['Test cases', cases.length], ['Steps', steps.length], ['Evidence records', events.length], ...Object.entries(tallies),
@@ -194,7 +215,7 @@ export async function exportReports({ session = {}, cases = [], events = [], ste
   addSheet(workbook, 'Bug Reports', ['Test case', 'Event', 'Layer', 'Issue', 'Field', 'Expected', 'Actual', 'Evidence', 'AI note'], bugs.map(bug => [bug.test_case_id, bug.event_name, bug.layer, bug.code, bug.path, bug.expected, bug.actual, bug.evidence_id, bug.ai_note]), [35, 30, 24, 30, 35, 65, 65, 30, 90]);
   await workbook.xlsx.writeFile(paths.xlsx);
   }
-  if (wanted.includes('json')) await fs.writeFile(paths.json, JSON.stringify({ session, counts: tallies, cases, events, steps, results, event_report: report.map(row => ({ stt: row.stt, platform: row.platform, flow: row.flow, event: row.event_name, status: row.status, evidence_id: row.evidence_id, comment: notes[row.key] ?? row.comment, comment_by: notes[row.key] ? 'AI' : 'tool' })) }, null, 2), 'utf8');
+  if (wanted.includes('json')) await fs.writeFile(paths.json, JSON.stringify({ session, counts: tallies, cases, events, steps, results, event_report: report.map(row => ({ stt: row.stt, at: row.at, platform: row.platform, flow: row.flow, event: row.event_name, status: row.status, evidence_id: row.evidence_id, comment: notes[row.key] ?? row.comment, comment_by: notes[row.key] ? 'AI' : 'tool' })) }, null, 2), 'utf8');
   if (wanted.includes('html')) await fs.writeFile(paths.html, renderHtmlReport({ title: 'Báo cáo event', session, settings: htmlSettings, sections: eventSections({ session, cases, events, steps, results, api_calls: apiCalls, report_notes: reportNotes }, { report }) }), 'utf8');
   for (const row of coverage?.rows ?? []) if (row.status === 'MISMATCH' || row.status === 'NOT_SENT') bugs.push({ spec: true, row });
   const specBug = ({ row }) => row.status === 'NOT_SENT'

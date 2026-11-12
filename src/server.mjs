@@ -1,6 +1,7 @@
 import http from 'node:http';
 import dns from 'node:dns/promises';
 import fs from 'node:fs/promises';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +18,16 @@ import { priceChecks } from './core/api-prices.mjs';
 import { apiLogPatterns, DEFAULT_API_LOG_PATTERNS } from './core/api-log.mjs';
 import { importSpec, specSheets, validateTestCase, manualCase } from './spec/import.mjs';
 import { exportReports, prepareReportData } from './report/export.mjs';
+import { comparedView, comparedRecord } from './report/event-report.mjs';
+import { payloadDiff, diffSentences } from './core/payload-diff.mjs';
 import { CDPCollector, listTargets, queueEvents } from './collectors/cdp.mjs';
 import { launchBrowser, closeOwnedBrowser, createTestPage } from './browser/launcher.mjs';
 import { OpenRouterClient } from './ai/openrouter.mjs';
 import { loadDemoCases } from './demo.mjs';
 import { AutomationController } from './automation/controller.mjs';
 import { TP2_ENDPOINTS } from './core/tp2.mjs';
+import { TestLabTracker, TestLabCatalog, isTestLabCatalog, defineComparison } from './core/testlab.mjs';
+import { importDefine, defineTemplate } from './spec/define.mjs';
 import { Tp2MappingStore, compareTp2Event, tp2Events, fieldPaths } from './core/tp2-compare.mjs';
 import { exportSelection, normalizeSelection } from './report/selection.mjs';
 
@@ -184,7 +189,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     for (const event of events) {
       const status = deliveryStatus(event, links, now);
       if (status === 'not_sent' || status === 'pending') counts[status]++;
-      else if (isRequest(event) && eventKind(event) === 'business') {
+      else if ((isRequest(event) || event.layer === 'TEST_LAB') && eventKind(event) === 'business') {
         counts.sent++; kinds.add(`${event.source}|${links.pushOf.get(event.evidence_id)?.event_name ?? event.event_name}`);
       }
     }
@@ -214,7 +219,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     return { application: 'event-tracking-qa', mode, process_id: process.pid, closing, ai: mode === 'cdp-ai' ? ai.diagnostics?.() : undefined, running: manager.session?.status === 'RUNNING', session: manager.session || null,
       specSource, navigationError, patterns: activePatterns, vendors: VENDOR_ENDPOINTS, discovered: collector?.discovered ? [...collector.discovered.values()].sort((a, b) => b.count - a.count) : [],
       eventSummary: summarize(snapshot.events, deliveryLinks(snapshot.events)), delivery: deliveryCounts(snapshot.events), prices: prices(snapshot.events, snapshot.api).summary, apiCalls: { total: snapshot.apiCalls.length, failed: snapshot.apiCalls.filter(call => !call.ok).length, default_patterns: DEFAULT_API_LOG_PATTERNS }, specCoverage: coverage(snapshot.events), firing: firingState(snapshot.events), currentStep: manager.currentStep, stepEventCount: manager.currentStep ? snapshot.events.filter(event => event.step_id === manager.currentStep.id).length : 0, runDir: manager.runDir || null, cases: manager.cases, results: snapshot.results, steps: manager.steps,
-      events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id } : e), eventsCompact: compact, eventCount: snapshot.events.length, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
+      events: snapshot.events.slice(-100).map(e => compact ? { evidence_id: e.evidence_id, source: e.source, layer: e.layer, event_name: e.event_name, captured_at: e.captured_at, historical: e.historical, page: e.page, network: e.network, step_id: e.step_id, test_case_id: e.test_case_id,
+        ...(e.testlab ? { testlab: { status: e.testlab.status, receipt: e.testlab.receipt }, capture: e.capture } : {}) } : e), eventsCompact: compact, eventCount: snapshot.events.length, eventRevision, statuses, exported: exported ? Object.fromEntries(Object.entries(exported).map(([k, p]) => [k, `/download/${path.basename(p)}`])) : null };
   };
   // One captured event with the specification row it matched (field-by-field outcome), its firing
   // checks, and its delivery: the website push, the vendor hit that sent it, and for GA4 the pushed
@@ -229,10 +235,18 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const spec = match ? { ...match, event_name: testCase?.rules?.[0]?.event_name, stt: testCase?.stt ?? '', flow: testCase?.flow ?? '', description: testCase?.description ?? '', notes: testCase?.notes ?? '', provenance: testCase?.provenance, sample: testCase?.sample, sample_text: testCase?.sample_text } : null;
     const push = event.layer === 'JS_QUEUE' ? event : links.pushOf.get(event.evidence_id) ?? null;
     const hit = event.layer === 'TRACKING_REQUEST' ? event : links.sentBy.get(event.evidence_id) ?? null;
+    // The specification's sample beside the event, field by field (website events; an app event has its define comparison).
+    if (spec && testCase?.sample && typeof testCase.sample === 'object' && event.layer !== 'TEST_LAB') {
+      const diff = payloadDiff(testCase.sample, comparedView(comparedRecord(testCase.sample, { event, push, hit }), testCase.sample), { fields: testCase.rules?.[0]?.fields ?? {}, issues: match.issues });
+      spec.diff = { rows: diff.rows, sentences: diffSentences(diff) };
+    }
     const delivery = { status: deliveryStatus(push ?? event, links), push, hit, not_forwarded: push && hit?.source === 'GA4' ? notForwarded(push, hit) : [] };
     const activity = activityEntries(events, { links }).find(row => row.evidence_ids.includes(event.evidence_id)) ?? activityEvent(event);
     const priced = prices(events, snapshot.api).checks.filter(check => check.evidence_id === activity.evidence_id);
-    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced };
+    // An app event from Test Lab beside the define row of its event, parameter by parameter.
+    const define = event.layer === 'TEST_LAB' ? defineComparison(event, testCase) : null;
+    return { event, spec, firing: firingResult(events).byEvent.get(event.evidence_id) ?? [], delivery, activity, prices: priced, define,
+      ...(event.layer === 'TEST_LAB' ? { define_loaded: manager.cases.some(item => item.provenance?.define) } : {}) };
   }
   // What the AI reads to review a session: the QC's requirement, the specification rows the session is
   // about (rows with evidence and the unseen rows of the same flows), the tool's verdict per row, what
@@ -263,7 +277,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
   // What the AI reads to answer a QC question about the session: the review input (specification, the
   // tool's verdicts, what was sent, problems) plus the parameters actually sent by the events the question
   // names (otherwise the latest ones), so it can judge values, conflicts and errors. Kept under ~90 KB.
-  function sessionAskInput(events, question, history) {
+  // A question asked from one event's detail (evidenceId) is about that event: it is the focus, with the
+  // events around it to compare against; otherwise the events the question names, or the latest ones.
+  function sessionAskInput(events, question, history, { evidenceId } = {}) {
     const { requirement: _unused, ...review } = sessionReviewInput(events, null);
     const links = deliveryLinks(events);
     const rows = activityEntries(events, { links }).filter(row => row.event_kind === 'business');
@@ -287,19 +303,25 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const lower = question.toLowerCase(), literal = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const names = [...new Set(rows.flatMap(row => [row.display_name, row.event_name]).filter(name => typeof name === 'string' && name.length > 2))];
     const named = names.filter(name => new RegExp(`(?:^|[^\\p{L}\\p{N}_])${literal(name.toLowerCase())}(?:[^\\p{L}\\p{N}_]|$)`, 'u').test(lower));
-    let focus = named.length ? rows.filter(row => named.includes(row.display_name) || named.includes(row.event_name)).slice(-30) : rows.slice(-40);
+    const asked = evidenceId ? rows.find(row => row.evidence_ids.includes(evidenceId) || row.sent_by === evidenceId) : null;
+    if (evidenceId && !asked) throw new Error('Không tìm thấy event này trong phiên hiện tại.');
+    let focus = asked ? [asked] : named.length ? rows.filter(row => named.includes(row.display_name) || named.includes(row.event_name)).slice(-30) : rows.slice(-40);
     // Events around the ones asked about (±15 s, both vendors) come along marked `nearby`: the same user
     // action seen by the other vendor, and the steps before/after, are what conflicts are judged against.
     const time = row => Date.parse(row.sent_at ?? row.captured_at);
     let nearby = [];
-    if (named.length) {
-      const asked = new Set(focus), times = focus.map(time);
-      nearby = rows.filter(row => !asked.has(row) && times.some(at => Math.abs(time(row) - at) <= 15000)).slice(-20);
+    if (asked || named.length) {
+      const chosen = new Set(focus), times = focus.map(time);
+      nearby = rows.filter(row => !chosen.has(row) && times.some(at => Math.abs(time(row) - at) <= 15000)).slice(-20);
     }
+    // An app event read from Insider's Test Lab: its status there and the parameters Insider marked failed.
+    const byId = new Map(events.map(event => [event.evidence_id, event]));
+    const testlab = row => { const t = byId.get(row.evidence_id)?.testlab; return t ? { testlab: { status: t.status, read_whole: t.complete,
+      failed: (t.params ?? []).filter(p => p.status === 'failed').map(p => ({ field: p.field ?? p.key, value: p.value, ...Object.values(p.failed_detail ?? {}).find(d => d?.expected_type) })) } } : {}; };
     const detail = row => ({ id: row.evidence_id, at: row.captured_at.slice(11, 19), vendor: row.source, event: row.display_name,
       ...(row.display_name !== row.event_name ? { raw_event: row.event_name } : {}), delivery: row.delivery, page: where(row.page?.url),
       ...(row.measurement_id ? { ga4_property: row.measurement_id } : {}),
-      ...(row.repeat ? { repeat_of: row.repeat.evidence_id, repeat_after_s: Number((row.repeat.after_ms / 1000).toFixed(1)) } : {}), params: params(row.json) });
+      ...(row.repeat ? { repeat_of: row.repeat.evidence_id, repeat_after_s: Number((row.repeat.after_ms / 1000).toFixed(1)) } : {}), params: params(row.json), ...testlab(row) });
     const counts = new Map();
     for (const row of rows) {
       const key = `${row.source}|${row.display_name}`, count = counts.get(key) ?? { vendor: row.source, event: row.display_name, sent: 0, not_sent: 0 };
@@ -309,7 +331,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const past = (Array.isArray(history) ? history : []).slice(-3)
       .map(turn => ({ question: String(turn?.question ?? '').slice(0, 500), answer: String(turn?.answer ?? '').slice(0, 1500) })).filter(turn => turn.question);
     const details = () => [...focus.map(detail), ...nearby.map(row => ({ ...detail(row), nearby: true }))].sort((a, b) => a.at.localeCompare(b.at));
-    const build = () => ({ question, history: past, focused_on: named.length ? named : 'latest_events', event_counts: [...counts.values()].slice(0, 80), event_details: details(), ...review });
+    const focusedOn = asked ? { this_event: asked.display_name, evidence_id: asked.evidence_id } : named.length ? named : 'latest_events';
+    const build = () => ({ question, history: past, focused_on: focusedOn, event_counts: [...counts.values()].slice(0, 80), event_details: details(), ...review });
     let input = build();
     while (JSON.stringify(input).length > 90000 && (nearby.length || focus.length > 5)) {
       if (nearby.length) nearby = nearby.slice(Math.ceil(nearby.length / 2)); else focus = focus.slice(Math.ceil(focus.length / 4));
@@ -343,7 +366,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     const diagnostics = mode === 'cdp-ai' ? client.diagnostics?.() : null;
     if (!diagnostics?.enabled || !diagnostics.configured_key_count || diagnostics.closed) return null;
     const clip = value => { const text = typeof value === 'string' ? value : JSON.stringify(value); return text && text.length > 120 ? `${text.slice(0, 120)}…` : text; };
-    const rows = report.slice(0, 100), notes = {};
+    // Rows with a problem first: the AI comments on at most 100 rows of a long session.
+    const order = { MISMATCH: 0, NOT_SENT: 1, REVIEW: 2, UNCHECKED: 3, OUTSIDE: 4, PENDING: 5, NOT_SEEN: 6, MATCH: 7, SENT: 8 };
+    const rows = [...report].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || a.stt - b.stt).slice(0, 100), notes = {};
     const input = rows.map(row => ({ id: row.id, event: row.event_name, flow: row.flow, platform: row.platform, status: row.status, expected_fields: row.expected_fields.slice(0, 30),
       issues: row.issues.slice(0, 8).map(issue => ({ code: issue.code, field: issue.path, expected: clip(issue.expected), actual: clip(issue.actual) })), times_sent: row.seen, not_sent: row.not_sent, price_mismatches: row.price_mismatches.slice(0, 3) }));
     const key = JSON.stringify({ session: snapshot.session?.id ?? snapshot.session?.session_id, keys: rows.map(row => row.key), rows: input });
@@ -375,7 +400,7 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     if (selection) selection = normalizeSelection(selection);
     const epoch = captureEpoch, exportEpoch = reportExportEpoch, controller = new AbortController();
     const pending = (async () => {
-      const prepared = !selection || selection.contents.includes('events') ? prepareReportData(snapshot) : null;
+      const prepared = !selection || selection.contents.includes('events') || selection.contents.includes('insider') ? prepareReportData(snapshot) : null;
       reportNotesController = controller;
       let onAbort;
       const cancelled = new Promise(resolve => { onAbort = () => resolve(null); controller.signal.addEventListener('abort', onAbort, { once: true }); });
@@ -446,6 +471,63 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
       throw error;
     }
   }
+  // Insider's panel opened in the test browser (testlab.mjs): each Test Lab event becomes one event of the
+  // session, completed by later readings (session.revise). The panel's own calls, WebSocket frames,
+  // Console and table markup are kept in the run folder (insider-panel/), so the reader can be checked
+  // against what the panel really loads; its Test Lab catalogue gives event keys and parameter types.
+  const PANEL_LIMITS = { network: 3000, websocket: 5000, event_source: 3000, console: 3000, readings: 2000, reader: 200, html: 40 };
+  let testLab = new TestLabTracker(), testLabCatalog = new TestLabCatalog(), testLabRefs = new Map(), panelLog = { counts: {}, announced: false, hintAt: 0 };
+  // Evidence that changed in place: every view derived from the evidence is recomputed.
+  let eventRevision = 0;
+  const evidenceRevised = () => {
+    eventRevision++;
+    firingCache = { count: -1, result: null }; linkCache = { count: -1, links: null }; priceCache = { key: '', result: null }; coverageCache = new Map();
+  };
+  function insiderPanel(record) {
+    if (!manager.runDir || manager.session?.status !== 'RUNNING') return;
+    const dir = path.join(manager.runDir, 'insider-panel');
+    const within = kind => (panelLog.counts[kind] = (panelLog.counts[kind] ?? 0) + 1) <= PANEL_LIMITS[kind];
+    const saveHtml = name => { if (record.html && within('html')) writeFileSync(path.join(dir, `${name}-${String(panelLog.counts.html).padStart(3, '0')}.html`), String(redact(String(record.html)))); };
+    const log = (file, value) => appendFileSync(path.join(dir, file), `${JSON.stringify(value)}\n`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      if (record.kind === 'table') {
+        const groups = Array.isArray(record.groups) ? record.groups : [];
+        saveHtml('test-results');
+        if (within('readings')) log('test-results.jsonl', redact({ at: record.at, url: record.url, reader: record.reader, groups }));
+        if (record.model !== undefined && within('reader')) log('reader.jsonl', redact({ at: record.at, reader: record.reader, model: record.model }));
+        const ops = testLab.update(record, { url: record.url, title: record.title, targetId: record.target_id, at: record.at }, testLabCatalog);
+        let fresh = 0, revised = false;
+        for (const { ref, op, event } of ops) {
+          if (op === 'new') { const stored = manager.emit(event); if (stored) testLabRefs.set(ref, stored.evidence_id); if (!event.historical) fresh++; }
+          else if (manager.revise(testLabRefs.get(ref), event)) revised = true;
+        }
+        if (revised) evidenceRevised();
+        const whole = record.reader === 'ag-grid-model';
+        if (!panelLog.announced) {
+          panelLog.announced = true;
+          status(`Đang đọc Insider Test Lab (${whole ? 'đọc đủ mọi dòng của bảng' : 'đọc các dòng đang hiện trên bảng'}): ${groups.filter(group => group.name).length} event. Event mới từ app hiện ở tab Event với tầng "Test Lab".`);
+        } else if (fresh) status(`Insider Test Lab: thêm ${fresh} event mới.`);
+        // Rows ag-Grid has not drawn cannot be read from the page: say how to bring them into view.
+        if (!whole && Date.now() - panelLog.hintAt > 60000 && groups.some(group => group.name && !group.complete)) {
+          panelLog.hintAt = Date.now();
+          status('Insider Test Lab: có event chưa đọc đủ tham số (đang thu gọn hoặc nằm ngoài phần bảng đang hiện). Mở rộng (▸) và cuộn tới event đó trong Test Lab để EventQA đọc nốt; event đó tạm ở trạng thái Cần xem.');
+        }
+        return;
+      }
+      if (record.kind === 'missing') {
+        saveHtml('page');
+        status('Đang ở trang Test Lab của Insider nhưng chưa nhận ra bảng Test Results. Đã lưu HTML trang vào thư mục phiên (insider-panel/) để chỉnh bộ đọc.');
+        return;
+      }
+      if (record.kind === 'network' && isTestLabCatalog(record.url) && record.response_body) {
+        try { testLabCatalog.add(JSON.parse(record.response_body)); } catch { /* a cut or non-JSON page of the catalogue */ }
+      }
+      const kind = record.kind === 'error' ? 'console' : record.kind;
+      if (!Object.hasOwn(PANEL_LIMITS, kind) || ['readings', 'reader', 'html'].includes(kind) || !within(kind)) return;
+      log(`${kind}.jsonl`, record.kind === 'error' ? { ...record, level: 'testlab-reader-error' } : record);
+    } catch (error) { status(`Không ghi được dữ liệu panel Insider: ${error.message}`); }
+  }
   async function startCapture(data, { navigate = true, profileDir } = {}) {
     if (manager.session?.status === 'RUNNING') throw new Error('Đã có phiên đang chạy.');
     const rawUrl = String(data.url || `http://127.0.0.1:${port}/demo`).trim();
@@ -471,10 +553,12 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
     apiBodyCache.clear(); tp2ComparisonCache.clear();
     firingCache = { count: -1, result: null }; linkCache = { count: -1, links: null }; priceCache = { key: '', result: null }; coverageCases = null; coverageCache.clear();
     const epoch = ++captureEpoch, emit = event => epoch === captureEpoch ? manager.emit(event) : null;
+    testLab = new TestLabTracker(); testLabCatalog = new TestLabCatalog(); testLabRefs = new Map(); panelLog = { counts: {}, announced: false, hintAt: 0 };
     try {
       const opened = !data.attach ? await openTestBrowser({ browser, port: debugPort, headless, url: 'about:blank', profileDir: profileDir ?? path.join(rootDir, 'profiles', `${mode}-${browser}`) }) : null;
       if (closing || epoch !== captureEpoch) { await releaseBrowser(); throw new Error('Phiên đã dừng trước khi mở trình duyệt.'); }
       collector = new CDPCollector({ port: debugPort, targetId: data.targetId || undefined, onEvent: emit, onStatus: status, endpointPatterns, captureQueues,
+        onInsiderPanel: record => epoch === captureEpoch ? insiderPanel(record) : null,
         onApi: compareApi ? record => epoch === captureEpoch ? manager.emitApi(record) : null : undefined,
         ...(logApi ? { apiLogPatterns: logPatterns, onApiCall: record => epoch === captureEpoch ? manager.emitApiCall(record) : null } : {}) });
       await collector.start(manager.session);
@@ -686,6 +770,9 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           .slice(-40).map(row => ({ evidence_id: row.evidence_id, captured_at: row.captured_at, source: row.source, name: row.display_name ?? row.event_name, delivery: row.delivery }));
         return send(res, 200, { call: record, nearby });
       }
+      if (req.method === 'GET' && url.pathname === '/api/define-template') {
+        return send(res, 200, Buffer.from(await defineTemplate()), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { 'Content-Disposition': 'attachment; filename="eventqa-define-mau.xlsx"' });
+      }
       if (req.method === 'GET' && url.pathname === '/api/spec/export') return send(res, 200, { schema_version: '1.0', kind: 'specification', cases: sanitizeCases(manager.cases) }, 'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="event-catalogue.json"' });
       if (req.method === 'GET' && url.pathname === '/api/event') {
         const detail = eventDetail(url.searchParams.get('id'));
@@ -752,7 +839,8 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           if (question.length > 1000) throw new Error('Câu hỏi dài quá 1000 ký tự; hỏi ngắn gọn hơn.');
           const events = manager.snapshot().events;
           if (!events.some(event => eventKind(event) === 'business')) throw new Error('Phiên chưa có event để AI xem. Mở website và thao tác trước.');
-          return send(res, 200, await ai.askSession(sessionAskInput(events, question, data.history)));
+          const evidenceId = typeof data.evidence_id === 'string' && data.evidence_id ? data.evidence_id.slice(0, 120) : undefined;
+          return send(res, 200, await ai.askSession(sessionAskInput(events, question, data.history, { evidenceId })));
         } finally { asking = false; }
       }
       if (automation?.busy && !['/api/export', '/api/ai-review', '/api/ai-explain-event', '/api/tp2/mapping'].includes(url.pathname)) return send(res, 409, { error: 'Luồng tự động đang chạy. Dừng luồng trước khi thay đổi phiên hoặc kịch bản.' });
@@ -794,10 +882,22 @@ export async function createApp({ mode = 'cdp', runsDir = path.join(rootDir, 'ru
           const imported = await importSpec(path.resolve(String(data.path)), { sheet: data.sheet || undefined });
           if (!imported.cases.length) throw new Error('Không tìm thấy test case hợp lệ.');
           // Events typed in the app stay next to the imported file.
-          manager.cases = [...imported.cases, ...manager.cases.filter(testCase => testCase.provenance?.manual)]; specSource = 'file';
+          manager.cases = [...imported.cases, ...manager.cases.filter(testCase => testCase.provenance?.manual || testCase.provenance?.define)]; specSource = 'file';
           if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
           status(`Đã nhập ${imported.cases.length} test case. ${imported.warnings.join(' ')}`);
           return send(res, 200, { ...state(), importWarnings: imported.warnings });
+        } else if (url.pathname === '/api/import-define') {
+          // The app's define sits beside the website's specification: a new define replaces only the old define.
+          if (!['.xlsx', '.json'].includes(path.extname(String(data.path)).toLowerCase())) throw new Error('File define cần là XLSX hoặc JSON.');
+          const imported = await importDefine(path.resolve(String(data.path)), { name: data.name });
+          const taken = new Set(manager.cases.filter(testCase => !testCase.provenance?.define).map(testCase => testCase.id));
+          const cases = imported.cases.map(testCase => taken.has(testCase.id) ? { ...testCase, id: `DEFINE-${testCase.id}` } : testCase);
+          manager.cases = [...manager.cases.filter(testCase => !testCase.provenance?.define), ...cases];
+          if (specSource === 'none' || specSource === 'demo') specSource = 'file';
+          if (manager.session?.status === 'RUNNING') manager.store.saveExpected(sanitizeCases(manager.cases));
+          evidenceRevised();
+          status(`Đã nạp define app: ${cases.length} event${imported.sheet ? ` (sheet ${imported.sheet})` : ''}. Event Test Lab được so từng tham số trong phần chi tiết event.`);
+          return send(res, 200, { ...state(), define: { events: cases.length, sheet: imported.sheet, format: imported.format, names: cases.map(testCase => testCase.rules?.[0]?.event_name).slice(0, 60) } });
         } else if (url.pathname === '/api/demo-spec') {
           if (manager.session?.status === 'RUNNING') throw new Error('Kết thúc phiên trước khi đổi specification.');
           manager.cases = await loadDemoCases(); specSource = 'demo'; status('Đã nạp 3 test case demo.');

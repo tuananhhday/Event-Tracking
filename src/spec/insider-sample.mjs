@@ -8,6 +8,8 @@ const labelFor = name => ({ homepage_view: 'Homepage View', listing_page_view: '
   add_to_cart: 'Item Added to Cart', remove_from_cart: 'Item Removed from Cart',
   confirmation_page_view: 'Purchase' }[name] ?? name);
 const keyFor = label => String(label).trim().replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+/** The parameter key of a name Insider's panel shows: "App Version" → app_version. */
+export const insiderKey = keyFor;
 const put = (object, key, value) => Object.defineProperty(object, key, { value, enumerable: true, configurable: true, writable: true });
 
 function parametersOf(payload, types = new Map()) {
@@ -65,6 +67,17 @@ function literal(input, { text = false } = {}) {
     if (!raw || /[{}]/.test(raw) || raw.startsWith('[') && raw.endsWith(']')) throw Error('Unsupported text literal');
     return raw;
   }
+}
+
+/**
+ * A parameter value as Insider's panel displays it ("1.0", "true", "[a, b]"), typed as the copied
+ * samples are. A display value has no JSON type annotation: identifier, version and formatted-number
+ * strings are preserved instead of coerced. Throws on a value that cannot be read safely.
+ */
+export function insiderDisplayValue(key, text) {
+  const raw = String(text ?? '').trim().replace(/[,;]\s*$/, '').trim();
+  const stringField = /(?:_id|_code|_string|_version)$/.test(key) || ['product_id', 'product_name', 'name', 'starting_hole'].includes(key);
+  return stringField && !/^["']/.test(raw) ? raw : literal(raw, { text: true });
 }
 
 function readParen(source, start) {
@@ -181,11 +194,7 @@ function parseText(input, eventName) {
     if (group === 'default' && key === 'unique_sale_id') key = 'event_group_id';
     if (group === 'default' && key === 'unit_sales_price') key = 'unit_sale_price';
     try {
-      const raw = field[2].trim().replace(/[,;]\s*$/, '').trim();
-      // A display value has no JSON type annotation. Preserve identifier,
-      // version, and formatted-number strings instead of coercing them.
-      const stringField = /(?:_id|_code|_string|_version)$/.test(key) || ['product_id', 'product_name', 'name', 'starting_hole'].includes(key);
-      const value = stringField && !/^["']/.test(raw) ? raw : literal(raw, { text: true });
+      const value = insiderDisplayValue(key, field[2]);
       put(payload[`${group}_parameters`], key, value); types.set(`${group}_parameters.${key}`, typeOf(value)); seen++;
       if (typeof value === 'string' && /<[^>]+>|\.\.\.|…/.test(value)) warnings.push('Nguồn có giá trị mẫu hoặc placeholder chưa xác định.');
     } catch { warnings.push(`Chưa đọc được giá trị của ${key}.`); }

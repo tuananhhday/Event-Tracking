@@ -1,6 +1,7 @@
 import { REPORT_LABEL } from './event-report.mjs';
 import { TP2_LABELS } from '../core/tp2-compare.mjs';
 import { redactApiData } from '../core/api-log.mjs';
+import { defineComparison } from '../core/testlab.mjs';
 
 const col = (key, label, width) => ({ key, label, width });
 const showBody = body => !body ? null : body.omitted || body.truncated ? body : body.json ?? body.form ?? body.text ?? body;
@@ -27,13 +28,14 @@ export function tp2Section(rows = [], events = []) {
       'Thông tin giải mã': byId.get(row.evidence_id)?.tp2, 'API đối chiếu': row.api, 'Các API phù hợp': row.candidates } })) };
 }
 export function eventSections(snapshot, prepared) {
-  const report = { id: 'events', title: 'Báo cáo event', columns: [col('stt', 'STT', 65), col('platform', 'Nền tảng', 110), col('flow', 'Luồng', 160), col('event_name', 'Tên event', 230),
+  const report = { id: 'events', title: 'Báo cáo event', columns: [col('stt', 'STT', 65), col('at', 'Thời điểm', 160), col('platform', 'Nền tảng', 120), col('flow', 'Luồng', 160), col('event_name', 'Tên event', 230),
     col('expected', 'Event mong muốn', 350), col('actual_ga4', 'Event thực tế (GA4)', 350), col('actual_insider', 'Event thực tế (Insider)', 350), col('comment', 'Nhận xét', 400)],
-  rows: prepared.report.map(row => ({ ...row, comment: `[${REPORT_LABEL[row.status] || row.status}] ${snapshot.report_notes?.notes?.[row.key] ?? row.comment}`,
+  rows: prepared.report.map(row => ({ ...row, at: row.at_text, diff: row.diff ? { expected: row.diff.expected, [row.source === 'GA4' ? 'actual_ga4' : 'actual_insider']: row.diff.actual } : undefined, comment: `[${REPORT_LABEL[row.status] || row.status}] ${snapshot.report_notes?.notes?.[row.key] ?? row.comment}`,
     details: { 'Event mong muốn': row.expected, 'Event thực tế GA4': row.actual_ga4, 'Event thực tế Insider': row.actual_insider, 'Nhận xét': row.comment, 'Bằng chứng': row.evidence_id } })) };
   const summary = { id: 'summary', title: 'Tổng quan', columns: [col('name', 'Nội dung', 280), col('value', 'Giá trị', 320)], rows: [
     { name: 'Phiên', value: snapshot.session?.id }, { name: 'Bắt đầu', value: displayTime(snapshot.session?.started_at) }, { name: 'Kết thúc', value: displayTime(snapshot.session?.completed_at) },
-    { name: 'Bản ghi bằng chứng', value: snapshot.events?.length ?? 0 }, { name: 'Event trong báo cáo', value: prepared.report.length },
+    { name: 'Bản ghi bằng chứng', value: snapshot.events?.length ?? 0 }, { name: 'Lần bắn event trong báo cáo', value: prepared.report.filter(row => row.seen).length },
+    { name: 'Event đặc tả chưa thấy', value: prepared.report.filter(row => row.status === 'NOT_SEEN').length },
     { name: 'Case đã chạy', value: snapshot.steps?.length ?? 0 }, { name: 'API đã thu thập', value: snapshot.api_calls?.length ?? 0 },
     { name: 'Event lệch', value: prepared.report.filter(row => row.status === 'MISMATCH').length },
   ] };
@@ -41,4 +43,30 @@ export function eventSections(snapshot, prepared) {
     rows: (snapshot.results ?? []).flatMap(result => (result.results ?? []).flatMap(event => (event.checks ?? []).map(check => ({ case: result.test_case_id, event: event.event_name, field: check.path || '', expected: check.expected,
       actual: check.actual, result: check.verdict, status: check.verdict, details: check })))) };
   return [summary, report, checks, ...(snapshot.api_calls?.length ? [apiSection(snapshot.api_calls)] : [])];
+}
+
+const TESTLAB_STATUS = { successful: 'Thành công', failed: 'Thất bại', in_progress: 'Đang xử lý', not_tested: 'Chưa test', unknown: 'Chưa rõ' };
+const DEFINE_LABEL = { MATCH: 'Khớp', MISMATCH: 'Lệch', MISSING: 'Thiếu', EXTRA: 'Ngoài define', UNREAD: 'Chưa đọc' };
+const DEFINE_ORDER = ['MISMATCH', 'MISSING', 'EXTRA', 'UNREAD', 'MATCH'];
+/** Insider only: every Insider event of the session (website and app read from Test Lab) against the specification. */
+export function insiderSection(snapshot, prepared) {
+  const byId = new Map((snapshot.events ?? []).map(event => [event.evidence_id, event]));
+  const caseById = new Map((snapshot.cases ?? []).map(testCase => [testCase.id, testCase]));
+  const rows = prepared.report.filter(row => String(row.source).toUpperCase() === 'INSIDER');
+  return { id: 'insider', title: 'Báo cáo Insider', columns: [col('stt', 'STT', 65), col('at', 'Thời điểm', 160), col('origin', 'Nguồn', 140), col('flow', 'Luồng', 150),
+    col('event_name', 'Tên event', 220), col('expected', 'Event mong muốn', 340), col('actual', 'Event Insider nhận', 340), col('testlab', 'Test Lab', 110), col('define', 'So với define', 220), col('comment', 'Nhận xét', 380)],
+  rows: rows.map((row, index) => {
+    const event = byId.get(row.evidence_id);
+    const define = event?.layer === 'TEST_LAB' ? defineComparison(event, caseById.get(row.case_id)) : null;
+    return { ...row, stt: index + 1, at: row.at_text, origin: row.app ? 'App · Insider Test Lab' : row.status === 'NOT_SEEN' ? '' : 'Website', actual: row.actual_insider,
+      diff: row.diff ? { expected: row.diff.expected, actual: row.diff.actual } : undefined,
+      testlab: row.testlab_status ? TESTLAB_STATUS[row.testlab_status] ?? row.testlab_status : '',
+      define: define ? DEFINE_ORDER.filter(result => define.summary[result]).map(result => `${DEFINE_LABEL[result]} ${define.summary[result]}`).join(' · ')
+        + define.rows.filter(item => item.result !== 'MATCH').slice(0, 8).map(item => `\n${DEFINE_LABEL[item.result]}: ${item.name}${item.note ? ` (${item.note})` : ''}`).join('') : '',
+      comment: `[${REPORT_LABEL[row.status] || row.status}] ${snapshot.report_notes?.notes?.[row.key] ?? row.comment}`,
+      details: { 'Event mong muốn': row.expected, 'Event Insider nhận': row.actual_insider, 'Nhận xét': row.comment, 'Bằng chứng': row.evidence_id,
+        ...(event?.testlab ? { 'Insider Test Lab': { lần_nhận: event.testlab.receipt, trạng_thái: event.testlab.status, đọc_đủ: event.testlab.complete, tham_số: event.testlab.params } } : {}),
+        ...(define ? { 'So với define': define.rows.map(item => ({ tham_số: item.name, define: item.rule || item.expected, test_lab: item.actual, kết_quả: DEFINE_LABEL[item.result], ghi_chú: item.note })) } : {}),
+        ...(event ? { 'Dữ liệu gốc': event.payload } : {}) } };
+  }) };
 }

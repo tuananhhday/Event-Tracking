@@ -66,6 +66,15 @@
           <label class="btn small" for="capture-file" data-lock-running>Nhập bản ghi từ F12<input id="capture-file" type="file" accept=".json,application/json" hidden></label>
           <span class="hint" id="capture-file-status">Chọn file eventqa-capture-….json đã tải từ F12.</span>
         </details>
+        <details class="more" style="margin-top:10px"><summary>Kiểm event app (AppOTA) qua Insider Test Lab</summary>
+          <ol class="hint" style="margin:8px 0 0;padding-left:18px">
+            <li>Nhập địa chỉ panel Insider (<code>…useinsider.com</code>) vào ô Website rồi bấm <b>Mở trình duyệt test</b> — hoặc mở thêm một tab panel Insider trong cửa sổ test đang chạy.</li>
+            <li>Đăng nhập Insider trong cửa sổ test (chỉ lần đầu, profile giữ đăng nhập), vào <b>Test Lab</b> và mở bảng <b>Test Results</b>.</li>
+            <li>Thao tác trên app. EventQA đọc bảng: mỗi Event cùng các Event Parameter của nó thành một event tầng <b>Test Lab</b>, đối chiếu với các dòng AppOTA_Insider của file đặc tả.</li>
+          </ol>
+          <p class="hint">Giá trị giữ nguyên như Test Lab hiện (tên ở cột NAME, chữ ở cột VALUE). Để so với define, nạp <b>File define app</b> ở bước 2 (File đặc tả): chi tiết mỗi event có bảng So với define từng tham số.</p>
+          <p class="hint">Dòng đã có sẵn khi mở trang được đánh dấu là cũ. Network, Console và HTML của panel được lưu trong thư mục phiên (<code>insider-panel/</code>) để kiểm tra lại cách đọc.</p>
+        </details>
       </div>
     </li>
 
@@ -82,7 +91,11 @@
         <input id="sheet" list="sheet-list" placeholder="Ví dụ R1511"><datalist id="sheet-list"></datalist>
 </details>
         <button type="button" class="btn primary" id="import" data-action="import" style="margin-top:12px">Nhập file</button>
-        <p class="hint">Nhập file thay toàn bộ case hiện có (giữ các event nhập tay). Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+        <p class="hint">Nhập file thay toàn bộ case hiện có (giữ các event nhập tay và define app). Nhập được cả khi phiên đang chạy, nếu chưa ghi bước nào. Event đã bắt được sẽ được đối chiếu lại ngay.</p>
+        <div class="define-box"><b>File define app (so với Insider Test Lab)</b>
+          <p class="hint">Mỗi dòng một tham số (Event · Tham số · Loại · Giá trị mong đợi · Kiểu dữ liệu · Bắt buộc), hoặc sheet đặc tả app (AppOTA_Insider). Nạp define <b>không thay</b> file đặc tả website ở trên; nạp define mới thay define cũ.</p>
+          <div class="row"><label class="btn small" for="define-file" data-define-pick>Nạp file define (app)<input id="define-file" type="file" accept=".xlsx,.json" hidden></label><a class="btn small ghost shrink" href="/api/define-template" download>Tải file define mẫu</a></div>
+          <p class="hint" id="define-file-status" role="status"></p></div>
         <details class="more manual-event"><summary>Nhập tay event mong muốn (dán payload mẫu)</summary>
           <p class="hint" style="margin-top:6px">Không có file Excel, hoặc cần thêm một event? Điền tên event và dán payload mẫu (như ô DataLayer Sample trong Excel, JSON, <code>dataLayer.push(...)</code> hoặc <code>InsiderQueue.push(...)</code>). App đọc mẫu giống khi nhập file Excel; event bắt được tự đối chiếu ở tab Đối chiếu đặc tả.</p>
           <div class="ai-form-grid">
@@ -174,7 +187,7 @@
       <div class="tabpanel" data-panel="events">
         <div class="toolbar">
           <div class="segmented shrink"><button type="button" data-view="activity" aria-pressed="true">Đã gửi lên server</button><button type="button" data-view="f12" aria-pressed="false">dataLayer · InsiderQueue (F12)</button><button type="button" data-view="groups" aria-pressed="false">Gộp theo event</button><button type="button" data-view="stream" aria-pressed="false">Dòng thời gian</button></div>
-          <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option></select>
+          <select id="ev-layer" aria-label="Lọc theo tầng"><option value="">Mọi tầng</option><option value="JS_QUEUE">JS queue</option><option value="TRACKING_REQUEST">Request</option><option value="TEST_LAB">Test Lab</option></select>
           <select id="ev-source" aria-label="Lọc theo nguồn"><option value="">Mọi nguồn</option></select>
           <input id="ev-search" type="text" placeholder="Tìm event, giá trị, evidence ID…" aria-label="Tìm bằng chứng">
         </div>

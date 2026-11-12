@@ -2,10 +2,11 @@ import { eventKind, INSIDER_TYPE_EVENTS, INSIDER_OBJECT_PAGES } from '../core/ev
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { decodeRequest, DEFAULT_ENDPOINT_PATTERNS, matchesEndpoint, looksLikeTracking } from '../core/decoder.mjs';
-import { redactUrl } from '../core/privacy.mjs';
+import { redact, redactUrl } from '../core/privacy.mjs';
 import { apiPrices } from '../core/api-prices.mjs';
 import { apiCallRecord, matchesApiLog, DEFAULT_API_LOG_PATTERNS, API_LOG_LIMITS } from '../core/api-log.mjs';
 import { isTp2Endpoint } from '../core/tp2.mjs';
+import { isInsiderPanel } from '../core/testlab.mjs';
 
 // A batched hit carries each event's own page (GA4 dl, Insider current_url): an SPA may change the URL
 // between the events of one request.
@@ -14,6 +15,24 @@ const hitPage = (event, page) => { const url = event.source === 'TP2' ? event.tp
 // How long a call with a response may stay unfinished before it is logged anyway.
 const API_LOG_SETTLE_MS = 10000;
 const INJECT_JS = readFileSync(new URL('./inject.js', import.meta.url), 'utf8');
+// Reads Insider's Test Lab table on panel pages; a no-op on every other site (testlab.js).
+const TESTLAB_JS = readFileSync(new URL('./testlab.js', import.meta.url), 'utf8');
+const TESTLAB_STOP = "window[Symbol.for('eventqa.testlab.v1')]?.stop?.()";
+// The Insider panel's own calls (XHR/fetch, WebSocket, server events) and Console, recorded so the
+// Test Lab reader can be checked against what the panel really loads. Sign-in calls are never read.
+const PANEL_CREDENTIALS = /(?:^|[/._-])(?:auth|login|logout|signin|signout|oauth|token|password|otp|mfa|2fa|sso|saml)(?:$|[/._-])/i;
+const PANEL_BODY_CHARS = 1000000;
+// Signed tokens (JWT) carry the signed-in person's details encoded: masked whole.
+const JWT = /eyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]+/g;
+const panelText = value => {
+  if (typeof value !== 'string' || !value) return value ?? '';
+  let out;
+  try { out = JSON.stringify(redact(JSON.parse(value))); } catch { out = String(redact(value)); }
+  return out.replace(JWT, '[JWT]').slice(0, PANEL_BODY_CHARS);
+};
+const consoleText = args => (args || []).map(arg => arg.value !== undefined ? (typeof arg.value === 'string' ? arg.value : JSON.stringify(arg.value))
+  : arg.preview?.properties ? `${arg.preview.description ?? arg.className ?? ''} {${arg.preview.properties.map(p => `${p.name}: ${p.value}`).join(', ')}${arg.preview.overflow ? ', …' : ''}}`
+  : arg.description ?? arg.type).join(' ');
 
 // The website's own API (same site as the page, e.g. api.vinpearlota.com for vinpearlota.com): its JSON
 // responses are read for the prices they return. Login, account and profile APIs describe the person and
@@ -160,10 +179,12 @@ export function queueEvents(record) {
 }
 
 export class CDPCollector {
-  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onApiCall, apiLogPatterns = DEFAULT_API_LOG_PATTERNS, apiLogSettleMs = API_LOG_SETTLE_MS, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
+  constructor({ port = 9222, targetId, urlFilter, onEvent, onApi, onApiCall, onInsiderPanel, apiLogPatterns = DEFAULT_API_LOG_PATTERNS, apiLogSettleMs = API_LOG_SETTLE_MS, onStatus = () => {}, endpointPatterns = DEFAULT_ENDPOINT_PATTERNS, captureQueues = true } = {}) {
     if (typeof onEvent !== 'function') throw new Error('CDPCollector requires onEvent.');
     this.port = Number(port); this.targetId = targetId; this.urlFilter = urlFilter;
     this.onEvent = onEvent; this.onApi = typeof onApi === 'function' ? onApi : null; this.onStatus = onStatus;
+    // A tab on Insider's panel is read for its Test Lab table and its own traffic (testlab.js), never as the website.
+    this.onInsiderPanel = typeof onInsiderPanel === 'function' ? onInsiderPanel : null;
     // Full request/response of the website's backend API (api-log.mjs), for the hosts in apiLogPatterns.
     this.onApiCall = typeof onApiCall === 'function' ? onApiCall : null; this.apiLogPatterns = [...apiLogPatterns]; this.apiLogSettleMs = apiLogSettleMs;
     this.captureQueues = captureQueues;
@@ -224,7 +245,8 @@ export class CDPCollector {
     const connection = new CDPConnection(target.webSocketDebuggerUrl);
     this.activeConnections.add(connection);
     connection.on('closed', () => this.activeConnections.delete(connection));
-    const state = { connection, target, requests: new Map(), api: new Map(), apiLog: new Map(), contexts: new Map(), scripts: new Map(), childSessions: new Set() };
+    const state = { connection, target, requests: new Map(), api: new Map(), apiLog: new Map(), contexts: new Map(), scripts: new Map(), testlabScripts: new Map(), childSessions: new Set(),
+      panelCalls: new Map(), panelSockets: new Map() };
     try {
       await connection.connect();
       if (!this.running || generation !== this.generation) { connection.close(); return; }
@@ -239,9 +261,19 @@ export class CDPCollector {
   }
   async #instrument(state, sessionId, generation) {
     const send = (method, params) => this.running && generation === this.generation ? state.connection.send(method, params, sessionId) : Promise.reject(new Error('CDP collector stopped.'));
+    // Insider's panel can be opened in any tab: the Test Lab reader goes into every document and starts only there.
+    const testlab = async () => {
+      if (!this.onInsiderPanel) return;
+      const { identifier } = await send('Page.addScriptToEvaluateOnNewDocument', { source: TESTLAB_JS });
+      state.testlabScripts.set(sessionId || '', identifier);
+      await send('Runtime.evaluate', { expression: TESTLAB_JS }).catch(() => {});
+    };
+    if (this.onInsiderPanel) await send('Runtime.addBinding', { name: '__eventqa_testlab' });
     if (!this.captureQueues) {
       await send('Network.enable', { maxPostDataSize: 1048576 });
       await send('Page.enable');
+      if (this.onInsiderPanel) await send('Runtime.enable');
+      await testlab();
       await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
       return;
     }
@@ -255,6 +287,7 @@ export class CDPCollector {
     state.scripts.set(sessionId || '', script.identifier);
     // This is also needed when attaching after the document has already loaded.
     await send('Runtime.evaluate', { expression: INJECT_JS });
+    await testlab();
     // Child frames/workers are never paused: a paused frame can stall the page under test while
     // instrumentation commands wait on it. Pushes made before the hook lands are still captured
     // from the existing queue as historical evidence.
@@ -278,16 +311,27 @@ export class CDPCollector {
       }
     } else if (method === 'Runtime.executionContextCreated') {
       const context = params.context;
-      if (this.captureQueues && context?.auxData?.isDefault) {
+      if ((this.captureQueues || this.onInsiderPanel) && context?.auxData?.isDefault) {
         state.contexts.set(`${sessionId || ''}:${context.id}`, { id: context.id, sessionId, frameId: context.auxData.frameId });
-        await send('Runtime.evaluate', { expression: INJECT_JS, contextId: context.id }).catch(() => {});
+        if (this.captureQueues) await send('Runtime.evaluate', { expression: INJECT_JS, contextId: context.id }).catch(() => {});
+        if (this.onInsiderPanel) await send('Runtime.evaluate', { expression: TESTLAB_JS, contextId: context.id }).catch(() => {});
       }
     } else if (method === 'Runtime.executionContextDestroyed') {
       state.contexts.delete(`${sessionId || ''}:${params.executionContextId}`);
     } else if (method === 'Runtime.executionContextsCleared') {
       for (const [key, context] of state.contexts) if (context.sessionId === sessionId) state.contexts.delete(key);
+    } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_testlab') {
+      if (!this.onInsiderPanel || !isInsiderPanel(state.target.url)) return;
+      let record;
+      try { record = JSON.parse(params.payload); } catch { return; }
+      if (record && typeof record === 'object' && ['table', 'missing', 'error'].includes(record.kind)) this.#panel({ ...record, url: redactUrl(String(record.url ?? '')) }, state, generation);
+    } else if (this.onInsiderPanel && isInsiderPanel(state.target.url) && ['Runtime.consoleAPICalled', 'Runtime.exceptionThrown', 'Network.webSocketCreated', 'Network.webSocketClosed',
+      'Network.webSocketFrameReceived', 'Network.webSocketFrameSent', 'Network.eventSourceMessageReceived'].includes(method)) {
+      this.#panelTraffic(state, sessionId, method, params, generation);
     } else if (method === 'Runtime.bindingCalled' && params.name === '__eventqa_emit') {
       if (!this.captureQueues) return;
+      // Insider's panel has analytics of its own: they are not the website's events.
+      if (this.onInsiderPanel && isInsiderPanel(state.target.url)) return;
       let record;
       try { record = JSON.parse(params.payload); } catch { return; }
       if (!['dataLayer', 'InsiderQueue', 'InsiderDispatch', 'insider_object'].includes(record.queue)) return;
@@ -302,6 +346,7 @@ export class CDPCollector {
       const request = params.request || {};
       // CORS preflight asks permission to send an event; it is not the event itself.
       if (request.method?.toUpperCase() === 'OPTIONS') return;
+      if (this.onInsiderPanel && isInsiderPanel(state.target.url)) { this.#panelRequest(state, sessionId, params); return; }
       if (!matchesEndpoint(request.url || '', this.patterns)) { this.#suggest(request, params.type); this.#apiRequest(state, sessionId, params); this.#apiLogRequest(state, sessionId, params); return; }
       const key = `${sessionId || ''}:${params.requestId}`;
       const capturedAt = new Date((params.wallTime || Date.now() / 1000) * 1000).toISOString();
@@ -322,6 +367,7 @@ export class CDPCollector {
       await pending.ready;
     } else if (['Network.responseReceived', 'Network.loadingFailed', 'Network.loadingFinished'].includes(method)) {
       const key = `${sessionId || ''}:${params.requestId}`;
+      if (state.panelCalls.has(key)) { await this.#panelCall(state, key, method, params, send, generation); return; }
       if (state.apiLog.has(key)) await this.#apiLogEvent(state, key, method, params, send, generation);
       const api = state.api.get(key);
       if (api) {
@@ -350,6 +396,59 @@ export class CDPCollector {
             phase: failed ? 'failed' : 'response', ...(failed ? { error: params.errorText || 'Network request failed' } : { status: params.response?.status }) } }, generation);
       }
       if (method !== 'Network.responseReceived') state.requests.delete(key);
+    }
+  }
+  #panel(record, state, generation) {
+    if (!this.running || generation !== this.generation) return;
+    try { this.onInsiderPanel({ ...record, target_id: state.target.id }); } catch { /* recording never breaks capture */ }
+  }
+  // The panel's XHR/fetch calls, remembered until they finish; their bodies show where Test Lab data comes from.
+  #panelRequest(state, sessionId, params) {
+    const request = params.request || {};
+    if (!['XHR', 'Fetch'].includes(params.type)) return;
+    let pathname;
+    try { pathname = new URL(request.url).pathname; } catch { return; }
+    const credentials = PANEL_CREDENTIALS.test(pathname);
+    state.panelCalls.set(`${sessionId || ''}:${params.requestId}`, { url: request.url, method: request.method, type: params.type, credentials,
+      body: credentials ? undefined : request.postData, hasBody: Boolean(request.hasPostData), wall: (params.wallTime || Date.now() / 1000) * 1000 });
+    if (state.panelCalls.size > 300) state.panelCalls.delete(state.panelCalls.keys().next().value);
+  }
+  async #panelCall(state, key, method, params, send, generation) {
+    const call = state.panelCalls.get(key);
+    if (method === 'Network.responseReceived') { call.status = params.response?.status; call.mime = params.response?.mimeType; return; }
+    state.panelCalls.delete(key);
+    let requestBody = call.body, responseBody;
+    if (!call.credentials) {
+      if (!requestBody && call.hasBody) {
+        try { requestBody = (await send('Network.getRequestPostData', { requestId: params.requestId })).postData; } catch { /* listed without it */ }
+      }
+      if (method === 'Network.loadingFinished' && /json|text|javascript|xml/i.test(call.mime || '') && !(params.encodedDataLength > PANEL_BODY_CHARS * 2)) {
+        try { const { body, base64Encoded } = await send('Network.getResponseBody', { requestId: params.requestId }); responseBody = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body; }
+        catch { /* evicted or streamed: listed without it */ }
+      }
+    }
+    this.#panel({ kind: 'network', at: new Date(call.wall).toISOString(), url: redactUrl(call.url), method: call.method, type: call.type, status: call.status ?? null, mime: call.mime ?? null,
+      ...(call.credentials ? { body_omitted: 'sign-in call' } : { request_body: panelText(requestBody), response_body: panelText(responseBody) }),
+      ...(method === 'Network.loadingFailed' ? { error: params.errorText || 'Network request failed' } : {}) }, state, generation);
+  }
+  // WebSocket frames, server-sent events and Console of a panel tab: live updates may arrive this way.
+  #panelTraffic(state, sessionId, method, params, generation) {
+    const key = `${sessionId || ''}:${params.requestId}`, at = new Date().toISOString();
+    if (method === 'Network.webSocketCreated') {
+      state.panelSockets.set(key, params.url);
+      if (state.panelSockets.size > 50) state.panelSockets.delete(state.panelSockets.keys().next().value);
+      this.#panel({ kind: 'websocket', at, event: 'open', url: redactUrl(params.url) }, state, generation);
+    } else if (method === 'Network.webSocketClosed') state.panelSockets.delete(key);
+    else if (method === 'Network.webSocketFrameReceived' || method === 'Network.webSocketFrameSent') {
+      const url = state.panelSockets.get(key);
+      if (url) this.#panel({ kind: 'websocket', at, event: method === 'Network.webSocketFrameReceived' ? 'in' : 'out', url: redactUrl(url), opcode: params.response?.opcode ?? null, data: panelText(params.response?.payloadData) }, state, generation);
+    } else if (method === 'Network.eventSourceMessageReceived') {
+      this.#panel({ kind: 'event_source', at, event: params.eventName ?? null, data: panelText(params.data) }, state, generation);
+    } else if (method === 'Runtime.consoleAPICalled') {
+      this.#panel({ kind: 'console', at: new Date(Number.isFinite(params.timestamp) ? params.timestamp : Date.now()).toISOString(), level: params.type, text: String(redact(consoleText(params.args))).slice(0, 5000) }, state, generation);
+    } else if (method === 'Runtime.exceptionThrown') {
+      const details = params.exceptionDetails || {};
+      this.#panel({ kind: 'console', at, level: 'exception', text: String(redact(details.exception?.description ?? details.text ?? '')).slice(0, 5000), url: redactUrl(details.url ?? '') }, state, generation);
     }
   }
   // XHR/fetch calls of the website's own API, remembered until their JSON response has loaded.
@@ -460,14 +559,17 @@ export class CDPCollector {
       // the shutdown delay by their count or by the per-command timeout.
       const cleanup = [];
       for (const state of states) {
-      for (const context of state.contexts.values()) {
-          cleanup.push(state.connection.send('Runtime.evaluate', { expression: "window[Symbol.for('eventqa.collector.v1')]?.stop?.()", contextId: context.id }, context.sessionId));
-      }
+        for (const context of state.contexts.values()) {
+          if (this.captureQueues) cleanup.push(state.connection.send('Runtime.evaluate', { expression: "window[Symbol.for('eventqa.collector.v1')]?.stop?.()", contextId: context.id }, context.sessionId));
+          if (this.onInsiderPanel) cleanup.push(state.connection.send('Runtime.evaluate', { expression: TESTLAB_STOP, contextId: context.id }, context.sessionId));
+        }
         for (const sessionId of state.childSessions) cleanup.push(state.connection.send('Runtime.runIfWaitingForDebugger', {}, sessionId));
-        for (const sessionId of new Set(['', ...state.scripts.keys(), ...state.childSessions])) {
-          const identifier = state.scripts.get(sessionId);
-          if (identifier) cleanup.push(state.connection.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, sessionId || undefined));
+        for (const sessionId of new Set(['', ...state.scripts.keys(), ...state.testlabScripts.keys(), ...state.childSessions])) {
+          for (const identifier of [state.scripts.get(sessionId), state.testlabScripts.get(sessionId)]) {
+            if (identifier) cleanup.push(state.connection.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }, sessionId || undefined));
+          }
           if (this.captureQueues) cleanup.push(state.connection.send('Runtime.removeBinding', { name: '__eventqa_emit' }, sessionId || undefined));
+          if (this.onInsiderPanel) cleanup.push(state.connection.send('Runtime.removeBinding', { name: '__eventqa_testlab' }, sessionId || undefined));
           cleanup.push(state.connection.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true }, sessionId || undefined));
         }
       }
